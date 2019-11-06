@@ -1,7 +1,7 @@
 Overview
 ========
 
-**fmt** (formerly cppformat) is an open-source formatting library.
+**fmt** is an open-source formatting library.
 It can be used as a fast and safe alternative to printf and IOStreams.
 
 .. raw:: html
@@ -109,7 +109,8 @@ string", because the argument ``"forty-two"`` is a string while the format code
   format(fmt("The answer is {:d}"), "forty-two");
 
 reports a compile-time error for the same reason on compilers that support
-relaxed ``constexpr``.
+relaxed ``constexpr``. See `here <api.html#c.fmt>`_ for how to enable
+compile-time checks.
 
 The following code
 
@@ -129,7 +130,7 @@ its numeric value being written to the stream (i.e. 1070 instead of letter 'ю'
 which is represented by ``L'\x42e'`` if we use Unicode) which is rarely what is
 needed.
 
-Compact binary code
+Compact Binary Code
 -------------------
 
 The library is designed to produce compact per-call compiled code. For example
@@ -174,8 +175,9 @@ The library is highly portable and relies only on a small set of C++11 features:
 * decltype
 * trailing return types
 * deleted functions
+* alias templates
 
-These are available since GCC 4.4, Clang 2.9 and MSVC 18.0 (2013). For older
+These are available since GCC 4.8, Clang 3.0 and MSVC 19.0 (2015). For older
 compilers use fmt `version 4.x
 <https://github.com/fmtlib/fmt/releases/tag/4.1.0>`_ which continues to be
 maintained and only requires C++98.

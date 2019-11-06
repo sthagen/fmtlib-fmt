@@ -12,7 +12,7 @@
 
 #include "fmt/posix.h"
 
-#include <limits.h>
+#include <climits>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -49,7 +49,7 @@
 namespace {
 #ifdef _WIN32
 // Return type of read and write functions.
-typedef int RWResult;
+using RWResult = int;
 
 // On Windows the count argument to read and write is unsigned, so convert
 // it from size_t preventing integer overflow.
@@ -58,7 +58,7 @@ inline unsigned convert_rwcount(std::size_t count) {
 }
 #else
 // Return type of read and write functions.
-typedef ssize_t RWResult;
+using RWResult = ssize_t;
 
 inline std::size_t convert_rwcount(std::size_t count) { return count; }
 #endif
@@ -73,7 +73,7 @@ buffered_file::~buffered_file() FMT_NOEXCEPT {
 
 buffered_file::buffered_file(cstring_view filename, cstring_view mode) {
   FMT_RETRY_VAL(file_, FMT_SYSTEM(fopen(filename.c_str(), mode.c_str())),
-                FMT_NULL);
+                nullptr);
   if (!file_)
     FMT_THROW(system_error(errno, "cannot open file {}", filename.c_str()));
 }
@@ -81,7 +81,7 @@ buffered_file::buffered_file(cstring_view filename, cstring_view mode) {
 void buffered_file::close() {
   if (!file_) return;
   int result = FMT_SYSTEM(fclose(file_));
-  file_ = FMT_NULL;
+  file_ = nullptr;
   if (result != 0) FMT_THROW(system_error(errno, "cannot close file"));
 }
 
@@ -138,7 +138,7 @@ long long file::size() const {
   unsigned long long long_size = size_upper;
   return (long_size << sizeof(DWORD) * CHAR_BIT) | size_lower;
 #else
-  typedef struct stat Stat;
+  using Stat = struct stat;
   Stat file_stat = Stat();
   if (FMT_POSIX_CALL(fstat(fd_, &file_stat)) == -1)
     FMT_THROW(system_error(errno, "cannot get file attributes"));
