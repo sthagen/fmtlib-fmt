@@ -578,7 +578,7 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
       : Allocator(alloc) {
     this->set(store_, SIZE);
   }
-  ~basic_memory_buffer() { deallocate(); }
+  ~basic_memory_buffer() FMT_OVERRIDE { deallocate(); }
 
  private:
   // Move data from other to this buffer.
@@ -607,14 +607,14 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
     of the other object to it.
     \endrst
    */
-  basic_memory_buffer(basic_memory_buffer&& other) { move(other); }
+  basic_memory_buffer(basic_memory_buffer&& other) FMT_NOEXCEPT { move(other); }
 
   /**
     \rst
     Moves the content of the other ``basic_memory_buffer`` object to this one.
     \endrst
    */
-  basic_memory_buffer& operator=(basic_memory_buffer&& other) {
+  basic_memory_buffer& operator=(basic_memory_buffer&& other) FMT_NOEXCEPT {
     assert(this != &other);
     deallocate();
     move(other);
@@ -658,7 +658,7 @@ class FMT_API format_error : public std::runtime_error {
   format_error& operator=(const format_error&) = default;
   format_error(format_error&&) = default;
   format_error& operator=(format_error&&) = default;
-  ~format_error() FMT_NOEXCEPT;
+  ~format_error() FMT_NOEXCEPT FMT_OVERRIDE;
 };
 
 namespace internal {
@@ -740,7 +740,7 @@ inline int count_digits(uint128_t n) {
     if (n < 100) return count + 1;
     if (n < 1000) return count + 2;
     if (n < 10000) return count + 3;
-    n /= 10000u;
+    n /= 10000U;
     count += 4;
   }
 }
@@ -862,7 +862,7 @@ inline Char* format_decimal(Char* buffer, UInt value, int num_digits,
     // Integer division is slow so do it for a group of two digits instead
     // of for every digit. The idea comes from the talk by Alexandrescu
     // "Three Optimization Tips for C++". See speed-test for a comparison.
-    unsigned index = static_cast<unsigned>((value % 100) * 2);
+    auto index = static_cast<unsigned>((value % 100) * 2);
     value /= 100;
     *--buffer = static_cast<Char>(data::digits[index + 1]);
     add_thousands_sep(buffer);
@@ -873,7 +873,7 @@ inline Char* format_decimal(Char* buffer, UInt value, int num_digits,
     *--buffer = static_cast<Char>('0' + value);
     return end;
   }
-  unsigned index = static_cast<unsigned>(value * 2);
+  auto index = static_cast<unsigned>(value * 2);
   *--buffer = static_cast<Char>(data::digits[index + 1]);
   add_thousands_sep(buffer);
   *--buffer = static_cast<Char>(data::digits[index]);
@@ -1568,7 +1568,7 @@ template <typename Range> class basic_writer {
     void on_num() {
       std::string groups = internal::grouping<char_type>(writer.locale_);
       if (groups.empty()) return on_dec();
-      char_type sep = internal::thousands_sep<char_type>(writer.locale_);
+      auto sep = internal::thousands_sep<char_type>(writer.locale_);
       if (!sep) return on_dec();
       int num_digits = internal::count_digits(abs_value);
       int size = num_digits;
@@ -2752,7 +2752,7 @@ class FMT_API system_error : public std::runtime_error {
   system_error& operator=(const system_error&) = default;
   system_error(system_error&&) = default;
   system_error& operator=(system_error&&) = default;
-  ~system_error() FMT_NOEXCEPT;
+  ~system_error() FMT_NOEXCEPT FMT_OVERRIDE;
 
   int error_code() const { return error_code_; }
 };
@@ -2965,7 +2965,7 @@ class format_int {
       // Integer division is slow so do it for a group of two digits instead
       // of for every digit. The idea comes from the talk by Alexandrescu
       // "Three Optimization Tips for C++". See speed-test for a comparison.
-      unsigned index = static_cast<unsigned>((value % 100) * 2);
+      auto index = static_cast<unsigned>((value % 100) * 2);
       value /= 100;
       *--ptr = internal::data::digits[index + 1];
       *--ptr = internal::data::digits[index];
@@ -2974,14 +2974,14 @@ class format_int {
       *--ptr = static_cast<char>('0' + value);
       return ptr;
     }
-    unsigned index = static_cast<unsigned>(value * 2);
+    auto index = static_cast<unsigned>(value * 2);
     *--ptr = internal::data::digits[index + 1];
     *--ptr = internal::data::digits[index];
     return ptr;
   }
 
   void format_signed(long long value) {
-    unsigned long long abs_value = static_cast<unsigned long long>(value);
+    auto abs_value = static_cast<unsigned long long>(value);
     bool negative = value < 0;
     if (negative) abs_value = 0 - abs_value;
     str_ = format_decimal(abs_value);
@@ -3030,7 +3030,7 @@ template <typename T, typename Char>
 struct formatter<T, Char,
                  enable_if_t<internal::type_constant<T, Char>::value !=
                              internal::custom_type>> {
-  FMT_CONSTEXPR formatter() {}
+  FMT_CONSTEXPR formatter() = default;
 
   // Parses format specifiers stopping either at the end of the range or at the
   // terminating '}'.
