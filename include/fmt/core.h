@@ -16,7 +16,7 @@
 #include <type_traits>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 60000
+#define FMT_VERSION 60001
 
 #ifdef __has_feature
 #  define FMT_HAS_FEATURE(x) __has_feature(x)
@@ -479,34 +479,43 @@ class basic_format_parse_context : private ErrorHandler {
       basic_string_view<Char> format_str, ErrorHandler eh = ErrorHandler())
       : ErrorHandler(eh), format_str_(format_str), next_arg_id_(0) {}
 
-  // Returns an iterator to the beginning of the format string range being
-  // parsed.
+  /**
+    Returns an iterator to the beginning of the format string range being
+    parsed.
+   */
   FMT_CONSTEXPR iterator begin() const FMT_NOEXCEPT {
     return format_str_.begin();
   }
 
-  // Returns an iterator past the end of the format string range being parsed.
+  /**
+    Returns an iterator past the end of the format string range being parsed.
+   */
   FMT_CONSTEXPR iterator end() const FMT_NOEXCEPT { return format_str_.end(); }
 
-  // Advances the begin iterator to ``it``.
+  /** Advances the begin iterator to ``it``. */
   FMT_CONSTEXPR void advance_to(iterator it) {
     format_str_.remove_prefix(internal::to_unsigned(it - begin()));
   }
 
-  // Returns the next argument index.
+  /**
+    Reports an error if using the manual argument indexing; otherwise returns
+    the next argument index and switches to the automatic indexing.
+   */
   FMT_CONSTEXPR int next_arg_id() {
     if (next_arg_id_ >= 0) return next_arg_id_++;
     on_error("cannot switch from manual to automatic argument indexing");
     return 0;
   }
 
-  FMT_CONSTEXPR bool check_arg_id(int) {
-    if (next_arg_id_ > 0) {
+  /**
+    Reports an error if using the automatic argument indexing; otherwise
+    switches to the manual indexing.
+   */
+  FMT_CONSTEXPR void check_arg_id(int) {
+    if (next_arg_id_ > 0)
       on_error("cannot switch from automatic to manual argument indexing");
-      return false;
-    }
-    next_arg_id_ = -1;
-    return true;
+    else
+      next_arg_id_ = -1;
   }
 
   FMT_CONSTEXPR void check_arg_id(basic_string_view<Char>) {}
@@ -1075,6 +1084,8 @@ class locale_ref {
  public:
   locale_ref() : locale_(nullptr) {}
   template <typename Locale> explicit locale_ref(const Locale& loc);
+
+  explicit operator bool() const FMT_NOEXCEPT { return locale_ != nullptr; }
 
   template <typename Locale> Locale get() const;
 };

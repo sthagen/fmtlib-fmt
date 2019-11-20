@@ -34,7 +34,6 @@
 #define FMT_FORMAT_H_
 
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -71,6 +70,12 @@
 #  define FMT_HAS_BUILTIN(x) 0
 #endif
 
+#if FMT_HAS_CPP_ATTRIBUTE(fallthrough) >= 201603 && __cplusplus >= 201703
+#  define FMT_FALLTHROUGH [[fallthrough]]
+#else
+#  define FMT_FALLTHROUGH
+#endif
+
 #ifndef FMT_THROW
 #  if FMT_EXCEPTIONS
 #    if FMT_MSC_VER
@@ -84,7 +89,7 @@ template <typename Exception> inline void do_throw(const Exception& x) {
 }
 }  // namespace internal
 FMT_END_NAMESPACE
-#      define FMT_THROW(x) fmt::internal::do_throw(x)
+#      define FMT_THROW(x) internal::do_throw(x)
 #    else
 #      define FMT_THROW(x) throw x
 #    endif
@@ -92,7 +97,7 @@ FMT_END_NAMESPACE
 #    define FMT_THROW(x)              \
       do {                            \
         static_cast<void>(sizeof(x)); \
-        assert(false);                \
+        FMT_ASSERT(false, "");        \
       } while (false)
 #  endif
 #endif
@@ -148,14 +153,14 @@ inline uint32_t clz(uint32_t x) {
   unsigned long r = 0;
   _BitScanReverse(&r, x);
 
-  assert(x != 0);
+  FMT_ASSERT(x != 0, "");
   // Static analysis complains about using uninitialized data
   // "r", but the only way that can happen is if "x" is 0,
   // which the callers guarantee to not happen.
 #  pragma warning(suppress : 6102)
   return 31 - r;
 }
-#  define FMT_BUILTIN_CLZ(n) fmt::internal::clz(n)
+#  define FMT_BUILTIN_CLZ(n) internal::clz(n)
 
 #  if defined(_WIN64) && !defined(__clang__)
 #    pragma intrinsic(_BitScanReverse64)
@@ -173,20 +178,26 @@ inline uint32_t clzll(uint64_t x) {
   _BitScanReverse(&r, static_cast<uint32_t>(x));
 #  endif
 
-  assert(x != 0);
+  FMT_ASSERT(x != 0, "");
   // Static analysis complains about using uninitialized data
   // "r", but the only way that can happen is if "x" is 0,
   // which the callers guarantee to not happen.
 #  pragma warning(suppress : 6102)
   return 63 - r;
 }
-#  define FMT_BUILTIN_CLZLL(n) fmt::internal::clzll(n)
+#  define FMT_BUILTIN_CLZLL(n) internal::clzll(n)
 }  // namespace internal
 FMT_END_NAMESPACE
 #endif
 
+// Enable the deprecated numeric alignment.
 #ifndef FMT_NUMERIC_ALIGN
 #  define FMT_NUMERIC_ALIGN 1
+#endif
+
+// Enable the deprecated percent specifier.
+#ifndef FMT_DEPRECATED_PERCENT
+#  define FMT_DEPRECATED_PERCENT 0
 #endif
 
 FMT_BEGIN_NAMESPACE
@@ -615,7 +626,7 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
     \endrst
    */
   basic_memory_buffer& operator=(basic_memory_buffer&& other) FMT_NOEXCEPT {
-    assert(this != &other);
+    FMT_ASSERT(this != &other, "");
     deallocate();
     move(other);
     return *this;
@@ -989,9 +1000,8 @@ class utf16_to_utf8 {
   FMT_API int convert(wstring_view s);
 };
 
-FMT_API void format_windows_error(fmt::internal::buffer<char>& out,
-                                  int error_code,
-                                  fmt::string_view message) FMT_NOEXCEPT;
+FMT_API void format_windows_error(internal::buffer<char>& out, int error_code,
+                                  string_view message) FMT_NOEXCEPT;
 #endif
 
 template <typename T = void> struct null {};
@@ -1051,10 +1061,26 @@ using format_specs = basic_format_specs<char>;
 
 namespace internal {
 
+// A floating-point presentation format.
+enum class float_format {
+  shortest,  // Shortest round-trip format.
+  general,   // General: exponent notation or fixed point based on magnitude.
+  exp,       // Exponent notation with the default precision of 6, e.g. 1.2e-3.
+  fixed,     // Fixed point with the default precision of 6, e.g. 0.0012.
+  hex
+};
+
+struct float_spec {
+  float_format format;
+  bool upper;
+  bool locale;
+  bool percent;
+};
+
 struct gen_digits_params {
   int num_digits;
   sign_t sign : 3;
-  bool fixed;
+  float_format format;
   bool upper;
   bool trailing_zeros;
 };
@@ -1091,11 +1117,14 @@ template <typename Char> class grisu_writer {
   template <typename It> It grisu_prettify(It it) const {
     // pow(10, full_exp - 1) <= v <= pow(10, full_exp).
     int full_exp = num_digits_ + exp_;
-    if (!params_.fixed) {
+    if (params_.format == float_format::exp) {
       // Insert a decimal point after the first digit and add an exponent.
       *it++ = static_cast<Char>(*digits_);
       if (num_digits_ > 1) *it++ = decimal_point_;
       it = copy_str<Char>(digits_ + 1, digits_ + num_digits_, it);
+      int num_zeros = params_.num_digits - num_digits_;
+      if (num_zeros > 0 && params_.trailing_zeros)
+        it = std::fill_n(it, num_zeros, static_cast<Char>('0'));
       *it++ = static_cast<Char>(params_.upper ? 'E' : 'e');
       return write_exponent<Char>(full_exp - 1, it);
     }
@@ -1158,7 +1187,11 @@ template <typename Char> class grisu_writer {
         decimal_point_(decimal_point) {
     int full_exp = num_digits + exp - 1;
     int precision = params.num_digits > 0 ? params.num_digits : 16;
-    params_.fixed |= full_exp >= -4 && full_exp < precision;
+    if (params_.format == float_format::general) {
+      params_.format = full_exp >= -4 && full_exp < precision
+                           ? float_format::fixed
+                           : float_format::exp;
+    }
     size_ = grisu_prettify(counting_iterator()).count();
     size_ += params_.sign ? 1 : 0;
   }
@@ -1173,7 +1206,7 @@ template <typename Char> class grisu_writer {
 };
 
 namespace grisu_options {
-enum { fixed = 1, grisu2 = 2, binary32 = 4 };
+enum { fixed = 1, binary32 = 2 };
 }
 
 // Formats value using the Grisu algorithm:
@@ -1233,36 +1266,50 @@ FMT_CONSTEXPR void handle_int_type_spec(char spec, Handler&& handler) {
   }
 }
 
-template <typename Handler>
-FMT_CONSTEXPR void handle_float_type_spec(char spec, Handler&& handler) {
+template <typename ErrorHandler = error_handler>
+FMT_CONSTEXPR float_spec parse_float_type_spec(char spec,
+                                               ErrorHandler&& eh = {}) {
+  auto result = float_spec();
   switch (spec) {
+  case 'G':
+    result.upper = true;
+    FMT_FALLTHROUGH;
   case 0:
   case 'g':
-  case 'G':
-    handler.on_general();
+    result.format = float_format::general;
     break;
-  case 'e':
   case 'E':
-    handler.on_exp();
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case 'e':
+    result.format = float_format::exp;
     break;
-  case 'f':
   case 'F':
-    handler.on_fixed();
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case 'f':
+    result.format = float_format::fixed;
     break;
+#if FMT_DEPRECATED_PERCENT
   case '%':
-    handler.on_percent();
+    result.format = float_format::fixed;
+    result.percent = true;
     break;
-  case 'a':
+#endif
   case 'A':
-    handler.on_hex();
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case 'a':
+    result.format = float_format::hex;
     break;
   case 'n':
-    handler.on_num();
+    result.locale = true;
     break;
   default:
-    handler.on_error();
+    eh.on_error("invalid type specifier");
     break;
   }
+  return result;
 }
 
 template <typename Char, typename Handler>
@@ -1303,24 +1350,6 @@ template <typename ErrorHandler> class int_type_checker : private ErrorHandler {
   FMT_CONSTEXPR void on_hex() {}
   FMT_CONSTEXPR void on_bin() {}
   FMT_CONSTEXPR void on_oct() {}
-  FMT_CONSTEXPR void on_num() {}
-
-  FMT_CONSTEXPR void on_error() {
-    ErrorHandler::on_error("invalid type specifier");
-  }
-};
-
-template <typename ErrorHandler>
-class float_type_checker : private ErrorHandler {
- public:
-  FMT_CONSTEXPR explicit float_type_checker(ErrorHandler eh)
-      : ErrorHandler(eh) {}
-
-  FMT_CONSTEXPR void on_general() {}
-  FMT_CONSTEXPR void on_exp() {}
-  FMT_CONSTEXPR void on_fixed() {}
-  FMT_CONSTEXPR void on_percent() {}
-  FMT_CONSTEXPR void on_hex() {}
   FMT_CONSTEXPR void on_num() {}
 
   FMT_CONSTEXPR void on_error() {
@@ -1733,7 +1762,7 @@ template <typename Range> class basic_writer {
   }
 
   // Formats a floating-point number (float, double, or long double).
-  template <typename T, bool USE_GRISU = fmt::internal::use_grisu<T>()>
+  template <typename T, bool USE_GRISU = internal::use_grisu<T>()>
   void write_fp(T value, const format_specs& specs);
 
   /** Writes a character to the buffer. */
@@ -1790,6 +1819,78 @@ template <typename Range> class basic_writer {
     write_padded(specs_copy, pw);
   }
 };
+
+template <typename Range>
+template <typename T, bool USE_GRISU>
+void basic_writer<Range>::write_fp(T value, const format_specs& specs) {
+  auto sign = specs.sign;
+  if (std::signbit(value)) {  // value < 0 is false for NaN so use signbit.
+    sign = sign::minus;
+    value = -value;
+  } else if (sign == sign::minus) {
+    sign = sign::none;
+  }
+
+  float_spec fspec = parse_float_type_spec(specs.type);
+  if (!std::isfinite(value)) {
+    const char* str = std::isinf(value) ? (fspec.upper ? "INF" : "inf")
+                                        : (fspec.upper ? "NAN" : "nan");
+    return write_padded(specs, inf_or_nan_writer{sign, fspec.percent, str});
+  }
+
+  if (fspec.percent) value *= 100;
+
+  memory_buffer buffer;
+  int exp = 0;
+  int precision = specs.precision >= 0 || !specs.type ? specs.precision : 6;
+  int num_digits =
+      fspec.format == float_format::exp ? precision + 1 : precision;
+  unsigned options = 0;
+  if (fspec.format == float_format::fixed) options |= grisu_options::fixed;
+  if (const_check(sizeof(value) == sizeof(float)))
+    options |= grisu_options::binary32;
+  bool use_grisu = USE_GRISU && (specs.type != 'a' && specs.type != 'A') &&
+                   grisu_format(static_cast<double>(value), buffer, num_digits,
+                                options, exp);
+  char* decimal_point_pos = nullptr;
+  if (!use_grisu) decimal_point_pos = sprintf_format(value, buffer, specs);
+
+  if (fspec.percent) {
+    buffer.push_back('%');
+    --exp;  // Adjust decimal place position.
+  }
+  format_specs as = specs;
+  if (specs.align == align::numeric) {
+    if (sign) {
+      auto&& it = reserve(1);
+      *it++ = static_cast<char_type>(data::signs[sign]);
+      sign = sign::none;
+      if (as.width) --as.width;
+    }
+    as.align = align::right;
+  } else if (specs.align == align::none) {
+    as.align = align::right;
+  }
+  char_type point = fspec.locale ? decimal_point<char_type>(locale_)
+                                 : static_cast<char_type>('.');
+  if (use_grisu) {
+    auto params = gen_digits_params();
+    params.sign = sign;
+    params.format = fspec.format;
+    params.num_digits = num_digits;
+    params.trailing_zeros =
+        (precision != 0 &&
+         (!specs.type || fspec.format == float_format::fixed ||
+          fspec.format == float_format::exp)) ||
+        specs.alt;
+    params.upper = fspec.upper;
+    num_digits = static_cast<int>(buffer.size());
+    write_padded(as, grisu_writer<char_type>(buffer.data(), num_digits, exp,
+                                             params, point));
+  } else {
+    write_padded(as, double_writer{sign, buffer, decimal_point_pos, point});
+  }
+}
 
 using writer = basic_writer<buffer_range<char>>;
 
@@ -1947,7 +2048,7 @@ template <typename Char> FMT_CONSTEXPR bool is_name_start(Char c) {
 template <typename Char, typename ErrorHandler>
 FMT_CONSTEXPR int parse_nonnegative_int(const Char*& begin, const Char* end,
                                         ErrorHandler&& eh) {
-  assert(begin != end && '0' <= *begin && *begin <= '9');
+  FMT_ASSERT(begin != end && '0' <= *begin && *begin <= '9', "");
   if (*begin == '0') {
     ++begin;
     return 0;
@@ -2297,18 +2398,24 @@ class dynamic_specs_handler
 template <typename Char, typename IDHandler>
 FMT_CONSTEXPR const Char* parse_arg_id(const Char* begin, const Char* end,
                                        IDHandler&& handler) {
-  assert(begin != end);
+  FMT_ASSERT(begin != end, "");
   Char c = *begin;
-  if (c == '}' || c == ':') return handler(), begin;
+  if (c == '}' || c == ':') {
+    handler();
+    return begin;
+  }
   if (c >= '0' && c <= '9') {
     int index = parse_nonnegative_int(begin, end, handler);
     if (begin == end || (*begin != '}' && *begin != ':'))
-      return handler.on_error("invalid format string"), begin;
-    handler(index);
+      handler.on_error("invalid format string");
+    else
+      handler(index);
     return begin;
   }
-  if (!is_name_start(c))
-    return handler.on_error("invalid format string"), begin;
+  if (!is_name_start(c)) {
+    handler.on_error("invalid format string");
+    return begin;
+  }
   auto it = begin;
   do {
     ++it;
@@ -2774,126 +2881,7 @@ class FMT_API system_error : public std::runtime_error {
   \endrst
  */
 FMT_API void format_system_error(internal::buffer<char>& out, int error_code,
-                                 fmt::string_view message) FMT_NOEXCEPT;
-
-struct float_spec_handler {
-  char type;
-  bool upper;
-  bool fixed;
-  bool as_percentage;
-  bool use_locale;
-
-  explicit float_spec_handler(char t)
-      : type(t),
-        upper(false),
-        fixed(false),
-        as_percentage(false),
-        use_locale(false) {}
-
-  void on_general() {
-    if (type == 'G') upper = true;
-  }
-
-  void on_exp() {
-    if (type == 'E') upper = true;
-  }
-
-  void on_fixed() {
-    fixed = true;
-    if (type == 'F') upper = true;
-  }
-
-  void on_percent() {
-    fixed = true;
-    as_percentage = true;
-  }
-
-  void on_hex() {
-    if (type == 'A') upper = true;
-  }
-
-  void on_num() { use_locale = true; }
-
-  FMT_NORETURN void on_error() {
-    FMT_THROW(format_error("invalid type specifier"));
-  }
-};
-
-template <typename Range>
-template <typename T, bool USE_GRISU>
-void internal::basic_writer<Range>::write_fp(T value,
-                                             const format_specs& specs) {
-  // Check type.
-  float_spec_handler handler(static_cast<char>(specs.type));
-  handle_float_type_spec(handler.type, handler);
-
-  auto sign = specs.sign;
-  // Use signbit instead of value < 0 since the latter is always false for NaN.
-  if (std::signbit(value)) {
-    sign = sign::minus;
-    value = -value;
-  } else if (sign == sign::minus) {
-    sign = sign::none;
-  }
-
-  if (!std::isfinite(value)) {
-    const char* str = std::isinf(value) ? (handler.upper ? "INF" : "inf")
-                                        : (handler.upper ? "NAN" : "nan");
-    return write_padded(specs,
-                        inf_or_nan_writer{sign, handler.as_percentage, str});
-  }
-
-  if (handler.as_percentage) value *= 100;
-
-  memory_buffer buffer;
-  int exp = 0;
-  int precision = specs.precision >= 0 || !specs.type ? specs.precision : 6;
-  unsigned options = 0;
-  if (handler.fixed) options |= grisu_options::fixed;
-  if (const_check(sizeof(value) == sizeof(float)))
-    options |= grisu_options::binary32;
-  bool use_grisu =
-      USE_GRISU &&
-      (specs.type != 'a' && specs.type != 'A' && specs.type != 'e' &&
-       specs.type != 'E') &&
-      grisu_format(static_cast<double>(value), buffer, precision, options, exp);
-  char* decimal_point_pos = nullptr;
-  if (!use_grisu) decimal_point_pos = sprintf_format(value, buffer, specs);
-
-  if (handler.as_percentage) {
-    buffer.push_back('%');
-    --exp;  // Adjust decimal place position.
-  }
-  format_specs as = specs;
-  if (specs.align == align::numeric) {
-    if (sign) {
-      auto&& it = reserve(1);
-      *it++ = static_cast<char_type>(data::signs[sign]);
-      sign = sign::none;
-      if (as.width) --as.width;
-    }
-    as.align = align::right;
-  } else if (specs.align == align::none) {
-    as.align = align::right;
-  }
-  char_type decimal_point = handler.use_locale
-                                ? internal::decimal_point<char_type>(locale_)
-                                : static_cast<char_type>('.');
-  if (use_grisu) {
-    auto params = gen_digits_params();
-    params.sign = sign;
-    params.fixed = handler.fixed;
-    params.num_digits = precision;
-    params.trailing_zeros =
-        (precision != 0 && (handler.fixed || !specs.type)) || specs.alt;
-    int num_digits = static_cast<int>(buffer.size());
-    write_padded(as, grisu_writer<char_type>(buffer.data(), num_digits, exp,
-                                             params, decimal_point));
-  } else {
-    write_padded(as,
-                 double_writer{sign, buffer, decimal_point_pos, decimal_point});
-  }
-}
+                                 string_view message) FMT_NOEXCEPT;
 
 // Reports a system error without throwing an exception.
 // Can be used to report errors from destructors.
@@ -3064,8 +3052,7 @@ struct formatter<T, Char,
     case internal::float_type:
     case internal::double_type:
     case internal::long_double_type:
-      handle_float_type_spec(specs_.type,
-                             internal::float_type_checker<decltype(eh)>(eh));
+      internal::parse_float_type_spec(specs_.type, eh);
       break;
     case internal::cstring_type:
       internal::handle_cstring_type_spec(
@@ -3470,7 +3457,7 @@ template <typename OutputIt> struct format_to_n_result {
 
 template <typename OutputIt, typename Char = typename OutputIt::value_type>
 using format_to_n_context =
-    format_context_t<fmt::internal::truncating_iterator<OutputIt>, Char>;
+    format_context_t<internal::truncating_iterator<OutputIt>, Char>;
 
 template <typename OutputIt, typename Char = typename OutputIt::value_type>
 using format_to_n_args = basic_format_args<format_to_n_context<OutputIt, Char>>;
@@ -3517,7 +3504,7 @@ inline std::basic_string<Char> internal::vformat(
     basic_format_args<buffer_context<Char>> args) {
   basic_memory_buffer<Char> buffer;
   internal::vformat_to(buffer, format_str, args);
-  return fmt::to_string(buffer);
+  return to_string(buffer);
 }
 
 /**
@@ -3621,6 +3608,22 @@ FMT_CONSTEXPR internal::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 FMT_END_NAMESPACE
 
+#define FMT_STRING_IMPL(s, ...)                                         \
+  [] {                                                                  \
+    struct str : fmt::compile_string {                                  \
+      using char_type = typename std::remove_cv<std::remove_pointer<    \
+          typename std::decay<decltype(s)>::type>::type>::type;         \
+      __VA_ARGS__ FMT_CONSTEXPR                                         \
+      operator fmt::basic_string_view<char_type>() const {              \
+        return {s, sizeof(s) / sizeof(char_type) - 1};                  \
+      }                                                                 \
+    } result;                                                           \
+    /* Suppress Qt Creator warning about unused operator. */            \
+    (void)static_cast<fmt::basic_string_view<typename str::char_type>>( \
+        result);                                                        \
+    return result;                                                      \
+  }()
+
 /**
   \rst
   Constructs a compile-time format string.
@@ -3631,37 +3634,10 @@ FMT_END_NAMESPACE
     std::string s = format(FMT_STRING("{:d}"), "foo");
   \endrst
  */
-#define FMT_STRING(s)                                                    \
-  [] {                                                                   \
-    struct str : fmt::compile_string {                                   \
-      using char_type = typename std::remove_cv<std::remove_pointer<     \
-          typename std::decay<decltype(s)>::type>::type>::type;          \
-      FMT_CONSTEXPR operator fmt::basic_string_view<char_type>() const { \
-        return {s, sizeof(s) / sizeof(char_type) - 1};                   \
-      }                                                                  \
-    } result;                                                            \
-    /* Suppress Qt Creator warning about unused operator. */             \
-    (void)static_cast<fmt::basic_string_view<typename str::char_type>>(  \
-        result);                                                         \
-    return result;                                                       \
-  }()
+#define FMT_STRING(s) FMT_STRING_IMPL(s, )
 
 #if defined(FMT_STRING_ALIAS) && FMT_STRING_ALIAS
-/**
-  \rst
-  Constructs a compile-time format string. This macro is disabled by default to
-  prevent potential name collisions. To enable it define ``FMT_STRING_ALIAS`` to
-  1 before including ``fmt/format.h``.
-
-  **Example**::
-
-    #define FMT_STRING_ALIAS 1
-    #include <fmt/format.h>
-    // A compile-time error because 'd' is an invalid specifier for strings.
-    std::string s = format(fmt("{:d}"), "foo");
-  \endrst
- */
-#  define fmt(s) FMT_STRING(s)
+#  define fmt(s) FMT_STRING_IMPL(s, [[deprecated]])
 #endif
 
 #ifdef FMT_HEADER_ONLY
