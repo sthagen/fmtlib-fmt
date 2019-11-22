@@ -1,4 +1,4 @@
-// Formatting library for C++
+// Formatting library for C++ - legacy printf implementation
 //
 // Copyright (c) 2012 - 2016, Victor Zverovich
 // All rights reserved.
@@ -8,7 +8,7 @@
 #ifndef FMT_PRINTF_H_
 #define FMT_PRINTF_H_
 
-#include <algorithm>  // std::fill_n
+#include <algorithm>  // std::max
 #include <limits>     // std::numeric_limits
 
 #include "ostream.h"
