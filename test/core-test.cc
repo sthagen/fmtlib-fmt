@@ -635,17 +635,15 @@ TEST(FormatterTest, FormatExplicitlyConvertibleToWStringView) {
   EXPECT_EQ(L"foo",
             fmt::format(L"{}", explicitly_convertible_to_wstring_view()));
 }
+#endif
 
-struct explicitly_convertible_to_string_like {
-  template <typename String,
-            typename = typename std::enable_if<std::is_constructible<
-                String, const char*, std::size_t>::value>::type>
-  explicit operator String() const {
-    return String("foo", 3u);
-  }
+struct disabled_rvalue_conversion {
+  operator const char*() const& { return "foo"; }
+  operator const char*()& { return "foo"; }
+  operator const char*() const&& = delete;
+  operator const char*()&& = delete;
 };
 
-TEST(FormatterTest, FormatExplicitlyConvertibleToStringLike) {
-  EXPECT_EQ("foo", fmt::format("{}", explicitly_convertible_to_string_like()));
+TEST(FormatterTest, DisabledRValueConversion) {
+  EXPECT_EQ("foo", fmt::format("{}", disabled_rvalue_conversion()));
 }
-#endif

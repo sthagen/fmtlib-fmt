@@ -905,6 +905,8 @@ template <typename Context> struct arg_mapper {
   }
   template <typename T,
             FMT_ENABLE_IF(!is_string<T>::value && !is_char<T>::value &&
+                          !std::is_constructible<basic_string_view<char_type>,
+                                                 T>::value &&
                           (has_formatter<T, Context>::value ||
                            has_fallback_formatter<T, Context>::value))>
   FMT_CONSTEXPR const T& map(const T& val) {
@@ -923,7 +925,7 @@ template <typename Context> struct arg_mapper {
 // A type constant after applying arg_mapper<Context>.
 template <typename T, typename Context>
 using mapped_type_constant =
-    type_constant<decltype(arg_mapper<Context>().map(std::declval<T>())),
+    type_constant<decltype(arg_mapper<Context>().map(std::declval<const T&>())),
                   typename Context::char_type>;
 
 enum { packed_arg_bits = 5 };
