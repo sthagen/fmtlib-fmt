@@ -1062,24 +1062,23 @@ using format_specs = basic_format_specs<char>;
 namespace internal {
 
 // A floating-point presentation format.
-enum class float_format {
+enum class float_format : unsigned char {
   general,  // General: exponent notation or fixed point based on magnitude.
   exp,      // Exponent notation with the default precision of 6, e.g. 1.2e-3.
   fixed,    // Fixed point with the default precision of 6, e.g. 0.0012.
   hex
 };
 
-struct float_spec {
+struct float_specs {
   int precision;
-  float_format format;
-  sign_t sign : 3;
-  bool upper;
-  bool locale;
-  bool percent;
-  bool alt;
-  bool binary32;
-  bool use_grisu;
-  bool trailing_zeros;
+  float_format format : 8;
+  sign_t sign : 8;
+  bool upper : 1;
+  bool locale : 1;
+  bool percent : 1;
+  bool binary32 : 1;
+  bool use_grisu : 1;
+  bool trailing_zeros : 1;
 };
 
 // Writes the exponent exp in the form "[+-]d{2,3}" to buffer.
@@ -1110,32 +1109,32 @@ template <typename Char> class float_writer {
   int num_digits_;
   int exp_;
   size_t size_;
-  float_spec params_;
+  float_specs specs_;
   Char decimal_point_;
 
   template <typename It> It prettify(It it) const {
     // pow(10, full_exp - 1) <= v <= pow(10, full_exp).
     int full_exp = num_digits_ + exp_;
-    if (params_.format == float_format::exp) {
+    if (specs_.format == float_format::exp) {
       // Insert a decimal point after the first digit and add an exponent.
       *it++ = static_cast<Char>(*digits_);
       if (num_digits_ > 1) *it++ = decimal_point_;
       it = copy_str<Char>(digits_ + 1, digits_ + num_digits_, it);
-      int num_zeros = params_.precision - num_digits_;
-      if (num_zeros > 0 && params_.trailing_zeros)
+      int num_zeros = specs_.precision - num_digits_;
+      if (num_zeros > 0 && specs_.trailing_zeros)
         it = std::fill_n(it, num_zeros, static_cast<Char>('0'));
-      *it++ = static_cast<Char>(params_.upper ? 'E' : 'e');
+      *it++ = static_cast<Char>(specs_.upper ? 'E' : 'e');
       return write_exponent<Char>(full_exp - 1, it);
     }
     if (num_digits_ <= full_exp) {
       // 1234e7 -> 12340000000[.0+]
       it = copy_str<Char>(digits_, digits_ + num_digits_, it);
       it = std::fill_n(it, full_exp - num_digits_, static_cast<Char>('0'));
-      if (params_.trailing_zeros) {
+      if (specs_.trailing_zeros) {
         *it++ = decimal_point_;
-        int num_zeros = params_.precision - full_exp;
+        int num_zeros = specs_.precision - full_exp;
         if (num_zeros <= 0) {
-          if (params_.format != float_format::fixed)
+          if (specs_.format != float_format::fixed)
             *it++ = static_cast<Char>('0');
           return it;
         }
@@ -1148,7 +1147,7 @@ template <typename Char> class float_writer {
     } else if (full_exp > 0) {
       // 1234e-2 -> 12.34[0+]
       it = copy_str<Char>(digits_, digits_ + full_exp, it);
-      if (!params_.trailing_zeros) {
+      if (!specs_.trailing_zeros) {
         // Remove trailing zeros.
         int num_digits = num_digits_;
         while (num_digits > full_exp && digits_[num_digits - 1] == '0')
@@ -1158,19 +1157,19 @@ template <typename Char> class float_writer {
       }
       *it++ = decimal_point_;
       it = copy_str<Char>(digits_ + full_exp, digits_ + num_digits_, it);
-      if (params_.precision > num_digits_) {
+      if (specs_.precision > num_digits_) {
         // Add trailing zeros.
-        int num_zeros = params_.precision - num_digits_;
+        int num_zeros = specs_.precision - num_digits_;
         it = std::fill_n(it, num_zeros, static_cast<Char>('0'));
       }
     } else {
       // 1234e-6 -> 0.001234
       *it++ = static_cast<Char>('0');
       int num_zeros = -full_exp;
-      if (params_.precision >= 0 && params_.precision < num_zeros)
-        num_zeros = params_.precision;
+      if (specs_.precision >= 0 && specs_.precision < num_zeros)
+        num_zeros = specs_.precision;
       int num_digits = num_digits_;
-      if (!params_.trailing_zeros)
+      if (!specs_.trailing_zeros)
         while (num_digits > 0 && digits_[num_digits - 1] == '0') --num_digits;
       if (num_zeros != 0 || num_digits != 0) {
         *it++ = decimal_point_;
@@ -1182,38 +1181,39 @@ template <typename Char> class float_writer {
   }
 
  public:
-  float_writer(const char* digits, int num_digits, int exp, float_spec spec,
+  float_writer(const char* digits, int num_digits, int exp, float_specs specs,
                Char decimal_point)
       : digits_(digits),
         num_digits_(num_digits),
         exp_(exp),
-        params_(spec),
+        specs_(specs),
         decimal_point_(decimal_point) {
     int full_exp = num_digits + exp - 1;
-    int precision = spec.precision > 0 ? spec.precision : 16;
-    if (params_.format == float_format::general &&
+    int precision = specs.precision > 0 ? specs.precision : 16;
+    if (specs_.format == float_format::general &&
         !(full_exp >= -4 && full_exp < precision)) {
-      params_.format = float_format::exp;
+      specs_.format = float_format::exp;
     }
     size_ = prettify(counting_iterator()).count();
-    size_ += spec.sign ? 1 : 0;
+    size_ += specs.sign ? 1 : 0;
   }
 
   size_t size() const { return size_; }
   size_t width() const { return size(); }
 
   template <typename It> void operator()(It&& it) {
-    if (params_.sign) *it++ = static_cast<Char>(data::signs[params_.sign]);
+    if (specs_.sign) *it++ = static_cast<Char>(data::signs[specs_.sign]);
     it = prettify(it);
   }
 };
 
 template <typename T>
-int format_float(T value, int precision, float_spec spec, buffer<char>& buf);
+int format_float(T value, int precision, float_specs specs, buffer<char>& buf);
 
 // Formats a floating-point number with snprintf.
 template <typename T>
-int snprintf_float(T value, int precision, float_spec spec, buffer<char>& buf);
+int snprintf_float(T value, int precision, float_specs specs,
+                   buffer<char>& buf);
 
 template <typename T> T promote_float(T value) { return value; }
 inline double promote_float(float value) { return value; }
@@ -1244,15 +1244,19 @@ FMT_CONSTEXPR void handle_int_type_spec(char spec, Handler&& handler) {
   }
 }
 
-template <typename ErrorHandler = error_handler>
-FMT_CONSTEXPR float_spec parse_float_type_spec(char spec,
-                                               ErrorHandler&& eh = {}) {
-  auto result = float_spec();
-  switch (spec) {
+template <typename ErrorHandler = error_handler, typename Char>
+FMT_CONSTEXPR float_specs parse_float_type_spec(
+    const basic_format_specs<Char>& specs, ErrorHandler&& eh = {}) {
+  auto result = float_specs();
+  result.trailing_zeros = specs.alt;
+  switch (specs.type) {
+  case 0:
+    result.format = float_format::general;
+    result.trailing_zeros |= specs.precision != 0;
+    break;
   case 'G':
     result.upper = true;
     FMT_FALLTHROUGH;
-  case 0:
   case 'g':
     result.format = float_format::general;
     break;
@@ -1261,12 +1265,14 @@ FMT_CONSTEXPR float_spec parse_float_type_spec(char spec,
     FMT_FALLTHROUGH;
   case 'e':
     result.format = float_format::exp;
+    result.trailing_zeros |= specs.precision != 0;
     break;
   case 'F':
     result.upper = true;
     FMT_FALLTHROUGH;
   case 'f':
     result.format = float_format::fixed;
+    result.trailing_zeros |= specs.precision != 0;
     break;
 #if FMT_DEPRECATED_PERCENT
   case '%':
@@ -1377,7 +1383,7 @@ void arg_map<Context>::init(const basic_format_args<Context>& args) {
   }
 }
 
-template <typename Char> struct inf_or_nan_writer {
+template <typename Char> struct nonfinite_writer {
   sign_t sign;
   const char* str;
   static constexpr size_t str_size = 3;
@@ -1690,62 +1696,56 @@ template <typename Range> class basic_writer {
 
   template <typename T, FMT_ENABLE_IF(std::is_floating_point<T>::value)>
   void write(T value, format_specs specs = {}) {
-    float_spec fspec = parse_float_type_spec(specs.type);
-    fspec.sign = specs.sign;
+    float_specs fspecs = parse_float_type_spec(specs);
+    fspecs.sign = specs.sign;
     if (std::signbit(value)) {  // value < 0 is false for NaN so use signbit.
-      fspec.sign = sign::minus;
+      fspecs.sign = sign::minus;
       value = -value;
-    } else if (fspec.sign == sign::minus) {
-      fspec.sign = sign::none;
+    } else if (fspecs.sign == sign::minus) {
+      fspecs.sign = sign::none;
     }
 
     if (!std::isfinite(value)) {
-      auto str = std::isinf(value) ? (fspec.upper ? "INF" : "inf")
-                                   : (fspec.upper ? "NAN" : "nan");
-      return write_padded(specs, inf_or_nan_writer<char_type>{fspec.sign, str});
+      auto str = std::isinf(value) ? (fspecs.upper ? "INF" : "inf")
+                                   : (fspecs.upper ? "NAN" : "nan");
+      return write_padded(specs, nonfinite_writer<char_type>{fspecs.sign, str});
     }
 
     if (specs.align == align::none) {
       specs.align = align::right;
     } else if (specs.align == align::numeric) {
-      if (fspec.sign) {
+      if (fspecs.sign) {
         auto&& it = reserve(1);
-        *it++ = static_cast<char_type>(data::signs[fspec.sign]);
-        fspec.sign = sign::none;
+        *it++ = static_cast<char_type>(data::signs[fspecs.sign]);
+        fspecs.sign = sign::none;
         if (specs.width != 0) --specs.width;
       }
       specs.align = align::right;
     }
 
     memory_buffer buffer;
-    if (fspec.format == float_format::hex) {
-      if (fspec.sign) buffer.push_back(data::signs[fspec.sign]);
-      fspec.alt = specs.alt;
-      snprintf_float(promote_float(value), specs.precision, fspec, buffer);
+    if (fspecs.format == float_format::hex) {
+      if (fspecs.sign) buffer.push_back(data::signs[fspecs.sign]);
+      snprintf_float(promote_float(value), specs.precision, fspecs, buffer);
       write_padded(specs, str_writer<char>{buffer.data(), buffer.size()});
       return;
     }
     int precision = specs.precision >= 0 || !specs.type ? specs.precision : 6;
-    if (fspec.format == float_format::exp) ++precision;
-    fspec.trailing_zeros =
-        (precision != 0 &&
-         (!specs.type || fspec.format == float_format::fixed ||
-          fspec.format == float_format::exp)) ||
-        specs.alt;
-    if (const_check(std::is_same<T, float>())) fspec.binary32 = true;
-    fspec.use_grisu = use_grisu<T>();
-    if (const_check(FMT_DEPRECATED_PERCENT) && fspec.percent) value *= 100;
-    int exp = format_float(promote_float(value), precision, fspec, buffer);
-    if (const_check(FMT_DEPRECATED_PERCENT) && fspec.percent) {
+    if (fspecs.format == float_format::exp) ++precision;
+    if (const_check(std::is_same<T, float>())) fspecs.binary32 = true;
+    fspecs.use_grisu = use_grisu<T>();
+    if (const_check(FMT_DEPRECATED_PERCENT) && fspecs.percent) value *= 100;
+    int exp = format_float(promote_float(value), precision, fspecs, buffer);
+    if (const_check(FMT_DEPRECATED_PERCENT) && fspecs.percent) {
       buffer.push_back('%');
       --exp;  // Adjust decimal place position.
     }
-    fspec.precision = precision;
-    char_type point = fspec.locale ? decimal_point<char_type>(locale_)
-                                   : static_cast<char_type>('.');
+    fspecs.precision = precision;
+    char_type point = fspecs.locale ? decimal_point<char_type>(locale_)
+                                    : static_cast<char_type>('.');
     write_padded(specs, float_writer<char_type>(buffer.data(),
                                                 static_cast<int>(buffer.size()),
-                                                exp, fspec, point));
+                                                exp, fspecs, point));
   }
 
   void write(char value) {
@@ -2954,7 +2954,7 @@ struct formatter<T, Char,
     case internal::float_type:
     case internal::double_type:
     case internal::long_double_type:
-      internal::parse_float_type_spec(specs_.type, eh);
+      internal::parse_float_type_spec(specs_, eh);
       break;
     case internal::cstring_type:
       internal::handle_cstring_type_spec(
