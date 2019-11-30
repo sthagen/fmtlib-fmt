@@ -220,7 +220,9 @@ inline Dest bit_cast(const Source& source) {
 
 inline bool is_big_endian() {
   auto u = 1u;
-  struct bytes { char data[sizeof(u)]; };
+  struct bytes {
+    char data[sizeof(u)];
+  };
   return bit_cast<bytes>(u).data[0] == 0;
 }
 
@@ -231,7 +233,10 @@ struct fallback_uintptr {
   fallback_uintptr() = default;
   explicit fallback_uintptr(const void* p) {
     *this = bit_cast<fallback_uintptr>(p);
-    if (is_big_endian()) std::memmove(value, value, sizeof(void*));
+    if (is_big_endian()) {
+      for (size_t i = 0, j = sizeof(void*) - 1; i < j; ++i, --j)
+        std::swap(value[i], value[j]);
+    }
   }
 };
 #ifdef UINTPTR_MAX
@@ -248,6 +253,13 @@ inline fallback_uintptr to_uintptr(const void* p) {
 // std::numeric_limits<T>::max() but shorter and not affected by the max macro.
 template <typename T> constexpr T max_value() {
   return (std::numeric_limits<T>::max)();
+}
+template <typename T> constexpr int num_bits() {
+  return std::numeric_limits<T>::digits;
+}
+template <> constexpr int num_bits<fallback_uintptr>() {
+  return static_cast<int>(sizeof(void*) *
+                          std::numeric_limits<unsigned char>::digits);
 }
 
 // An approximation of iterator_t for pre-C++20 systems.
@@ -968,7 +980,7 @@ Char* format_uint(Char* buffer, internal::fallback_uintptr n, int num_digits,
 template <unsigned BASE_BITS, typename Char, typename It, typename UInt>
 inline It format_uint(It out, UInt value, int num_digits, bool upper = false) {
   // Buffer should be large enough to hold all digits (digits / BASE_BITS + 1).
-  char buffer[std::numeric_limits<UInt>::digits / BASE_BITS + 1];
+  char buffer[num_bits<UInt>() / BASE_BITS + 1];
   format_uint<BASE_BITS>(buffer, value, num_digits, upper);
   return internal::copy_str<Char>(buffer, buffer + num_digits, out);
 }
