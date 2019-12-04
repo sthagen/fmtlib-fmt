@@ -166,15 +166,10 @@
 #endif
 
 #if !defined(FMT_HEADER_ONLY) && defined(_WIN32)
-#  if FMT_MSC_VER
-#    define FMT_NO_W4275 __pragma(warning(suppress : 4275))
-#  else
-#    define FMT_NO_W4275
-#  endif
 #  ifdef FMT_EXPORT
-#    define FMT_API FMT_NO_W4275 __declspec(dllexport)
+#    define FMT_API __declspec(dllexport)
 #  elif defined(FMT_SHARED)
-#    define FMT_API FMT_NO_W4275 __declspec(dllimport)
+#    define FMT_API __declspec(dllimport)
 #    define FMT_EXTERN_TEMPLATE_API FMT_API
 #  endif
 #endif
@@ -229,7 +224,7 @@ namespace internal {
 // A workaround for gcc 4.8 to make void_t work in a SFINAE context.
 template <typename... Ts> struct void_t_impl { using type = void; };
 
-void assert_fail(const char* file, int line, const char* message);
+FMT_API void assert_fail(const char* file, int line, const char* message);
 
 #ifndef FMT_ASSERT
 #  ifdef NDEBUG
@@ -1211,7 +1206,6 @@ template <typename Context, typename... Args> class format_arg_store {
   static constexpr unsigned long long types =
       is_packed ? internal::encode_types<Context, Args...>()
                 : internal::is_unpacked_bit | num_args;
-  FMT_DEPRECATED static constexpr unsigned long long TYPES = types;
 
   format_arg_store(const Args&... args)
       : data_{internal::make_arg<is_packed, Context>(args)...} {}
