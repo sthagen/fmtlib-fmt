@@ -1715,7 +1715,12 @@ template <typename Range> class basic_writer {
       return;
     }
     int precision = specs.precision >= 0 || !specs.type ? specs.precision : 6;
-    if (fspecs.format == float_format::exp) ++precision;
+    if (fspecs.format == float_format::exp) {
+      if (precision == max_value<int>())
+        FMT_THROW(format_error("number is too big"));
+      else
+        ++precision;
+    }
     if (const_check(std::is_same<T, float>())) fspecs.binary32 = true;
     fspecs.use_grisu = use_grisu<T>();
     if (const_check(FMT_DEPRECATED_PERCENT) && fspecs.percent) value *= 100;
@@ -3511,18 +3516,16 @@ FMT_END_NAMESPACE
 
 #define FMT_STRING_IMPL(s, ...)                                         \
   [] {                                                                  \
-    struct str : fmt::compile_string {                                  \
+    /* Use a macro-like name to avoid shadowing warnings. */            \
+    struct FMT_STRING : fmt::compile_string {                           \
       using char_type = typename std::remove_cv<std::remove_pointer<    \
           typename std::decay<decltype(s)>::type>::type>::type;         \
       __VA_ARGS__ FMT_CONSTEXPR                                         \
       operator fmt::basic_string_view<char_type>() const {              \
         return {s, sizeof(s) / sizeof(char_type) - 1};                  \
       }                                                                 \
-    } result;                                                           \
-    /* Suppress Qt Creator warning about unused operator. */            \
-    (void)static_cast<fmt::basic_string_view<typename str::char_type>>( \
-        result);                                                        \
-    return result;                                                      \
+    };                                                                  \
+    return FMT_STRING();                                                \
   }()
 
 /**
