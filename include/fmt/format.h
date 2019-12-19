@@ -86,12 +86,12 @@
 
 #ifndef FMT_THROW
 #  if FMT_EXCEPTIONS
-#    if FMT_MSC_VER
+#    if FMT_MSC_VER || FMT_NVCC
 FMT_BEGIN_NAMESPACE
 namespace internal {
 template <typename Exception> inline void do_throw(const Exception& x) {
-  // Silence unreachable code warnings in MSVC because these are nearly
-  // impossible to fix in a generic code.
+  // Silence unreachable code warnings in MSVC and NVCC because these
+  // are nearly impossible to fix in a generic code.
   volatile bool b = true;
   if (b) throw x;
 }
@@ -1035,7 +1035,7 @@ struct float_specs {
   bool percent : 1;
   bool binary32 : 1;
   bool use_grisu : 1;
-  bool trailing_zeros : 1;
+  bool showpoint : 1;
 };
 
 // Writes the exponent exp in the form "[+-]d{2,3}" to buffer.
@@ -1076,10 +1076,9 @@ template <typename Char> class float_writer {
       // Insert a decimal point after the first digit and add an exponent.
       *it++ = static_cast<Char>(*digits_);
       int num_zeros = specs_.precision - num_digits_;
-      bool trailing_zeros = num_zeros > 0 && specs_.trailing_zeros;
-      if (num_digits_ > 1 || trailing_zeros) *it++ = decimal_point_;
+      if (num_digits_ > 1 || specs_.showpoint) *it++ = decimal_point_;
       it = copy_str<Char>(digits_ + 1, digits_ + num_digits_, it);
-      if (trailing_zeros)
+      if (num_zeros > 0 && specs_.showpoint)
         it = std::fill_n(it, num_zeros, static_cast<Char>('0'));
       *it++ = static_cast<Char>(specs_.upper ? 'E' : 'e');
       return write_exponent<Char>(full_exp - 1, it);
@@ -1088,7 +1087,7 @@ template <typename Char> class float_writer {
       // 1234e7 -> 12340000000[.0+]
       it = copy_str<Char>(digits_, digits_ + num_digits_, it);
       it = std::fill_n(it, full_exp - num_digits_, static_cast<Char>('0'));
-      if (specs_.trailing_zeros) {
+      if (specs_.showpoint || specs_.precision < 0) {
         *it++ = decimal_point_;
         int num_zeros = specs_.precision - full_exp;
         if (num_zeros <= 0) {
@@ -1105,7 +1104,7 @@ template <typename Char> class float_writer {
     } else if (full_exp > 0) {
       // 1234e-2 -> 12.34[0+]
       it = copy_str<Char>(digits_, digits_ + full_exp, it);
-      if (!specs_.trailing_zeros) {
+      if (!specs_.showpoint) {
         // Remove trailing zeros.
         int num_digits = num_digits_;
         while (num_digits > full_exp && digits_[num_digits - 1] == '0')
@@ -1127,7 +1126,7 @@ template <typename Char> class float_writer {
       if (specs_.precision >= 0 && specs_.precision < num_zeros)
         num_zeros = specs_.precision;
       int num_digits = num_digits_;
-      if (!specs_.trailing_zeros)
+      if (!specs_.showpoint)
         while (num_digits > 0 && digits_[num_digits - 1] == '0') --num_digits;
       if (num_zeros != 0 || num_digits != 0) {
         *it++ = decimal_point_;
@@ -1206,11 +1205,11 @@ template <typename ErrorHandler = error_handler, typename Char>
 FMT_CONSTEXPR float_specs parse_float_type_spec(
     const basic_format_specs<Char>& specs, ErrorHandler&& eh = {}) {
   auto result = float_specs();
-  result.trailing_zeros = specs.alt;
+  result.showpoint = specs.alt;
   switch (specs.type) {
   case 0:
     result.format = float_format::general;
-    result.trailing_zeros |= specs.precision != 0;
+    result.showpoint |= specs.precision > 0;
     break;
   case 'G':
     result.upper = true;
@@ -1223,14 +1222,14 @@ FMT_CONSTEXPR float_specs parse_float_type_spec(
     FMT_FALLTHROUGH;
   case 'e':
     result.format = float_format::exp;
-    result.trailing_zeros |= specs.precision != 0;
+    result.showpoint |= specs.precision != 0;
     break;
   case 'F':
     result.upper = true;
     FMT_FALLTHROUGH;
   case 'f':
     result.format = float_format::fixed;
-    result.trailing_zeros |= specs.precision != 0;
+    result.showpoint |= specs.precision != 0;
     break;
 #if FMT_DEPRECATED_PERCENT
   case '%':
@@ -3447,18 +3446,17 @@ FMT_CONSTEXPR internal::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 FMT_END_NAMESPACE
 
-#define FMT_STRING_IMPL(s, ...)                                      \
-  [] {                                                               \
-    /* Use a macro-like name to avoid shadowing warnings. */         \
-    struct FMT_STRING : fmt::compile_string {                        \
-      using char_type = typename std::remove_cv<std::remove_pointer< \
-          typename std::decay<decltype(s)>::type>::type>::type;      \
-      __VA_ARGS__ FMT_CONSTEXPR                                      \
-      operator fmt::basic_string_view<char_type>() const {           \
-        return {s, sizeof(s) / sizeof(char_type) - 1};               \
-      }                                                              \
-    };                                                               \
-    return FMT_STRING();                                             \
+#define FMT_STRING_IMPL(s, ...)                              \
+  [] {                                                       \
+    /* Use a macro-like name to avoid shadowing warnings. */ \
+    struct FMT_STRING : fmt::compile_string {                \
+      using char_type = fmt::remove_cvref_t<decltype(*s)>;   \
+      __VA_ARGS__ FMT_CONSTEXPR                              \
+      operator fmt::basic_string_view<char_type>() const {   \
+        return {s, sizeof(s) / sizeof(char_type) - 1};       \
+      }                                                      \
+    };                                                       \
+    return FMT_STRING();                                     \
   }()
 
 /**
