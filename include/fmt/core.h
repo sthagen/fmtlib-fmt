@@ -208,6 +208,13 @@
 #  define FMT_USE_EXPERIMENTAL_STRING_VIEW
 #endif
 
+#ifndef FMT_UNICODE
+#  define FMT_UNICODE 0
+#endif
+#if FMT_UNICODE
+#  pragma execution_character_set("utf-8")
+#endif
+
 FMT_BEGIN_NAMESPACE
 
 // Implementations of enable_if_t and other metafunctions for pre-C++14 systems.
@@ -1341,12 +1348,12 @@ template <typename Context> class basic_format_args {
 struct format_args : basic_format_args<format_context> {
   template <typename... Args>
   format_args(Args&&... args)
-      : basic_format_args<format_context>(std::forward<Args>(args)...) {}
+      : basic_format_args<format_context>(static_cast<Args&&>(args)...) {}
 };
 struct wformat_args : basic_format_args<wformat_context> {
   template <typename... Args>
   wformat_args(Args&&... args)
-      : basic_format_args<wformat_context>(std::forward<Args>(args)...) {}
+      : basic_format_args<wformat_context>(static_cast<Args&&>(args)...) {}
 };
 
 template <typename Container> struct is_contiguous : std::false_type {};

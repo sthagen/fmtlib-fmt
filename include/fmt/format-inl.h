@@ -21,6 +21,11 @@
 #  include <locale>
 #endif
 
+#if FMT_UNICODE
+#include <windows.h>
+#include <io.h>
+#endif
+
 #ifdef _MSC_VER
 #  pragma warning(push)
 #  pragma warning(disable : 4702)  // unreachable code
@@ -1292,9 +1297,12 @@ FMT_FUNC internal::utf8_to_utf16::utf8_to_utf16(string_view s) {
     for (auto end = p + s.size() - block_size + 1; p < end;) p = transcode(p);
   }
   if (auto num_chars_left = s.data() + s.size() - p) {
-    char buf[4] = {};
+    char buf[2 * block_size - 1] = {};
     memcpy(buf, p, num_chars_left);
-    transcode(buf);
+    p = buf;
+    do {
+      p = transcode(p);
+    } while (p - buf < num_chars_left);
   }
   buffer_.push_back(0);
 }
@@ -1337,6 +1345,19 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
   memory_buffer buffer;
   internal::vformat_to(buffer, format_str,
                        basic_format_args<buffer_context<char>>(args));
+#if defined(_WIN32) && FMT_UNICODE
+  auto fd = _fileno(f);
+  if (_isatty(fd)) {
+    internal::utf8_to_utf16 u16(string_view(buffer.data(), buffer.size()));
+    auto written = DWORD();
+    if (!WriteConsoleW(
+      reinterpret_cast<HANDLE>(_get_osfhandle(fd)),
+      u16.c_str(), u16.size(), &written, nullptr)) {
+      throw format_error("failed to write to console");
+    }
+    return;
+  }
+#endif
   internal::fwrite_fully(buffer.data(), 1, buffer.size(), f);
 }
 
