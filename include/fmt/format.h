@@ -559,8 +559,7 @@ class buffer_range : public internal::output_range<
       : internal::output_range<iterator, T>(std::back_inserter(buf)) {}
 };
 
-// A UTF-8 string view.
-class u8string_view : public basic_string_view<char8_t> {
+class FMT_DEPRECATED u8string_view : public basic_string_view<char8_t> {
  public:
   u8string_view(const char* s)
       : basic_string_view<char8_t>(reinterpret_cast<const char8_t*>(s)) {}
@@ -571,8 +570,8 @@ class u8string_view : public basic_string_view<char8_t> {
 
 #if FMT_USE_USER_DEFINED_LITERALS
 inline namespace literals {
-inline u8string_view operator"" _u(const char* s, std::size_t n) {
-  return {s, n};
+inline basic_string_view<char8_t> operator"" _u(const char* s, std::size_t n) {
+  return {reinterpret_cast<const char8_t*>(s), n};
 }
 }  // namespace literals
 #endif
@@ -3112,6 +3111,22 @@ template <typename T> inline const void* ptr(const std::unique_ptr<T>& p) {
 template <typename T> inline const void* ptr(const std::shared_ptr<T>& p) {
   return p.get();
 }
+
+class bytes {
+ private:
+  string_view data_;
+  friend struct formatter<bytes>;
+
+ public:
+  explicit bytes(string_view data) : data_(data) {}
+};
+
+template <> struct formatter<bytes> : formatter<string_view> {
+  template <typename FormatContext>
+  auto format(bytes b, FormatContext& ctx) -> decltype(ctx.out()) {
+    return formatter<string_view>::format(b.data_, ctx);
+  }
+};
 
 template <typename It, typename Char> struct arg_join : internal::view {
   It begin;

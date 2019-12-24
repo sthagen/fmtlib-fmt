@@ -1507,13 +1507,15 @@ inline std::basic_string<Char> format(const S& format_str, Args&&... args) {
       {internal::make_args_checked<Args...>(format_str, args...)});
 }
 
-FMT_API void vprint(std::FILE* f, string_view format_str, format_args args);
-FMT_API void vprint(string_view format_str, format_args args);
+FMT_API void vprint(string_view, format_args);
+FMT_API void vprint(std::FILE*, string_view, format_args);
+FMT_API void vprint_mojibake(std::FILE*, string_view, format_args);
 
 /**
   \rst
-  Prints formatted data to the file *f*. For wide format strings,
-  *f* should be in wide-oriented mode set via ``fwide(f, 1)``.
+  Formats ``args`` according to specifications in ``format_str`` and writes the
+  output to the file ``f``. Strings are assumed to be Unicode-encoded unless the
+  ``FMT_UNICODE`` macro is set to 0.
 
   **Example**::
 
@@ -1523,13 +1525,20 @@ FMT_API void vprint(string_view format_str, format_args args);
 template <typename S, typename... Args,
           FMT_ENABLE_IF(internal::is_string<S>::value)>
 inline void print(std::FILE* f, const S& format_str, Args&&... args) {
+#if !defined(_WIN32) || FMT_UNICODE
   vprint(f, to_string_view(format_str),
          internal::make_args_checked<Args...>(format_str, args...));
+#else
+  vprint_mojibake(f, to_string_view(format_str),
+                  internal::make_args_checked<Args...>(format_str, args...));
+#endif
 }
 
 /**
   \rst
-  Prints formatted data to ``stdout``.
+  Formats ``args`` according to specifications in ``format_str`` and writes
+  the output to ``stdout``. Strings are assumed to be Unicode-encoded unless
+  the ``FMT_UNICODE`` macro is set to 0.
 
   **Example**::
 
@@ -1539,8 +1548,13 @@ inline void print(std::FILE* f, const S& format_str, Args&&... args) {
 template <typename S, typename... Args,
           FMT_ENABLE_IF(internal::is_string<S>::value)>
 inline void print(const S& format_str, Args&&... args) {
+#if !defined(_WIN32) || FMT_UNICODE
   vprint(to_string_view(format_str),
          internal::make_args_checked<Args...>(format_str, args...));
+#else
+  vprint_mojibake(stdout, to_string_view(format_str),
+                  internal::make_args_checked<Args...>(format_str, args...));
+#endif
 }
 FMT_END_NAMESPACE
 

@@ -21,9 +21,9 @@
 #  include <locale>
 #endif
 
-#if FMT_UNICODE
-#include <windows.h>
-#include <io.h>
+#ifdef _WIN32
+#  include <io.h>
+#  include <windows.h>
 #endif
 
 #ifdef _MSC_VER
@@ -1345,14 +1345,13 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
   memory_buffer buffer;
   internal::vformat_to(buffer, format_str,
                        basic_format_args<buffer_context<char>>(args));
-#if defined(_WIN32) && FMT_UNICODE
+#ifdef _WIN32
   auto fd = _fileno(f);
   if (_isatty(fd)) {
     internal::utf8_to_utf16 u16(string_view(buffer.data(), buffer.size()));
     auto written = DWORD();
-    if (!WriteConsoleW(
-      reinterpret_cast<HANDLE>(_get_osfhandle(fd)),
-      u16.c_str(), u16.size(), &written, nullptr)) {
+    if (!WriteConsoleW(reinterpret_cast<HANDLE>(_get_osfhandle(fd)),
+                       u16.c_str(), u16.size(), &written, nullptr)) {
       throw format_error("failed to write to console");
     }
     return;
@@ -1360,6 +1359,17 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
 #endif
   internal::fwrite_fully(buffer.data(), 1, buffer.size(), f);
 }
+
+#ifdef _WIN32
+// Print assuming legacy (non-Unicode) encoding.
+FMT_FUNC void vprint_mojibake(std::FILE* f, string_view format_str,
+                              format_args args) {
+  memory_buffer buffer;
+  internal::vformat_to(buffer, format_str,
+                       basic_format_args<buffer_context<char>>(args));
+  internal::fwrite_fully(buffer.data(), 1, buffer.size(), f);
+}
+#endif
 
 FMT_FUNC void vprint(string_view format_str, format_args args) {
   vprint(stdout, format_str, args);
