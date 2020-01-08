@@ -457,7 +457,7 @@ inline fp operator*(fp x, fp y) { return {multiply(x.f, y.f), x.e + y.e + 64}; }
 
 // Returns a cached power of 10 `c_k = c_k.f * pow(2, c_k.e)` such that its
 // (binary) exponent satisfies `min_exponent <= c_k.e <= min_exponent + 28`.
-FMT_FUNC fp get_cached_power(int min_exponent, int& pow10_exponent) {
+inline fp get_cached_power(int min_exponent, int& pow10_exponent) {
   const uint64_t one_over_log2_10 = 0x4d104d42;  // round(pow(2, 32) / log2(10))
   int index = static_cast<int>(
       static_cast<int64_t>(
@@ -757,6 +757,20 @@ enum result {
 };
 }
 
+// A version of count_digits optimized for grisu_gen_digits.
+inline unsigned grisu_count_digits(uint32_t n) {
+  if (n < 10) return 1;
+  if (n < 100) return 2;
+  if (n < 1000) return 3;
+  if (n < 10000) return 4;
+  if (n < 100000) return 5;
+  if (n < 1000000) return 6;
+  if (n < 10000000) return 7;
+  if (n < 100000000) return 8;
+  if (n < 1000000000) return 9;
+  return 10;
+}
+
 // Generates output using the Grisu digit-gen algorithm.
 // error: the size of the region (lower, upper) outside of which numbers
 // definitely do not round to value (Delta in Grisu3).
@@ -772,7 +786,7 @@ FMT_ALWAYS_INLINE digits::result grisu_gen_digits(fp value, uint64_t error,
   FMT_ASSERT(integral == value.f >> -one.e, "");
   // The fractional part of scaled value (p2 in Grisu) c = value % one.
   uint64_t fractional = value.f & (one.f - 1);
-  exp = count_digits(integral);  // kappa in Grisu.
+  exp = grisu_count_digits(integral);  // kappa in Grisu.
   // Divide by 10 to prevent overflow.
   auto result = handler.on_start(data::powers_of_10_64[exp - 1] << -one.e,
                                  value.f / 10, error * 10, exp);
@@ -1043,25 +1057,7 @@ int format_float(T value, int precision, float_specs specs, buffer<char>& buf) {
   int exp = 0;
   const int min_exp = -60;  // alpha in Grisu.
   int cached_exp10 = 0;     // K in Grisu.
-  if (precision != -1) {
-    if (precision > 17) return snprintf_float(value, precision, specs, buf);
-    fp normalized = normalize(fp(value));
-    const auto cached_pow = get_cached_power(
-        min_exp - (normalized.e + fp::significand_size), cached_exp10);
-    normalized = normalized * cached_pow;
-    fixed_handler handler{buf.data(), 0, precision, -cached_exp10, fixed};
-    if (grisu_gen_digits(normalized, 1, exp, handler) == digits::error)
-      return snprintf_float(value, precision, specs, buf);
-    int num_digits = handler.size;
-    if (!fixed) {
-      // Remove trailing zeros.
-      while (num_digits > 0 && buf[num_digits - 1] == '0') {
-        --num_digits;
-        ++exp;
-      }
-    }
-    buf.resize(to_unsigned(num_digits));
-  } else {
+  if (precision < 0) {
     fp fp_value;
     auto boundaries = specs.binary32
                           ? fp_value.assign_float_with_boundaries(value)
@@ -1090,6 +1086,24 @@ int format_float(T value, int precision, float_specs specs, buffer<char>& buf) {
       return exp;
     }
     buf.resize(to_unsigned(handler.size));
+  } else {
+    if (precision > 17) return snprintf_float(value, precision, specs, buf);
+    fp normalized = normalize(fp(value));
+    const auto cached_pow = get_cached_power(
+        min_exp - (normalized.e + fp::significand_size), cached_exp10);
+    normalized = normalized * cached_pow;
+    fixed_handler handler{buf.data(), 0, precision, -cached_exp10, fixed};
+    if (grisu_gen_digits(normalized, 1, exp, handler) == digits::error)
+      return snprintf_float(value, precision, specs, buf);
+    int num_digits = handler.size;
+    if (!fixed) {
+      // Remove trailing zeros.
+      while (num_digits > 0 && buf[num_digits - 1] == '0') {
+        --num_digits;
+        ++exp;
+      }
+    }
+    buf.resize(to_unsigned(num_digits));
   }
   return exp - cached_exp10;
 }
@@ -1366,8 +1380,7 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
 FMT_FUNC void internal::vprint_mojibake(std::FILE* f, string_view format_str,
                                         format_args args) {
   memory_buffer buffer;
-  vformat_to(buffer, format_str,
-                       basic_format_args<buffer_context<char>>(args));
+  vformat_to(buffer, format_str, basic_format_args<buffer_context<char>>(args));
   fwrite_fully(buffer.data(), 1, buffer.size(), f);
 }
 #endif
