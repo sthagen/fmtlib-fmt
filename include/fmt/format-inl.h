@@ -8,8 +8,6 @@
 #ifndef FMT_FORMAT_INL_H_
 #define FMT_FORMAT_INL_H_
 
-#include "format.h"
-
 #include <cassert>
 #include <cctype>
 #include <climits>
@@ -17,6 +15,8 @@
 #include <cstdarg>
 #include <cstring>  // for std::memmove
 #include <cwchar>
+
+#include "format.h"
 #if !defined(FMT_STATIC_THOUSANDS_SEPARATOR)
 #  include <locale>
 #endif
@@ -1038,7 +1038,7 @@ void fallback_format(Double d, buffer<char>& buf, int& exp10) {
 // if T is a IEEE754 binary32 or binary64 and snprintf otherwise.
 template <typename T>
 int format_float(T value, int precision, float_specs specs, buffer<char>& buf) {
-  static_assert(!std::is_same<T, float>(), "");
+  static_assert(!std::is_same<T, float>::value, "");
   FMT_ASSERT(value >= 0, "value is negative");
 
   const bool fixed = specs.format == float_format::fixed;
@@ -1113,7 +1113,7 @@ int snprintf_float(T value, int precision, float_specs specs,
                    buffer<char>& buf) {
   // Buffer capacity must be non-zero, otherwise MSVC's vsnprintf_s will fail.
   FMT_ASSERT(buf.capacity() > buf.size(), "empty buffer");
-  static_assert(!std::is_same<T, float>(), "");
+  static_assert(!std::is_same<T, float>::value, "");
 
   // Subtract 1 to account for the difference in precision since we use %e for
   // both general and exponent format.
@@ -1380,7 +1380,8 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
 FMT_FUNC void internal::vprint_mojibake(std::FILE* f, string_view format_str,
                                         format_args args) {
   memory_buffer buffer;
-  vformat_to(buffer, format_str, basic_format_args<buffer_context<char>>(args));
+  internal::vformat_to(buffer, format_str,
+                       basic_format_args<buffer_context<char>>(args));
   fwrite_fully(buffer.data(), 1, buffer.size(), f);
 }
 #endif
