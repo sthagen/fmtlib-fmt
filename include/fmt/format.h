@@ -3449,6 +3449,10 @@ template <typename Char> struct udl_arg {
   }
 };
 
+template <typename Char, size_t N>
+FMT_CONSTEXPR basic_string_view<Char> literal_to_view(const Char (&s)[N]) {
+  return {s, N - 1};
+}
 }  // namespace internal
 
 inline namespace literals {
@@ -3512,7 +3516,8 @@ FMT_END_NAMESPACE
       using char_type = fmt::remove_cvref_t<decltype(*s)>;   \
       __VA_ARGS__ FMT_CONSTEXPR                              \
       operator fmt::basic_string_view<char_type>() const {   \
-        return {s, sizeof(s) / sizeof(char_type) - 1};       \
+        /* FMT_STRING only accepts string literals. */       \
+        return fmt::internal::literal_to_view(s);            \
       }                                                      \
     };                                                       \
     return FMT_STRING();                                     \
@@ -3520,7 +3525,7 @@ FMT_END_NAMESPACE
 
 /**
   \rst
-  Constructs a compile-time format string.
+  Constructs a compile-time format string from a string literal *s*.
 
   **Example**::
 
