@@ -36,6 +36,12 @@
 #  define FMT_HAS_CPP_ATTRIBUTE(x) 0
 #endif
 
+#ifdef __clang__
+#  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
+#else
+#  define FMT_CLANG_VERSION 0
+#endif
+
 #if defined(__GNUC__) && !defined(__clang__)
 #  define FMT_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
 #else
@@ -253,7 +259,7 @@ namespace internal {
 // A workaround for gcc 4.8 to make void_t work in a SFINAE context.
 template <typename... Ts> struct void_t_impl { using type = void; };
 
-FMT_API void assert_fail(const char* file, int line, const char* message);
+FMT_NORETURN FMT_API void assert_fail(const char* file, int line, const char* message);
 
 #ifndef FMT_ASSERT
 #  ifdef NDEBUG
