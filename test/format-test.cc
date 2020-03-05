@@ -6,6 +6,7 @@
 // For the license information refer to format.h.
 
 #include <stdint.h>
+
 #include <cctype>
 #include <cfloat>
 #include <climits>
@@ -987,7 +988,9 @@ TEST(FormatterTest, Width) {
   EXPECT_EQ("    0xcafe", format("{0:10}", reinterpret_cast<void*>(0xcafe)));
   EXPECT_EQ("x          ", format("{0:11}", 'x'));
   EXPECT_EQ("str         ", format("{0:12}", "str"));
+  EXPECT_EQ(fmt::format("{:*^5}", "🤡"), "**🤡**");
 }
+
 template <typename T> inline T const_check(T value) { return value; }
 
 TEST(FormatterTest, RuntimeWidth) {
@@ -2519,18 +2522,6 @@ std::string from_u8str(const std::basic_string<char8_t>& str) {
 std::string from_u8str(const fmt::basic_string_view<char8_t>& str) {
   return std::string(str.begin(), str.end());
 }
-
-#if FMT_USE_USER_DEFINED_LITERALS
-TEST(FormatTest, U8StringViewLiteral) {
-  using namespace fmt::literals;
-  fmt::basic_string_view<char8_t> s = "ab"_u;
-  EXPECT_EQ(s.size(), 2u);
-  const char8_t* data = s.data();
-  EXPECT_EQ(char(data[0]), 'a');
-  EXPECT_EQ(char(data[1]), 'b');
-  EXPECT_EQ(from_u8str(format("{:*^5}"_u, "🤡"_u)), from_u8str("**🤡**"_u));
-}
-#endif
 
 TEST(FormatTest, EmphasisNonHeaderOnly) {
   // Ensure this compiles even if FMT_HEADER_ONLY is not defined.
