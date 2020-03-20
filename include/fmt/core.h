@@ -284,7 +284,8 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 
 #ifndef FMT_ASSERT
 #  ifdef NDEBUG
-#    define FMT_ASSERT(condition, message)
+     // FMT_ASSERT is not empty to avoid -Werror=empty-body.
+#    define FMT_ASSERT(condition, message) ((void)0)
 #  else
 #    define FMT_ASSERT(condition, message)                                    \
       ((condition) /* void() fails with -Winvalid-constexpr on clang 4.0.1 */ \
