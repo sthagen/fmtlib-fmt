@@ -240,9 +240,9 @@
 #endif
 
 #ifndef FMT_UNICODE
-#  define FMT_UNICODE 0
+#  define FMT_UNICODE !FMT_MSC_VER
 #endif
-#if FMT_UNICODE
+#if FMT_UNICODE && FMT_MSC_VER
 #  pragma execution_character_set("utf-8")
 #endif
 
@@ -284,7 +284,7 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 
 #ifndef FMT_ASSERT
 #  ifdef NDEBUG
-     // FMT_ASSERT is not empty to avoid -Werror=empty-body.
+// FMT_ASSERT is not empty to avoid -Werror=empty-body.
 #    define FMT_ASSERT(condition, message) ((void)0)
 #  else
 #    define FMT_ASSERT(condition, message)                                    \
@@ -322,6 +322,13 @@ template <typename Int>
 FMT_CONSTEXPR typename std::make_unsigned<Int>::type to_unsigned(Int value) {
   FMT_ASSERT(value >= 0, "negative value");
   return static_cast<typename std::make_unsigned<Int>::type>(value);
+}
+
+constexpr unsigned char micro[] = "\u00B5";
+
+constexpr bool is_utf8() {
+  return FMT_UNICODE ||
+         (sizeof(micro) == 3 && micro[0] == 0xC2 && micro[1] == 0xB5);
 }
 
 #ifdef __cpp_char8_t
@@ -1236,11 +1243,11 @@ class dynamic_arg_list {
 
  public:
   template <typename T, typename Arg> const T& push(const Arg& arg) {
-    auto next = std::move(head_);
-    auto node = new typed_node<T>(arg);
-    head_.reset(node);
-    head_->next = std::move(next);
-    return node->value;
+    auto node = std::unique_ptr<typed_node<T>>(new typed_node<T>(arg));
+    auto& value = node->value;
+    node->next = std::move(head_);
+    head_ = std::move(node);
+    return value;
   }
 };
 }  // namespace internal
@@ -1648,6 +1655,10 @@ typename buffer_context<Char>::iterator vformat_to(
     basic_format_args<buffer_context<type_identity_t<Char>>> args);
 
 FMT_API void vprint_mojibake(std::FILE*, string_view, format_args);
+
+#ifndef _WIN32
+inline void vprint_mojibake(std::FILE*, string_view, format_args) {}
+#endif
 }  // namespace internal
 
 /**
@@ -1738,14 +1749,12 @@ FMT_API void vprint(std::FILE*, string_view, format_args);
 template <typename S, typename... Args,
           FMT_ENABLE_IF(internal::is_string<S>::value)>
 inline void print(std::FILE* f, const S& format_str, Args&&... args) {
-#if !defined(_WIN32) || FMT_UNICODE
-  vprint(f, to_string_view(format_str),
-         internal::make_args_checked<Args...>(format_str, args...));
-#else
-  internal::vprint_mojibake(
-      f, to_string_view(format_str),
-      internal::make_args_checked<Args...>(format_str, args...));
-#endif
+  return internal::is_utf8()
+             ? vprint(f, to_string_view(format_str),
+                      internal::make_args_checked<Args...>(format_str, args...))
+             : internal::vprint_mojibake(
+                   f, to_string_view(format_str),
+                   internal::make_args_checked<Args...>(format_str, args...));
 }
 
 /**
@@ -1762,14 +1771,12 @@ inline void print(std::FILE* f, const S& format_str, Args&&... args) {
 template <typename S, typename... Args,
           FMT_ENABLE_IF(internal::is_string<S>::value)>
 inline void print(const S& format_str, Args&&... args) {
-#if !defined(_WIN32) || FMT_UNICODE
-  vprint(to_string_view(format_str),
-         internal::make_args_checked<Args...>(format_str, args...));
-#else
-  internal::vprint_mojibake(
-      stdout, to_string_view(format_str),
-      internal::make_args_checked<Args...>(format_str, args...));
-#endif
+  return internal::is_utf8()
+             ? vprint(to_string_view(format_str),
+                      internal::make_args_checked<Args...>(format_str, args...))
+             : internal::vprint_mojibake(
+                   stdout, to_string_view(format_str),
+                   internal::make_args_checked<Args...>(format_str, args...));
 }
 FMT_END_NAMESPACE
 
