@@ -43,6 +43,10 @@
 
 #include "core.h"
 
+#ifdef FMT_DEPRECATED_INCLUDE_OS
+#  include "os.h"
+#endif
+
 #ifdef __INTEL_COMPILER
 #  define FMT_ICC_VERSION __INTEL_COMPILER
 #elif defined(__ICL)
@@ -61,6 +65,12 @@
 #  define FMT_HAS_BUILTIN(x) __has_builtin(x)
 #else
 #  define FMT_HAS_BUILTIN(x) 0
+#endif
+
+#if FMT_GCC_VERSION || FMT_CLANG_VERSION
+#  define FMT_NOINLINE __attribute__((noinline))
+#else
+#  define FMT_NOINLINE
 #endif
 
 #if __cplusplus == 201103L || __cplusplus == 201402L
@@ -1152,9 +1162,11 @@ template <typename Char> class float_writer {
       // 1234e-6 -> 0.001234
       *it++ = static_cast<Char>('0');
       int num_zeros = -full_exp;
-      if (specs_.precision >= 0 && specs_.precision < num_zeros)
-        num_zeros = specs_.precision;
       int num_digits = num_digits_;
+      if (num_digits == 0 && specs_.precision >= 0 &&
+          specs_.precision < num_zeros) {
+        num_zeros = specs_.precision;
+      }
       // Remove trailing zeros.
       if (!specs_.showpoint)
         while (num_digits > 0 && digits_[num_digits - 1] == '0') --num_digits;
@@ -1386,7 +1398,7 @@ template <typename Char> struct nonfinite_writer {
 };
 
 template <typename OutputIt, typename Char>
-OutputIt fill(OutputIt it, size_t n, const fill_t<Char>& fill) {
+FMT_NOINLINE OutputIt fill(OutputIt it, size_t n, const fill_t<Char>& fill) {
   auto fill_size = fill.size();
   if (fill_size == 1) return std::fill_n(it, n, fill[0]);
   for (size_t i = 0; i < n; ++i) it = std::copy_n(fill.data(), fill_size, it);
@@ -2236,6 +2248,7 @@ enum class arg_id_kind { none, index, name };
 // An argument reference.
 template <typename Char> struct arg_ref {
   FMT_CONSTEXPR arg_ref() : kind(arg_id_kind::none), val() {}
+
   FMT_CONSTEXPR explicit arg_ref(int index)
       : kind(arg_id_kind::index), val(index) {}
   FMT_CONSTEXPR explicit arg_ref(basic_string_view<Char> name)
@@ -2424,7 +2437,7 @@ FMT_CONSTEXPR const Char* parse_align(const Char* begin, const Char* end,
         auto c = *begin;
         if (c == '{')
           return handler.on_error("invalid fill character '{'"), begin;
-        handler.on_fill(basic_string_view<Char>(begin, p - begin));
+        handler.on_fill(basic_string_view<Char>(begin, to_unsigned(p - begin)));
         begin = p + 1;
       } else
         ++begin;
@@ -3523,9 +3536,21 @@ template <typename Char> struct udl_arg {
   }
 };
 
+// Converts string literals to basic_string_view.
 template <typename Char, size_t N>
-FMT_CONSTEXPR basic_string_view<Char> literal_to_view(const Char (&s)[N]) {
-  return {s, N - 1};
+FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
+    const Char (&s)[N]) {
+  // Remove trailing null character if needed. Won't be present if this is used
+  // with raw character array (i.e. not defined as a string).
+  return {s,
+          N - ((std::char_traits<Char>::to_int_type(s[N - 1]) == 0) ? 1 : 0)};
+}
+
+// Converts string_view to basic_string_view.
+template <typename Char>
+FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
+    const std_string_view<Char>& s) {
+  return {s.data(), s.size()};
 }
 }  // namespace internal
 
@@ -3583,18 +3608,17 @@ FMT_CONSTEXPR internal::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 FMT_END_NAMESPACE
 
-#define FMT_STRING_IMPL(s, ...)                              \
-  [] {                                                       \
-    /* Use a macro-like name to avoid shadowing warnings. */ \
-    struct FMT_COMPILE_STRING : fmt::compile_string {        \
-      using char_type = fmt::remove_cvref_t<decltype(*s)>;   \
-      FMT_MAYBE_UNUSED __VA_ARGS__ FMT_CONSTEXPR             \
-      operator fmt::basic_string_view<char_type>() const {   \
-        /* FMT_STRING only accepts string literals. */       \
-        return fmt::internal::literal_to_view(s);            \
-      }                                                      \
-    };                                                       \
-    return FMT_COMPILE_STRING();                             \
+#define FMT_STRING_IMPL(s, ...)                                     \
+  [] {                                                              \
+    /* Use a macro-like name to avoid shadowing warnings. */        \
+    struct FMT_COMPILE_STRING : fmt::compile_string {               \
+      using char_type = fmt::remove_cvref_t<decltype(s[0])>;        \
+      FMT_MAYBE_UNUSED __VA_ARGS__ FMT_CONSTEXPR                    \
+      operator fmt::basic_string_view<char_type>() const {          \
+        return fmt::internal::compile_string_to_view<char_type>(s); \
+      }                                                             \
+    };                                                              \
+    return FMT_COMPILE_STRING();                                    \
   }()
 
 /**

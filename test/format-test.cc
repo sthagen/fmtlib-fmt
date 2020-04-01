@@ -46,6 +46,7 @@ using fmt::format_error;
 using fmt::memory_buffer;
 using fmt::string_view;
 using fmt::wmemory_buffer;
+using fmt::wstring_view;
 using fmt::internal::basic_writer;
 using fmt::internal::max_value;
 
@@ -1125,6 +1126,7 @@ TEST(FormatterTest, Precision) {
       format("{:.838A}", -2.14001164E+38));
   EXPECT_EQ("123.", format("{:#.0f}", 123.0));
   EXPECT_EQ("1.23", format("{:.02f}", 1.234));
+  EXPECT_EQ("0.001", format("{:.1g}", 0.001));
 
   EXPECT_THROW_MSG(format("{0:.2}", reinterpret_cast<void*>(0xcafe)),
                    format_error,
@@ -1755,6 +1757,8 @@ TEST(FormatTest, Print) {
   EXPECT_WRITE(stderr, fmt::print(stderr, "Don't {}!", "panic"),
                "Don't panic!");
 #endif
+  // Check that the wide print overload compiles.
+  if (fmt::internal::const_check(false)) fmt::print(L"test");
 }
 
 TEST(FormatTest, Variadic) {
@@ -1853,10 +1857,23 @@ TEST(FormatTest, UnpackedArgs) {
 struct string_like {};
 fmt::string_view to_string_view(string_like) { return "foo"; }
 
+constexpr char with_null[3] = {'{', '}', '\0'};
+constexpr char no_null[2] = {'{', '}'};
+
 TEST(FormatTest, CompileTimeString) {
   EXPECT_EQ("42", fmt::format(FMT_STRING("{}"), 42));
   EXPECT_EQ(L"42", fmt::format(FMT_STRING(L"{}"), 42));
   EXPECT_EQ("foo", fmt::format(FMT_STRING("{}"), string_like()));
+  (void)with_null;
+  (void)no_null;
+#if __cplusplus >= 201703L
+  EXPECT_EQ("42", fmt::format(FMT_STRING(with_null), 42));
+  EXPECT_EQ("42", fmt::format(FMT_STRING(no_null), 42));
+#endif
+#if defined(FMT_USE_STRING_VIEW) && __cplusplus >= 201703L
+  EXPECT_EQ("42", fmt::format(FMT_STRING(std::string_view("{}")), 42));
+  EXPECT_EQ(L"42", fmt::format(FMT_STRING(std::wstring_view(L"{}")), 42));
+#endif
 }
 
 TEST(FormatTest, CustomFormatCompileTimeString) {
