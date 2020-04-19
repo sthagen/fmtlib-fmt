@@ -210,7 +210,8 @@ TEST(ArgTest, FormatArgs) {
 }
 
 struct custom_context {
-  typedef char char_type;
+  using char_type = char;
+  using parse_context_type = fmt::format_parse_context;
 
   template <typename T> struct formatter_type {
     template <typename ParseContext>
@@ -453,28 +454,6 @@ TEST(FormatDynArgsTest, CustomFormat) {
 
   std::string result = fmt::vformat("{} and {} and {}", store);
   EXPECT_EQ("cust=0 and cust=1 and cust=3", result);
-}
-
-TEST(FormatDynArgsTest, NamedArgByRef) {
-  fmt::dynamic_format_arg_store<fmt::format_context> store;
-
-  // Note: fmt::arg() constructs an object which holds a reference
-  // to its value. It's not an aggregate, so it doesn't extend the
-  // reference lifetime. As a result, it's a very bad idea passing temporary
-  // as a named argument value. Only GCC with optimization level >0
-  // complains about this.
-  //
-  // A real life usecase is when you have both name and value alive
-  // guarantee their lifetime and thus don't want them to be copied into
-  // storages.
-  int a1_val{42};
-  auto a1 = fmt::arg("a1_", a1_val);
-  store.push_back(std::cref(a1));
-
-  std::string result = fmt::vformat("{a1_}",  // and {} and {}",
-                                    store);
-
-  EXPECT_EQ("42", result);
 }
 
 struct copy_throwable {

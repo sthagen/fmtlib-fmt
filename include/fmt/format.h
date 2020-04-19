@@ -139,8 +139,7 @@ FMT_END_NAMESPACE
 // support UDL templates and GCC >= 9 warns about them.
 #  if FMT_USE_USER_DEFINED_LITERALS && FMT_ICC_VERSION == 0 && \
       FMT_CUDA_VERSION == 0 &&                                 \
-      ((FMT_GCC_VERSION >= 604 && FMT_GCC_VERSION <= 900 &&    \
-        __cplusplus >= 201402L) ||                             \
+      ((FMT_GCC_VERSION >= 604 && __cplusplus >= 201402L) ||   \
        FMT_CLANG_VERSION >= 304)
 #    define FMT_USE_UDL_TEMPLATE 1
 #  else
@@ -189,7 +188,7 @@ inline uint32_t clz(uint32_t x) {
   // Static analysis complains about using uninitialized data
   // "r", but the only way that can happen is if "x" is 0,
   // which the callers guarantee to not happen.
-#  pragma warning(suppress : 6102)
+  FMT_SUPPRESS_MSC_WARNING(6102)
   return 31 - r;
 }
 #  define FMT_BUILTIN_CLZ(n) internal::clz(n)
@@ -214,7 +213,7 @@ inline uint32_t clzll(uint64_t x) {
   // Static analysis complains about using uninitialized data
   // "r", but the only way that can happen is if "x" is 0,
   // which the callers guarantee to not happen.
-#  pragma warning(suppress : 6102)
+  FMT_SUPPRESS_MSC_WARNING(6102)
   return 63 - r;
 }
 #  define FMT_BUILTIN_CLZLL(n) internal::clzll(n)
@@ -1287,6 +1286,7 @@ FMT_CONSTEXPR float_specs parse_float_type_spec(
     result.format = float_format::hex;
     break;
   case 'n':
+  case 'L':
     result.locale = true;
     break;
   default:
@@ -1365,24 +1365,6 @@ class cstring_type_checker : public ErrorHandler {
   FMT_CONSTEXPR void on_string() {}
   FMT_CONSTEXPR void on_pointer() {}
 };
-
-template <typename Context>
-void arg_map<Context>::init(const basic_format_args<Context>& args) {
-  if (map_) return;
-  map_ = new entry[internal::to_unsigned(args.max_size())];
-  if (args.is_packed()) {
-    for (int i = 0;; ++i) {
-      internal::type arg_type = args.type(i);
-      if (arg_type == internal::type::none_type) return;
-      if (arg_type == internal::type::named_arg_type)
-        push_back(args.values_[i]);
-    }
-  }
-  for (int i = 0, n = args.max_size(); i < n; ++i) {
-    auto type = args.args_[i].type_;
-    if (type == internal::type::named_arg_type) push_back(args.args_[i].value_);
-  }
-}
 
 template <typename Char> struct nonfinite_writer {
   sign_t sign;
@@ -2138,12 +2120,18 @@ template <typename ErrorHandler> class numeric_specs_checker {
 // A format specifier handler that checks if specifiers are consistent with the
 // argument type.
 template <typename Handler> class specs_checker : public Handler {
+ private:
+  numeric_specs_checker<Handler> checker_;
+
+  // Suppress an MSVC warning about using this in initializer list.
+  FMT_CONSTEXPR Handler& error_handler() { return *this; }
+
  public:
   FMT_CONSTEXPR specs_checker(const Handler& handler, internal::type arg_type)
-      : Handler(handler), checker_(*this, arg_type) {}
+      : Handler(handler), checker_(error_handler(), arg_type) {}
 
   FMT_CONSTEXPR specs_checker(const specs_checker& other)
-      : Handler(other), checker_(*this, other.arg_type_) {}
+      : Handler(other), checker_(error_handler(), other.arg_type_) {}
 
   FMT_CONSTEXPR void on_align(align_t align) {
     if (align == align::numeric) checker_.require_numeric_argument();
@@ -2176,9 +2164,6 @@ template <typename Handler> class specs_checker : public Handler {
   }
 
   FMT_CONSTEXPR void end_precision() { checker_.check_precision(); }
-
- private:
-  numeric_specs_checker<Handler> checker_;
 };
 
 template <template <typename> class Handler, typename FormatArg,
@@ -2191,10 +2176,10 @@ FMT_CONSTEXPR int get_dynamic_spec(FormatArg arg, ErrorHandler eh) {
 
 struct auto_id {};
 
-template <typename Context>
-FMT_CONSTEXPR typename Context::format_arg get_arg(Context& ctx, int id) {
+template <typename Context, typename ID>
+FMT_CONSTEXPR typename Context::format_arg get_arg(Context& ctx, ID id) {
   auto arg = ctx.arg(id);
-  if (!arg) ctx.on_error("argument index out of range");
+  if (!arg) ctx.on_error("argument not found");
   return arg;
 }
 
@@ -2237,7 +2222,7 @@ class specs_handler : public specs_setter<typename Context::char_type> {
 
   FMT_CONSTEXPR format_arg get_arg(basic_string_view<char_type> arg_id) {
     parse_context_.check_arg_id(arg_id);
-    return context_.arg(arg_id);
+    return internal::get_arg(context_, arg_id);
   }
 
   ParseContext& parse_context_;
@@ -2678,7 +2663,7 @@ class format_string_checker {
   enum { num_args = sizeof...(Args) };
 
   FMT_CONSTEXPR void check_arg_id() {
-    if (arg_id_ >= num_args) context_.on_error("argument index out of range");
+    if (arg_id_ >= num_args) context_.on_error("argument not found");
   }
 
   // Format specifier parsing function.
@@ -3123,16 +3108,6 @@ template <typename Char = char> class dynamic_formatter {
   const Char* format_str_;
 };
 
-template <typename Range, typename Char>
-typename basic_format_context<Range, Char>::format_arg
-basic_format_context<Range, Char>::arg(basic_string_view<char_type> name) {
-  map_.init(args_);
-  format_arg arg = map_.find(name);
-  if (arg.type() == internal::type::none_type)
-    this->on_error("argument not found");
-  return arg;
-}
-
 template <typename Char, typename ErrorHandler>
 FMT_CONSTEXPR void advance_to(
     basic_format_parse_context<Char, ErrorHandler>& ctx, const Char* p) {
@@ -3156,14 +3131,16 @@ struct format_handler : internal::error_handler {
     context.advance_to(out);
   }
 
-  void get_arg(int id) { arg = internal::get_arg(context, id); }
+  template <typename ID> void get_arg(ID id) {
+    arg = internal::get_arg(context, id);
+  }
 
   void on_arg_id() { get_arg(parse_context.next_arg_id()); }
   void on_arg_id(int id) {
     parse_context.check_arg_id(id);
     get_arg(id);
   }
-  void on_arg_id(basic_string_view<Char> id) { arg = context.arg(id); }
+  void on_arg_id(basic_string_view<Char> id) { get_arg(id); }
 
   void on_replacement_field(const Char* p) {
     advance_to(parse_context, p);
@@ -3244,9 +3221,9 @@ template <> struct formatter<bytes> {
         specs_.precision, specs_.precision_ref, ctx);
     using range_type =
         internal::output_range<typename FormatContext::iterator, char>;
-    internal::basic_writer<range_type> writer(range_type(ctx.out()));
-    writer.write_bytes(b.data_, specs_);
-    return writer.out();
+    internal::basic_writer<range_type> w(range_type(ctx.out()));
+    w.write_bytes(b.data_, specs_);
+    return w.out();
   }
 
  private:
@@ -3530,7 +3507,7 @@ template <typename Char> struct udl_formatter {
 #  endif  // FMT_USE_UDL_TEMPLATE
 
 template <typename Char> struct udl_arg {
-  basic_string_view<Char> str;
+  const Char* str;
 
   template <typename T> named_arg<T, Char> operator=(T&& value) const {
     return {str, std::forward<T>(value)};
@@ -3558,6 +3535,7 @@ FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
 inline namespace literals {
 #  if FMT_USE_UDL_TEMPLATE
 #    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wpedantic"
 #    if FMT_CLANG_VERSION
 #      pragma GCC diagnostic ignored "-Wgnu-string-literal-operator-template"
 #    endif
@@ -3598,12 +3576,12 @@ FMT_CONSTEXPR internal::udl_formatter<wchar_t> operator"" _format(
   \endrst
  */
 FMT_CONSTEXPR internal::udl_arg<char> operator"" _a(const char* s,
-                                                    std::size_t n) {
-  return {{s, n}};
+                                                    std::size_t) {
+  return {s};
 }
 FMT_CONSTEXPR internal::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
-                                                       std::size_t n) {
-  return {{s, n}};
+                                                       std::size_t) {
+  return {s};
 }
 }  // namespace literals
 #endif  // FMT_USE_USER_DEFINED_LITERALS

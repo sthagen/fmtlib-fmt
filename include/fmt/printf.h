@@ -172,23 +172,27 @@ template <typename Char> class printf_width_handler {
 };
 
 template <typename Char, typename Context>
-void printf(buffer<Char>& buf, basic_string_view<Char> format,
-            basic_format_args<Context> args) {
+void vprintf(buffer<Char>& buf, basic_string_view<Char> format,
+             basic_format_args<Context> args) {
   Context(std::back_inserter(buf), format, args).format();
-}
-
-template <typename OutputIt, typename Char, typename Context>
-internal::truncating_iterator<OutputIt> printf(
-    internal::truncating_iterator<OutputIt> it, basic_string_view<Char> format,
-    basic_format_args<Context> args) {
-  return Context(it, format, args).format();
 }
 }  // namespace internal
 
-using internal::printf;  // For printing into memory_buffer.
+// For printing into memory_buffer.
+template <typename Char, typename Context>
+FMT_DEPRECATED void printf(internal::buffer<Char>& buf,
+                           basic_string_view<Char> format,
+                           basic_format_args<Context> args) {
+  return internal::vprintf(buf, format, args);
+}
+using internal::vprintf;
 
 template <typename Range> class printf_arg_formatter;
 
+template <typename Char>
+class basic_printf_parse_context : public basic_format_parse_context<Char> {
+  using basic_format_parse_context<Char>::basic_format_parse_context;
+};
 template <typename OutputIt, typename Char> class basic_printf_context;
 
 /**
@@ -324,6 +328,7 @@ template <typename OutputIt, typename Char> class basic_printf_context {
   using char_type = Char;
   using iterator = OutputIt;
   using format_arg = basic_format_arg<basic_printf_context>;
+  using parse_context_type = basic_printf_parse_context<Char>;
   template <typename T> using formatter_type = printf_formatter<T>;
 
  private:
@@ -331,7 +336,7 @@ template <typename OutputIt, typename Char> class basic_printf_context {
 
   OutputIt out_;
   basic_format_args<basic_printf_context> args_;
-  basic_format_parse_context<Char> parse_ctx_;
+  parse_context_type parse_ctx_;
 
   static void parse_flags(format_specs& specs, const Char*& it,
                           const Char* end);
@@ -362,7 +367,7 @@ template <typename OutputIt, typename Char> class basic_printf_context {
 
   format_arg arg(int id) const { return args_.get(id); }
 
-  basic_format_parse_context<Char>& parse_context() { return parse_ctx_; }
+  parse_context_type& parse_context() { return parse_ctx_; }
 
   FMT_CONSTEXPR void on_error(const char* message) {
     parse_ctx_.on_error(message);
@@ -471,7 +476,7 @@ OutputIt basic_printf_context<OutputIt, Char>::format() {
 
     // Parse argument index, flags and width.
     int arg_index = parse_header(it, end, specs);
-    if (arg_index == 0) on_error("argument index out of range");
+    if (arg_index == 0) on_error("argument not found");
 
     // Parse precision.
     if (it != end && *it == '.') {
@@ -605,7 +610,7 @@ inline std::basic_string<Char> vsprintf(
     const S& format,
     basic_format_args<basic_printf_context_t<type_identity_t<Char>>> args) {
   basic_memory_buffer<Char> buffer;
-  printf(buffer, to_string_view(format), args);
+  vprintf(buffer, to_string_view(format), args);
   return to_string(buffer);
 }
 
@@ -630,7 +635,7 @@ inline int vfprintf(
     std::FILE* f, const S& format,
     basic_format_args<basic_printf_context_t<type_identity_t<Char>>> args) {
   basic_memory_buffer<Char> buffer;
-  printf(buffer, to_string_view(format), args);
+  vprintf(buffer, to_string_view(format), args);
   std::size_t size = buffer.size();
   return std::fwrite(buffer.data(), sizeof(Char), size, f) < size
              ? -1
@@ -683,7 +688,7 @@ inline int vfprintf(
     std::basic_ostream<Char>& os, const S& format,
     basic_format_args<basic_printf_context_t<type_identity_t<Char>>> args) {
   basic_memory_buffer<Char> buffer;
-  printf(buffer, to_string_view(format), args);
+  vprintf(buffer, to_string_view(format), args);
   internal::write(os, buffer);
   return static_cast<int>(buffer.size());
 }
