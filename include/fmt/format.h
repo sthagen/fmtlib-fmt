@@ -627,14 +627,17 @@ enum { inline_buffer_size = 500 };
  */
 template <typename T, std::size_t SIZE = inline_buffer_size,
           typename Allocator = std::allocator<T>>
-class basic_memory_buffer : private Allocator, public internal::buffer<T> {
+class basic_memory_buffer : public internal::buffer<T> {
  private:
   T store_[SIZE];
+
+  // Don't inherit from Allocator avoid generating type_info for it.
+  Allocator alloc_;
 
   // Deallocate memory allocated by the buffer.
   void deallocate() {
     T* data = this->data();
-    if (data != store_) Allocator::deallocate(data, this->capacity());
+    if (data != store_) alloc_.deallocate(data, this->capacity());
   }
 
  protected:
@@ -645,7 +648,7 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
   using const_reference = const T&;
 
   explicit basic_memory_buffer(const Allocator& alloc = Allocator())
-      : Allocator(alloc) {
+      : alloc_(alloc) {
     this->set(store_, SIZE);
   }
   ~basic_memory_buffer() FMT_OVERRIDE { deallocate(); }
@@ -653,8 +656,7 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
  private:
   // Move data from other to this buffer.
   void move(basic_memory_buffer& other) {
-    Allocator &this_alloc = *this, &other_alloc = other;
-    this_alloc = std::move(other_alloc);
+    alloc_ = std::move(other.alloc_);
     T* data = other.data();
     std::size_t size = other.size(), capacity = other.capacity();
     if (data == other.store_) {
@@ -692,7 +694,7 @@ class basic_memory_buffer : private Allocator, public internal::buffer<T> {
   }
 
   // Returns a copy of the allocator associated with this buffer.
-  Allocator get_allocator() const { return *this; }
+  Allocator get_allocator() const { return alloc_; }
 };
 
 template <typename T, std::size_t SIZE, typename Allocator>
@@ -704,7 +706,8 @@ void basic_memory_buffer<T, SIZE, Allocator>::grow(std::size_t size) {
   std::size_t new_capacity = old_capacity + old_capacity / 2;
   if (size > new_capacity) new_capacity = size;
   T* old_data = this->data();
-  T* new_data = std::allocator_traits<Allocator>::allocate(*this, new_capacity);
+  T* new_data =
+      std::allocator_traits<Allocator>::allocate(alloc_, new_capacity);
   // The following code doesn't throw, so the raw pointer above doesn't leak.
   std::uninitialized_copy(old_data, old_data + this->size(),
                           internal::make_checked(new_data, new_capacity));
@@ -712,7 +715,7 @@ void basic_memory_buffer<T, SIZE, Allocator>::grow(std::size_t size) {
   // deallocate must not throw according to the standard, but even if it does,
   // the buffer already uses the new storage and will deallocate it in
   // destructor.
-  if (old_data != store_) Allocator::deallocate(old_data, old_capacity);
+  if (old_data != store_) alloc_.deallocate(old_data, old_capacity);
 }
 
 using memory_buffer = basic_memory_buffer<char>;
@@ -1637,7 +1640,7 @@ template <typename Range> class basic_writer {
     UIntPtr value;
     int num_digits;
 
-    size_t size() const { return to_unsigned(num_digits) + 2; }
+    size_t size() const { return to_unsigned(num_digits) + size_t(2); }
     size_t width() const { return size(); }
 
     template <typename It> void operator()(It&& it) const {
@@ -2629,19 +2632,17 @@ class format_string_checker {
   explicit FMT_CONSTEXPR format_string_checker(
       basic_string_view<Char> format_str, ErrorHandler eh)
       : arg_id_(-1),
-        context_(format_str, eh),
+        context_(format_str, num_args, eh),
         parse_funcs_{&parse_format_specs<Args, parse_context_type>...} {}
 
   FMT_CONSTEXPR void on_text(const Char*, const Char*) {}
 
   FMT_CONSTEXPR void on_arg_id() {
     arg_id_ = context_.next_arg_id();
-    check_arg_id();
   }
   FMT_CONSTEXPR void on_arg_id(int id) {
     arg_id_ = id;
     context_.check_arg_id(id);
-    check_arg_id();
   }
   FMT_CONSTEXPR void on_arg_id(basic_string_view<Char>) {
     on_error("compile-time checks don't support named arguments");
@@ -2662,10 +2663,6 @@ class format_string_checker {
   using parse_context_type = basic_format_parse_context<Char, ErrorHandler>;
   enum { num_args = sizeof...(Args) };
 
-  FMT_CONSTEXPR void check_arg_id() {
-    if (arg_id_ >= num_args) context_.on_error("argument not found");
-  }
-
   // Format specifier parsing function.
   using parse_func = const Char* (*)(parse_context_type&);
 
@@ -2674,20 +2671,60 @@ class format_string_checker {
   parse_func parse_funcs_[num_args > 0 ? num_args : 1];
 };
 
-template <typename Char, typename ErrorHandler, typename... Args>
-FMT_CONSTEXPR bool do_check_format_string(basic_string_view<Char> s,
-                                          ErrorHandler eh = ErrorHandler()) {
-  format_string_checker<Char, ErrorHandler, Args...> checker(s, eh);
-  parse_format_string<true>(s, checker);
-  return true;
+// Converts string literals to basic_string_view.
+template <typename Char, size_t N>
+FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
+    const Char (&s)[N]) {
+  // Remove trailing null character if needed. Won't be present if this is used
+  // with raw character array (i.e. not defined as a string).
+  return {s,
+          N - ((std::char_traits<Char>::to_int_type(s[N - 1]) == 0) ? 1 : 0)};
 }
+
+// Converts string_view to basic_string_view.
+template <typename Char>
+FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
+    const std_string_view<Char>& s) {
+  return {s.data(), s.size()};
+}
+
+#define FMT_STRING_IMPL(s, ...)                                     \
+  [] {                                                              \
+    /* Use a macro-like name to avoid shadowing warnings. */        \
+    struct FMT_COMPILE_STRING : fmt::compile_string {               \
+      using char_type = fmt::remove_cvref_t<decltype(s[0])>;        \
+      FMT_MAYBE_UNUSED __VA_ARGS__ FMT_CONSTEXPR                    \
+      operator fmt::basic_string_view<char_type>() const {          \
+        return fmt::internal::compile_string_to_view<char_type>(s); \
+      }                                                             \
+    };                                                              \
+    return FMT_COMPILE_STRING();                                    \
+  }()
+
+/**
+  \rst
+  Constructs a compile-time format string from a string literal *s*.
+
+  **Example**::
+
+    // A compile-time error because 'd' is an invalid specifier for strings.
+    std::string s = format(FMT_STRING("{:d}"), "foo");
+  \endrst
+ */
+#define FMT_STRING(s) FMT_STRING_IMPL(s, )
+
+#if defined(FMT_STRING_ALIAS) && FMT_STRING_ALIAS
+#  define fmt(s) FMT_STRING_IMPL(s, [[deprecated]])
+#endif
 
 template <typename... Args, typename S,
           enable_if_t<(is_compile_string<S>::value), int>>
 void check_format_string(S format_str) {
-  FMT_CONSTEXPR_DECL bool invalid_format = internal::do_check_format_string<
-      typename S::char_type, internal::error_handler,
-      remove_const_t<remove_reference_t<Args>>...>(to_string_view(format_str));
+  FMT_CONSTEXPR_DECL auto s = to_string_view(format_str);
+  using checker = format_string_checker<typename S::char_type, error_handler,
+                                        remove_cvref_t<Args>...>;
+  FMT_CONSTEXPR_DECL bool invalid_format =
+      (parse_format_string<true>(s, checker(s, {})), true);
   (void)invalid_format;
 }
 
@@ -3487,11 +3524,8 @@ template <typename Char, Char... CHARS> class udl_formatter {
  public:
   template <typename... Args>
   std::basic_string<Char> operator()(Args&&... args) const {
-    FMT_CONSTEXPR_DECL Char s[] = {CHARS..., '\0'};
-    FMT_CONSTEXPR_DECL bool invalid_format =
-        do_check_format_string<Char, error_handler, remove_cvref_t<Args>...>(
-            basic_string_view<Char>(s, sizeof...(CHARS)));
-    (void)invalid_format;
+    static FMT_CONSTEXPR_DECL Char s[] = {CHARS..., '\0'};
+    check_format_string<remove_cvref_t<Args>...>(FMT_STRING(s));
     return format(s, std::forward<Args>(args)...);
   }
 };
@@ -3513,23 +3547,6 @@ template <typename Char> struct udl_arg {
     return {str, std::forward<T>(value)};
   }
 };
-
-// Converts string literals to basic_string_view.
-template <typename Char, size_t N>
-FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
-    const Char (&s)[N]) {
-  // Remove trailing null character if needed. Won't be present if this is used
-  // with raw character array (i.e. not defined as a string).
-  return {s,
-          N - ((std::char_traits<Char>::to_int_type(s[N - 1]) == 0) ? 1 : 0)};
-}
-
-// Converts string_view to basic_string_view.
-template <typename Char>
-FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
-    const std_string_view<Char>& s) {
-  return {s.data(), s.size()};
-}
 }  // namespace internal
 
 inline namespace literals {
@@ -3586,35 +3603,6 @@ FMT_CONSTEXPR internal::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
 }  // namespace literals
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 FMT_END_NAMESPACE
-
-#define FMT_STRING_IMPL(s, ...)                                     \
-  [] {                                                              \
-    /* Use a macro-like name to avoid shadowing warnings. */        \
-    struct FMT_COMPILE_STRING : fmt::compile_string {               \
-      using char_type = fmt::remove_cvref_t<decltype(s[0])>;        \
-      FMT_MAYBE_UNUSED __VA_ARGS__ FMT_CONSTEXPR                    \
-      operator fmt::basic_string_view<char_type>() const {          \
-        return fmt::internal::compile_string_to_view<char_type>(s); \
-      }                                                             \
-    };                                                              \
-    return FMT_COMPILE_STRING();                                    \
-  }()
-
-/**
-  \rst
-  Constructs a compile-time format string from a string literal *s*.
-
-  **Example**::
-
-    // A compile-time error because 'd' is an invalid specifier for strings.
-    std::string s = format(FMT_STRING("{:d}"), "foo");
-  \endrst
- */
-#define FMT_STRING(s) FMT_STRING_IMPL(s, )
-
-#if defined(FMT_STRING_ALIAS) && FMT_STRING_ALIAS
-#  define fmt(s) FMT_STRING_IMPL(s, [[deprecated]])
-#endif
 
 #ifdef FMT_HEADER_ONLY
 #  define FMT_FUNC inline

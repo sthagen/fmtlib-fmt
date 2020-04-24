@@ -8,6 +8,7 @@
 #ifndef FMT_CORE_H_
 #define FMT_CORE_H_
 
+#include <climits>
 #include <cstdio>  // std::FILE
 #include <cstring>
 #include <functional>
@@ -171,8 +172,8 @@
 #endif
 
 #ifndef FMT_INLINE
-#  if FMT_GCC_VERSION
-#    define FMT_INLINE __attribute__((always_inline))
+#  if FMT_GCC_VERSION && FMT_USE_CONSTEXPR
+#    define FMT_INLINE inline __attribute__((always_inline))
 #  else
 #    define FMT_INLINE
 #  endif
@@ -562,14 +563,24 @@ class basic_format_parse_context : private ErrorHandler {
  private:
   basic_string_view<Char> format_str_;
   int next_arg_id_;
+  int num_args_;
+
+  FMT_CONSTEXPR int do_check_arg_id(int id) {
+    if (id >= num_args_) on_error("argument not found");
+    return id;
+  }
 
  public:
   using char_type = Char;
   using iterator = typename basic_string_view<Char>::iterator;
 
   explicit FMT_CONSTEXPR basic_format_parse_context(
-      basic_string_view<Char> format_str, ErrorHandler eh = ErrorHandler())
-      : ErrorHandler(eh), format_str_(format_str), next_arg_id_(0) {}
+      basic_string_view<Char> format_str, int num_args = INT_MAX,
+      ErrorHandler eh = {})
+      : ErrorHandler(eh),
+        format_str_(format_str),
+        next_arg_id_(0),
+        num_args_(num_args) {}
 
   /**
     Returns an iterator to the beginning of the format string range being
@@ -594,7 +605,7 @@ class basic_format_parse_context : private ErrorHandler {
     the next argument index and switches to the automatic indexing.
    */
   FMT_CONSTEXPR int next_arg_id() {
-    if (next_arg_id_ >= 0) return next_arg_id_++;
+    if (next_arg_id_ >= 0) return do_check_arg_id(next_arg_id_++);
     on_error("cannot switch from manual to automatic argument indexing");
     return 0;
   }
@@ -603,11 +614,13 @@ class basic_format_parse_context : private ErrorHandler {
     Reports an error if using the automatic argument indexing; otherwise
     switches to the manual indexing.
    */
-  FMT_CONSTEXPR void check_arg_id(int) {
-    if (next_arg_id_ > 0)
+  FMT_CONSTEXPR void check_arg_id(int id) {
+    if (next_arg_id_ > 0) {
       on_error("cannot switch from automatic to manual argument indexing");
-    else
-      next_arg_id_ = -1;
+      return;
+    }
+    do_check_arg_id(id);
+    next_arg_id_ = -1;
   }
 
   FMT_CONSTEXPR void check_arg_id(basic_string_view<Char>) {}
@@ -660,6 +673,7 @@ template <typename T> class buffer {
 
  protected:
   // Don't initialize ptr_ since it is not accessed to save a few cycles.
+  FMT_SUPPRESS_MSC_WARNING(26495)
   buffer(std::size_t sz) FMT_NOEXCEPT : size_(sz), capacity_(sz) {}
 
   buffer(T* p = nullptr, std::size_t sz = 0, std::size_t cap = 0) FMT_NOEXCEPT
@@ -795,9 +809,10 @@ template <typename T, typename Char, size_t NUM_ARGS>
 struct arg_data<T, Char, NUM_ARGS, 0> {
   T args_[NUM_ARGS != 0 ? NUM_ARGS : 1];
 
-  template <typename... U> arg_data(const U&... init) : args_{init...} {}
-  const T* args() const { return args_; }
-  std::nullptr_t named_args() { return nullptr; }
+  template <typename... U>
+  FMT_INLINE arg_data(const U&... init) : args_{init...} {}
+  FMT_INLINE const T* args() const { return args_; }
+  FMT_INLINE std::nullptr_t named_args() { return nullptr; }
 };
 
 template <typename Char>
@@ -818,7 +833,7 @@ void init_named_args(named_arg_info<Char>* named_args, int arg_count,
 }
 
 template <typename... Args>
-void init_named_args(std::nullptr_t, int, int, const Args&...) {}
+FMT_INLINE void init_named_args(std::nullptr_t, int, int, const Args&...) {}
 
 template <typename T> struct is_named_arg : std::false_type {};
 
@@ -1565,8 +1580,11 @@ template <typename Context> class basic_format_args {
 
   friend class internal::arg_map<Context>;
 
-  void set_data(const internal::value<Context>* values) { values_ = values; }
-  void set_data(const format_arg* args) { args_ = args; }
+  basic_format_args(unsigned long long desc,
+                    const internal::value<Context>* values)
+      : desc_(desc), values_(values) {}
+  basic_format_args(unsigned long long desc, const format_arg* args)
+      : desc_(desc), args_(args) {}
 
   format_arg do_get(int index) const {
     format_arg arg;
@@ -1574,7 +1592,7 @@ template <typename Context> class basic_format_args {
       if (index < max_size()) arg = args_[index];
       return arg;
     }
-    if (index > internal::max_packed_args) return arg;
+    if (index >= internal::max_packed_args) return arg;
     arg.type_ = type(index);
     if (arg.type_ == internal::type::none_type) return arg;
     arg.value_ = values_[index];
@@ -1590,10 +1608,8 @@ template <typename Context> class basic_format_args {
    \endrst
    */
   template <typename... Args>
-  basic_format_args(const format_arg_store<Context, Args...>& store)
-      : desc_(store.desc) {
-    set_data(store.data_.args());
-  }
+  FMT_INLINE basic_format_args(const format_arg_store<Context, Args...>& store)
+      : basic_format_args(store.desc, store.data_.args()) {}
 
   /**
    \rst
@@ -1601,10 +1617,8 @@ template <typename Context> class basic_format_args {
    `~fmt::dynamic_format_arg_store`.
    \endrst
    */
-  basic_format_args(const dynamic_format_arg_store<Context>& store)
-      : desc_(store.get_types()) {
-    set_data(store.data_.data());
-  }
+  FMT_INLINE basic_format_args(const dynamic_format_arg_store<Context>& store)
+      : basic_format_args(store.get_types(), store.data_.data()) {}
 
   /**
    \rst
@@ -1612,9 +1626,8 @@ template <typename Context> class basic_format_args {
    \endrst
    */
   basic_format_args(const format_arg* args, int count)
-      : desc_(internal::is_unpacked_bit | internal::to_unsigned(count)) {
-    set_data(args);
-  }
+      : basic_format_args(
+            internal::is_unpacked_bit | internal::to_unsigned(count), args) {}
 
   /** Returns the argument with the specified id. */
   format_arg get(int id) const {
@@ -1645,13 +1658,10 @@ template <typename Context> class basic_format_args {
 // It is a separate type rather than an alias to make symbols readable.
 struct format_args : basic_format_args<format_context> {
   template <typename... Args>
-  format_args(Args&&... args)
-      : basic_format_args<format_context>(static_cast<Args&&>(args)...) {}
+  FMT_INLINE format_args(const Args&... args) : basic_format_args(args...) {}
 };
 struct wformat_args : basic_format_args<wformat_context> {
-  template <typename... Args>
-  wformat_args(Args&&... args)
-      : basic_format_args<wformat_context>(static_cast<Args&&>(args)...) {}
+  using basic_format_args::basic_format_args;
 };
 
 template <typename Container> struct is_contiguous : std::false_type {};
@@ -1695,8 +1705,9 @@ struct named_arg : view, named_arg_base<Char> {
       : named_arg_base<Char>(name), value(val) {}
 };
 
+// Reports a compile-time error if S is not a valid format string.
 template <typename..., typename S, FMT_ENABLE_IF(!is_compile_string<S>::value)>
-inline void check_format_string(const S&) {
+FMT_INLINE void check_format_string(const S&) {
 #ifdef FMT_ENFORCE_COMPILE_STRING
   static_assert(is_compile_string<S>::value,
                 "FMT_ENFORCE_COMPILE_STRING requires all format strings to "

@@ -647,8 +647,7 @@ TEST(FormatterTest, ArgErrors) {
   safe_sprintf(format_str, "{%u", INT_MAX);
   EXPECT_THROW_MSG(format(format_str), format_error, "invalid format string");
   safe_sprintf(format_str, "{%u}", INT_MAX);
-  EXPECT_THROW_MSG(format(format_str), format_error,
-                   "argument not found");
+  EXPECT_THROW_MSG(format(format_str), format_error, "argument not found");
 
   safe_sprintf(format_str, "{%u", INT_MAX + 1u);
   EXPECT_THROW_MSG(format(format_str), format_error, "number is too big");
@@ -1011,8 +1010,7 @@ TEST(FormatterTest, RuntimeWidth) {
   EXPECT_THROW_MSG(format("{0:{}", 0), format_error,
                    "cannot switch from manual to automatic argument indexing");
   EXPECT_THROW_MSG(format("{0:{?}}", 0), format_error, "invalid format string");
-  EXPECT_THROW_MSG(format("{0:{1}}", 0), format_error,
-                   "argument not found");
+  EXPECT_THROW_MSG(format("{0:{1}}", 0), format_error, "argument not found");
 
   EXPECT_THROW_MSG(format("{0:{0:}}", 0), format_error,
                    "invalid format string");
@@ -1160,8 +1158,7 @@ TEST(FormatterTest, RuntimePrecision) {
                    "invalid format string");
   EXPECT_THROW_MSG(format("{0:.{1}", 0, 0), format_error,
                    "precision not allowed for this argument type");
-  EXPECT_THROW_MSG(format("{0:.{1}}", 0), format_error,
-                   "argument not found");
+  EXPECT_THROW_MSG(format("{0:.{1}}", 0), format_error, "argument not found");
 
   EXPECT_THROW_MSG(format("{0:.{0:}}", 0), format_error,
                    "invalid format string");
@@ -1608,6 +1605,40 @@ TEST(FormatterTest, FormatExplicitlyConvertibleToStdStringView) {
             fmt::format("{}", explicitly_convertible_to_std_string_view()));
 }
 #endif
+
+// std::is_constructible is broken in MSVC until version 2015.
+#if !FMT_MSC_VER || FMT_MSC_VER >= 1900
+struct explicitly_convertible_to_wstring_view {
+  explicit operator fmt::wstring_view() const { return L"foo"; }
+};
+
+TEST(FormatTest, FormatExplicitlyConvertibleToWStringView) {
+  EXPECT_EQ(L"foo",
+            fmt::format(L"{}", explicitly_convertible_to_wstring_view()));
+}
+#endif
+
+namespace fake_qt {
+class QString {
+ public:
+  QString(const wchar_t* s) : s_(std::make_shared<std::wstring>(s)) {}
+  const wchar_t* utf16() const FMT_NOEXCEPT { return s_->data(); }
+  int size() const FMT_NOEXCEPT { return static_cast<int>(s_->size()); }
+
+ private:
+  std::shared_ptr<std::wstring> s_;
+};
+
+fmt::basic_string_view<wchar_t> to_string_view(const QString& s) FMT_NOEXCEPT {
+  return {s.utf16(), static_cast<std::size_t>(s.size())};
+}
+}  // namespace fake_qt
+
+TEST(FormatTest, FormatForeignStrings) {
+  using fake_qt::QString;
+  EXPECT_EQ(fmt::format(QString(L"{}"), 42), L"42");
+  EXPECT_EQ(fmt::format(QString(L"{}"), QString(L"42")), L"42");
+}
 
 FMT_BEGIN_NAMESPACE
 template <> struct formatter<Date> {
@@ -2422,8 +2453,10 @@ FMT_CONSTEXPR bool equal(const char* s1, const char* s2) {
 template <typename... Args>
 FMT_CONSTEXPR bool test_error(const char* fmt, const char* expected_error) {
   const char* actual_error = nullptr;
-  fmt::internal::do_check_format_string<char, test_error_handler, Args...>(
-      string_view(fmt, len(fmt)), test_error_handler(actual_error));
+  string_view s(fmt, len(fmt));
+  fmt::internal::format_string_checker<char, test_error_handler, Args...>
+      checker(s, test_error_handler(actual_error));
+  fmt::internal::parse_format_string<true>(s, checker);
   return equal(actual_error, expected_error);
 }
 
@@ -2436,7 +2469,7 @@ TEST(FormatTest, FormatStringErrors) {
   EXPECT_ERROR_NOARGS("foo", nullptr);
   EXPECT_ERROR_NOARGS("}", "unmatched '}' in format string");
   EXPECT_ERROR("{0:s", "unknown format specifier", Date);
-#  if FMT_MSC_VER >= 1916
+#  if !FMT_MSC_VER || FMT_MSC_VER >= 1916
   // This causes an internal compiler error in MSVC2017.
   EXPECT_ERROR("{:{<}", "invalid fill character '{'", int);
   EXPECT_ERROR("{:10000000000}", "number is too big", int);
@@ -2460,6 +2493,8 @@ TEST(FormatTest, FormatStringErrors) {
   EXPECT_ERROR("{:+}", "format specifier requires signed argument", unsigned);
   EXPECT_ERROR("{:-}", "format specifier requires signed argument", unsigned);
   EXPECT_ERROR("{: }", "format specifier requires signed argument", unsigned);
+  EXPECT_ERROR("{:{}}", "argument not found", int);
+  EXPECT_ERROR("{:.{}}", "argument not found", double);
   EXPECT_ERROR("{:.2}", "precision not allowed for this argument type", int);
   EXPECT_ERROR("{:s}", "invalid type specifier", int);
   EXPECT_ERROR("{:s}", "invalid type specifier", bool);
