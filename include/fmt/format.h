@@ -2626,6 +2626,36 @@ FMT_CONSTEXPR const typename ParseContext::char_type* parse_format_specs(
   return f.parse(ctx);
 }
 
+// A parse context with extra argument id checks. It is only used at compile
+// time because adding checks at runtime would introduce substantial overhead
+// and would be redundant since argument ids are checked when arguments are
+// retrieved anyway.
+template <typename Char, typename ErrorHandler = error_handler>
+class compile_parse_context
+    : public basic_format_parse_context<Char, ErrorHandler> {
+ private:
+  int num_args_;
+  using base = basic_format_parse_context<Char, ErrorHandler>;
+
+ public:
+  explicit FMT_CONSTEXPR compile_parse_context(
+      basic_string_view<Char> format_str, int num_args = max_value<int>(),
+      ErrorHandler eh = {})
+      : base(format_str, eh), num_args_(num_args) {}
+
+  FMT_CONSTEXPR int next_arg_id() {
+    int id = base::next_arg_id();
+    if (id >= num_args_) this->on_error("argument not found");
+    return id;
+  }
+
+  FMT_CONSTEXPR void check_arg_id(int id) {
+    base::check_arg_id(id);
+    if (id >= num_args_) this->on_error("argument not found");
+  }
+  using base::check_arg_id;
+};
+
 template <typename Char, typename ErrorHandler, typename... Args>
 class format_string_checker {
  public:
@@ -2637,9 +2667,7 @@ class format_string_checker {
 
   FMT_CONSTEXPR void on_text(const Char*, const Char*) {}
 
-  FMT_CONSTEXPR void on_arg_id() {
-    arg_id_ = context_.next_arg_id();
-  }
+  FMT_CONSTEXPR void on_arg_id() { arg_id_ = context_.next_arg_id(); }
   FMT_CONSTEXPR void on_arg_id(int id) {
     arg_id_ = id;
     context_.check_arg_id(id);
@@ -2660,7 +2688,7 @@ class format_string_checker {
   }
 
  private:
-  using parse_context_type = basic_format_parse_context<Char, ErrorHandler>;
+  using parse_context_type = compile_parse_context<Char, ErrorHandler>;
   enum { num_args = sizeof...(Args) };
 
   // Format specifier parsing function.
