@@ -594,6 +594,8 @@ class basic_format_parse_context : private ErrorHandler {
     the next argument index and switches to the automatic indexing.
    */
   FMT_CONSTEXPR int next_arg_id() {
+    // Don't check if the argument id is valid to avoid overhead and because it
+    // will be checked during formatting anyway.
     if (next_arg_id_ >= 0) return next_arg_id_++;
     on_error("cannot switch from manual to automatic argument indexing");
     return 0;
@@ -1777,7 +1779,7 @@ inline std::back_insert_iterator<Container> format_to(
 }
 
 template <typename S, typename Char = char_t<S>>
-inline std::basic_string<Char> vformat(
+FMT_INLINE std::basic_string<Char> vformat(
     const S& format_str,
     basic_format_args<buffer_context<type_identity_t<Char>>> args) {
   return internal::vformat(to_string_view(format_str), args);
@@ -1796,7 +1798,7 @@ inline std::basic_string<Char> vformat(
 // Pass char_t as a default template parameter instead of using
 // std::basic_string<char_t<S>> to reduce the symbol size.
 template <typename S, typename... Args, typename Char = char_t<S>>
-inline std::basic_string<Char> format(const S& format_str, Args&&... args) {
+FMT_INLINE std::basic_string<Char> format(const S& format_str, Args&&... args) {
   const auto& vargs = internal::make_args_checked<Args...>(format_str, args...);
   return internal::vformat(to_string_view(format_str), vargs);
 }
