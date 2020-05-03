@@ -342,8 +342,11 @@ template <typename T> inline T* make_checked(T* p, std::size_t) { return p; }
 #endif
 
 template <typename Container, FMT_ENABLE_IF(is_contiguous<Container>::value)>
-inline checked_ptr<typename Container::value_type> reserve(
-    std::back_insert_iterator<Container> it, std::size_t n) {
+#if FMT_CLANG_VERSION
+__attribute__((no_sanitize("undefined")))
+#endif
+inline checked_ptr<typename Container::value_type>
+reserve(std::back_insert_iterator<Container> it, std::size_t n) {
   Container& c = get_container(it);
   std::size_t size = c.size();
   c.resize(size + n);
@@ -783,7 +786,8 @@ template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
   static const char reset_color[5];
   static const wchar_t wreset_color[5];
   static const char signs[];
-  static const char padding_shifts[5];
+  static const char left_padding_shifts[5];
+  static const char right_padding_shifts[5];
 };
 
 FMT_EXTERN template struct basic_data<void>;
@@ -1380,13 +1384,17 @@ FMT_NOINLINE OutputIt fill(OutputIt it, size_t n, const fill_t<Char>& fill) {
 // Writes the output of f, padded according to format specifications in specs.
 // size: output size in code units.
 // width: output display width in (terminal) column positions.
-template <typename OutputIt, typename Char, typename F>
+template <align::type align = align::left, typename OutputIt, typename Char,
+          typename F>
 inline OutputIt write_padded(OutputIt out,
                              const basic_format_specs<Char>& specs, size_t size,
                              size_t width, const F& f) {
+  static_assert(align == align::left || align == align::right, "");
   unsigned spec_width = to_unsigned(specs.width);
   size_t padding = spec_width > width ? spec_width - width : 0;
-  size_t left_padding = padding >> data::padding_shifts[specs.align];
+  auto* shifts = align == align::left ? data::left_padding_shifts
+                                      : data::right_padding_shifts;
+  size_t left_padding = padding >> shifts[specs.align];
   auto it = reserve(out, size + padding * specs.fill.size());
   it = fill(it, left_padding, specs.fill);
   it = f(it);
@@ -1394,11 +1402,12 @@ inline OutputIt write_padded(OutputIt out,
   return base_iterator(out, it);
 }
 
-template <typename OutputIt, typename Char, typename F>
+template <align::type align = align::left, typename OutputIt, typename Char,
+          typename F>
 inline OutputIt write_padded(OutputIt out,
                              const basic_format_specs<Char>& specs, size_t size,
                              const F& f) {
-  return write_padded(out, specs, size, size, f);
+  return write_padded<align>(out, specs, size, size, f);
 }
 
 // Data for write_int that doesn't depend on output iterator type. It is used to
@@ -1406,13 +1415,10 @@ inline OutputIt write_padded(OutputIt out,
 template <typename Char> struct write_int_data {
   std::size_t size;
   std::size_t padding;
-  Char fill;
 
   write_int_data(int num_digits, string_view prefix,
-                 basic_format_specs<Char>& specs)
-      : size(prefix.size() + to_unsigned(num_digits)),
-        padding(0),
-        fill(specs.fill[0]) {
+                 const basic_format_specs<Char>& specs)
+      : size(prefix.size() + to_unsigned(num_digits)), padding(0) {
     if (specs.align == align::numeric) {
       auto width = to_unsigned(specs.width);
       if (width > size) {
@@ -1422,9 +1428,7 @@ template <typename Char> struct write_int_data {
     } else if (specs.precision > num_digits) {
       size = prefix.size() + to_unsigned(specs.precision);
       padding = to_unsigned(specs.precision - num_digits);
-      fill = static_cast<Char>('0');
     }
-    if (specs.align == align::none) specs.align = align::right;
   }
 };
 
@@ -1433,13 +1437,13 @@ template <typename Char> struct write_int_data {
 // where <digits> are written by f(it).
 template <typename OutputIt, typename Char, typename F>
 OutputIt write_int(OutputIt out, int num_digits, string_view prefix,
-                   basic_format_specs<Char> specs, F f) {
+                   const basic_format_specs<Char>& specs, F f) {
   auto data = write_int_data<Char>(num_digits, prefix, specs);
   using iterator = remove_reference_t<decltype(reserve(out, 0))>;
-  return write_padded(out, specs, data.size, [=](iterator it) {
+  return write_padded<align::right>(out, specs, data.size, [=](iterator it) {
     if (prefix.size() != 0)
       it = copy_str<Char>(prefix.begin(), prefix.end(), it);
-    it = std::fill_n(it, data.padding, data.fill);
+    it = std::fill_n(it, data.padding, static_cast<Char>('0'));
     return f(it);
   });
 }
@@ -1661,16 +1665,11 @@ template <typename Range> class basic_writer {
       return;
     }
 
-    if (specs.align == align::none) {
-      specs.align = align::right;
-    } else if (specs.align == align::numeric) {
-      if (fspecs.sign) {
-        auto&& it = reserve(1);
-        *it++ = static_cast<char_type>(data::signs[fspecs.sign]);
-        fspecs.sign = sign::none;
-        if (specs.width != 0) --specs.width;
-      }
-      specs.align = align::right;
+    if (specs.align == align::numeric && fspecs.sign) {
+      auto&& it = reserve(1);
+      *it++ = static_cast<char_type>(data::signs[fspecs.sign]);
+      fspecs.sign = sign::none;
+      if (specs.width != 0) --specs.width;
     }
 
     memory_buffer buffer;
@@ -1694,7 +1693,7 @@ template <typename Range> class basic_writer {
                                     : static_cast<char_type>('.');
     float_writer<char_type> w(buffer.data(), static_cast<int>(buffer.size()),
                               exp, fspecs, point);
-    out_ = write_padded(out_, specs, w.size(), w);
+    out_ = write_padded<align::right>(out_, specs, w.size(), w);
   }
 
   void write(char value) {
@@ -2963,25 +2962,22 @@ struct formatter<T, Char,
           &specs_, internal::char_specs_checker<decltype(eh)>(specs_.type, eh));
       break;
     case internal::type::float_type:
-      if (internal::const_check(FMT_USE_FLOAT)) {
+      if (internal::const_check(FMT_USE_FLOAT))
         internal::parse_float_type_spec(specs_, eh);
-      } else {
+      else
         FMT_ASSERT(false, "float support disabled");
-      }
       break;
     case internal::type::double_type:
-      if (internal::const_check(FMT_USE_DOUBLE)) {
+      if (internal::const_check(FMT_USE_DOUBLE))
         internal::parse_float_type_spec(specs_, eh);
-      } else {
+      else
         FMT_ASSERT(false, "double support disabled");
-      }
       break;
     case internal::type::long_double_type:
-      if (internal::const_check(FMT_USE_LONG_DOUBLE)) {
+      if (internal::const_check(FMT_USE_LONG_DOUBLE))
         internal::parse_float_type_spec(specs_, eh);
-      } else {
+      else
         FMT_ASSERT(false, "long double support disabled");
-      }
       break;
     case internal::type::cstring_type:
       internal::handle_cstring_type_spec(
