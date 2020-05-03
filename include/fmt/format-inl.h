@@ -323,6 +323,8 @@ const char basic_data<T>::background_color[] = "\x1b[48;2;";
 template <typename T> const char basic_data<T>::reset_color[] = "\x1b[0m";
 template <typename T> const wchar_t basic_data<T>::wreset_color[] = L"\x1b[0m";
 template <typename T> const char basic_data<T>::signs[] = {0, '-', '+', ' '};
+template <typename T>
+const char basic_data<T>::padding_shifts[] = {31, 31, 0, 1, 0};
 
 template <typename T> struct bits {
   static FMT_CONSTEXPR_DECL const int value =
@@ -600,7 +602,7 @@ class bigint {
 
   int num_bigits() const { return static_cast<int>(bigits_.size()) + exp_; }
 
-  bigint& operator<<=(int shift) {
+  FMT_NOINLINE bigint& operator<<=(int shift) {
     assert(shift >= 0);
     exp_ += shift / bigit_bits;
     shift %= bigit_bits;
@@ -1151,7 +1153,7 @@ int snprintf_float(T value, int precision, float_specs specs,
   for (;;) {
     auto begin = buf.data() + offset;
     auto capacity = buf.capacity() - offset;
-#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+#ifdef FMT_FUZZ
     if (precision > 100000)
       throw std::runtime_error(
           "fuzz mode - avoid large allocation inside snprintf");
