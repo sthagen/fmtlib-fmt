@@ -148,14 +148,6 @@
 #  define FMT_NORETURN
 #endif
 
-#ifndef FMT_MAYBE_UNUSED
-#  if FMT_HAS_CPP17_ATTRIBUTE(maybe_unused)
-#    define FMT_MAYBE_UNUSED [[maybe_unused]]
-#  else
-#    define FMT_MAYBE_UNUSED
-#  endif
-#endif
-
 #ifndef FMT_DEPRECATED
 #  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VER >= 1900
 #    define FMT_DEPRECATED [[deprecated]]
@@ -170,19 +162,19 @@
 #  endif
 #endif
 
+// Workaround broken [[deprecated]] in the Intel, PGI and NVCC compilers.
+#if FMT_ICC_VERSION || defined(__PGI) || FMT_NVCC
+#  define FMT_DEPRECATED_ALIAS
+#else
+#  define FMT_DEPRECATED_ALIAS FMT_DEPRECATED
+#endif
+
 #ifndef FMT_INLINE
 #  if FMT_GCC_VERSION && FMT_USE_CONSTEXPR
 #    define FMT_INLINE inline __attribute__((always_inline))
 #  else
 #    define FMT_INLINE
 #  endif
-#endif
-
-// Workaround broken [[deprecated]] in the Intel, PGI and NVCC compilers.
-#if FMT_ICC_VERSION || defined(__PGI) || FMT_NVCC
-#  define FMT_DEPRECATED_ALIAS
-#else
-#  define FMT_DEPRECATED_ALIAS FMT_DEPRECATED
 #endif
 
 #ifndef FMT_BEGIN_NAMESPACE
@@ -447,11 +439,6 @@ template <typename Char> class basic_string_view {
 using string_view = basic_string_view<char>;
 using wstring_view = basic_string_view<wchar_t>;
 
-#ifndef __cpp_char8_t
-// char8_t is deprecated; use char instead.
-using char8_t FMT_DEPRECATED_ALIAS = internal::char8_type;
-#endif
-
 /** Specifies if ``T`` is a character type. Can be specialized by users. */
 template <typename T> struct is_char : std::false_type {};
 template <> struct is_char<char> : std::true_type {};
@@ -621,12 +608,6 @@ class basic_format_parse_context : private ErrorHandler {
 using format_parse_context = basic_format_parse_context<char>;
 using wformat_parse_context = basic_format_parse_context<wchar_t>;
 
-template <typename Char, typename ErrorHandler = internal::error_handler>
-using basic_parse_context FMT_DEPRECATED_ALIAS =
-    basic_format_parse_context<Char, ErrorHandler>;
-using parse_context FMT_DEPRECATED_ALIAS = basic_format_parse_context<char>;
-using wparse_context FMT_DEPRECATED_ALIAS = basic_format_parse_context<wchar_t>;
-
 template <typename Context> class basic_format_arg;
 template <typename Context> class basic_format_args;
 
@@ -649,27 +630,27 @@ namespace internal {
 template <typename T> class buffer {
  private:
   T* ptr_;
-  std::size_t size_;
-  std::size_t capacity_;
+  size_t size_;
+  size_t capacity_;
 
  protected:
   // Don't initialize ptr_ since it is not accessed to save a few cycles.
   FMT_SUPPRESS_MSC_WARNING(26495)
-  buffer(std::size_t sz) FMT_NOEXCEPT : size_(sz), capacity_(sz) {}
+  buffer(size_t sz) FMT_NOEXCEPT : size_(sz), capacity_(sz) {}
 
-  buffer(T* p = nullptr, std::size_t sz = 0, std::size_t cap = 0) FMT_NOEXCEPT
+  buffer(T* p = nullptr, size_t sz = 0, size_t cap = 0) FMT_NOEXCEPT
       : ptr_(p),
         size_(sz),
         capacity_(cap) {}
 
   /** Sets the buffer data and capacity. */
-  void set(T* buf_data, std::size_t buf_capacity) FMT_NOEXCEPT {
+  void set(T* buf_data, size_t buf_capacity) FMT_NOEXCEPT {
     ptr_ = buf_data;
     capacity_ = buf_capacity;
   }
 
   /** Increases the buffer capacity to hold at least *capacity* elements. */
-  virtual void grow(std::size_t capacity) = 0;
+  virtual void grow(size_t capacity) = 0;
 
  public:
   using value_type = T;
@@ -686,10 +667,10 @@ template <typename T> class buffer {
   const T* end() const FMT_NOEXCEPT { return ptr_ + size_; }
 
   /** Returns the size of this buffer. */
-  std::size_t size() const FMT_NOEXCEPT { return size_; }
+  size_t size() const FMT_NOEXCEPT { return size_; }
 
   /** Returns the capacity of this buffer. */
-  std::size_t capacity() const FMT_NOEXCEPT { return capacity_; }
+  size_t capacity() const FMT_NOEXCEPT { return capacity_; }
 
   /** Returns a pointer to the buffer data. */
   T* data() FMT_NOEXCEPT { return ptr_; }
@@ -700,7 +681,7 @@ template <typename T> class buffer {
   /**
     Resizes the buffer. If T is a POD type new elements may not be initialized.
    */
-  void resize(std::size_t new_size) {
+  void resize(size_t new_size) {
     reserve(new_size);
     size_ = new_size;
   }
@@ -709,7 +690,7 @@ template <typename T> class buffer {
   void clear() { size_ = 0; }
 
   /** Reserves space to store at least *capacity* elements. */
-  void reserve(std::size_t new_capacity) {
+  void reserve(size_t new_capacity) {
     if (new_capacity > capacity_) grow(new_capacity);
   }
 
@@ -734,7 +715,7 @@ class container_buffer : public buffer<typename Container::value_type> {
   Container& container_;
 
  protected:
-  void grow(std::size_t capacity) FMT_OVERRIDE {
+  void grow(size_t capacity) FMT_OVERRIDE {
     container_.resize(capacity);
     this->set(&container_[0], capacity);
   }
@@ -888,19 +869,18 @@ constexpr bool is_arithmetic_type(type t) {
 
 template <typename Char> struct string_value {
   const Char* data;
-  std::size_t size;
+  size_t size;
 };
 
 template <typename Char> struct named_arg_value {
   const named_arg_info<Char>* data;
-  std::size_t size;
+  size_t size;
 };
 
 template <typename Context> struct custom_value {
-  using parse_context = basic_format_parse_context<typename Context::char_type>;
+  using parse_context = typename Context::parse_context_type;
   const void* value;
-  void (*format)(const void* arg,
-                 typename Context::parse_context_type& parse_ctx, Context& ctx);
+  void (*format)(const void* arg, parse_context& parse_ctx, Context& ctx);
 };
 
 // A formatting argument value.
@@ -1256,13 +1236,16 @@ FMT_CONSTEXPR basic_format_arg<Context> make_arg(const T& value) {
   return arg;
 }
 
-template <bool IS_PACKED, typename Context, typename T,
+// The type template parameter is there to avoid an ODR violation when using
+// a fallback formatter in one translation unit and an implicit conversion in
+// another (not recommended).
+template <bool IS_PACKED, typename Context, type, typename T,
           FMT_ENABLE_IF(IS_PACKED)>
 inline value<Context> make_arg(const T& val) {
   return arg_mapper<Context>().map(val);
 }
 
-template <bool IS_PACKED, typename Context, typename T,
+template <bool IS_PACKED, typename Context, type, typename T,
           FMT_ENABLE_IF(!IS_PACKED)>
 inline basic_format_arg<Context> make_arg(const T& value) {
   return make_arg<Context>(value);
@@ -1400,7 +1383,9 @@ class format_arg_store
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 409
         basic_format_args<Context>(*this),
 #endif
-        data_{internal::make_arg<is_packed, Context>(args)...} {
+        data_{internal::make_arg<
+            is_packed, Context,
+            internal::mapped_type_constant<Args, Context>::value>(args)...} {
     internal::init_named_args(data_.named_args(), 0, 0, args...);
   }
 };

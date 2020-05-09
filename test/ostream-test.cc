@@ -21,9 +21,9 @@ template <> struct formatter<test> : formatter<int> {
 };
 }  // namespace fmt
 
-#include "fmt/ostream.h"
-
 #include <sstream>
+
+#include "fmt/ostream.h"
 #include "gmock.h"
 #include "gtest-extra.h"
 #include "util.h"
@@ -145,13 +145,13 @@ TEST(OStreamTest, WriteToOStream) {
 }
 
 TEST(OStreamTest, WriteToOStreamMaxSize) {
-  std::size_t max_size = fmt::internal::max_value<std::size_t>();
+  size_t max_size = fmt::internal::max_value<size_t>();
   std::streamsize max_streamsize = fmt::internal::max_value<std::streamsize>();
   if (max_size <= fmt::internal::to_unsigned(max_streamsize)) return;
 
   struct test_buffer : fmt::internal::buffer<char> {
-    explicit test_buffer(std::size_t size) { resize(size); }
-    void grow(std::size_t) {}
+    explicit test_buffer(size_t size) { resize(size); }
+    void grow(size_t) {}
   } buffer(max_size);
 
   struct mock_streambuf : std::streambuf {
@@ -258,7 +258,7 @@ TEST(OStreamTest, DisableBuiltinOStreamOperators) {
 struct explicitly_convertible_to_string_like {
   template <typename String,
             typename = typename std::enable_if<std::is_constructible<
-                String, const char*, std::size_t>::value>::type>
+                String, const char*, size_t>::value>::type>
   explicit operator String() const {
     return String("foo", 3u);
   }
@@ -269,7 +269,7 @@ std::ostream& operator<<(std::ostream& os,
   return os << "bar";
 }
 
-TEST(FormatterTest, FormatExplicitlyConvertibleToStringLike) {
+TEST(OStreamTest, FormatExplicitlyConvertibleToStringLike) {
   EXPECT_EQ("bar", fmt::format("{}", explicitly_convertible_to_string_like()));
 }
 
@@ -285,8 +285,20 @@ std::ostream& operator<<(std::ostream& os,
   return os << "bar";
 }
 
-TEST(FormatterTest, FormatExplicitlyConvertibleToStdStringView) {
+TEST(OStreamTest, FormatExplicitlyConvertibleToStdStringView) {
   EXPECT_EQ("bar", fmt::format("{}", explicitly_convertible_to_string_like()));
 }
 
 #endif  // FMT_USE_STRING_VIEW
+
+struct copyfmt_test {};
+
+std::ostream& operator<<(std::ostream& os, copyfmt_test) {
+  std::ios ios(nullptr);
+  ios.copyfmt(os);
+  return os << "foo";
+}
+
+TEST(OStreamTest, CopyFmt) {
+  EXPECT_EQ("foo", fmt::format("{}", copyfmt_test()));
+}

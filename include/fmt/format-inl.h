@@ -15,6 +15,7 @@
 #include <cstdarg>
 #include <cstring>  // for std::memmove
 #include <cwchar>
+#include <exception>
 
 #include "format.h"
 #if !defined(FMT_STATIC_THOUSANDS_SEPARATOR)
@@ -40,14 +41,16 @@
 // Dummy implementations of strerror_r and strerror_s called if corresponding
 // system functions are not available.
 inline fmt::internal::null<> strerror_r(int, char*, ...) { return {}; }
-inline fmt::internal::null<> strerror_s(char*, std::size_t, ...) { return {}; }
+inline fmt::internal::null<> strerror_s(char*, size_t, ...) { return {}; }
 
 FMT_BEGIN_NAMESPACE
 namespace internal {
 
 FMT_FUNC void assert_fail(const char* file, int line, const char* message) {
   print(stderr, "{}:{}: assertion failed: {}", file, line, message);
-  std::abort();
+  // Chosen instead of std::abort to satisfy Clang in CUDA mode during device
+  // code pass.
+  std::terminate();
 }
 
 #ifndef _MSC_VER
@@ -73,14 +76,14 @@ inline int fmt_snprintf(char* buffer, size_t size, const char* format, ...) {
 //   other  - failure
 // Buffer should be at least of size 1.
 FMT_FUNC int safe_strerror(int error_code, char*& buffer,
-                           std::size_t buffer_size) FMT_NOEXCEPT {
+                           size_t buffer_size) FMT_NOEXCEPT {
   FMT_ASSERT(buffer != nullptr && buffer_size != 0, "invalid buffer");
 
   class dispatcher {
    private:
     int error_code_;
     char*& buffer_;
-    std::size_t buffer_size_;
+    size_t buffer_size_;
 
     // A noop assignment operator to avoid bogus warnings.
     void operator=(const dispatcher&) {}
@@ -125,7 +128,7 @@ FMT_FUNC int safe_strerror(int error_code, char*& buffer,
 #endif
 
    public:
-    dispatcher(int err_code, char*& buf, std::size_t buf_size)
+    dispatcher(int err_code, char*& buf, size_t buf_size)
         : error_code_(err_code), buffer_(buf), buffer_size_(buf_size) {}
 
     int run() { return handle(strerror_r(error_code_, buffer_, buffer_size_)); }
@@ -142,20 +145,17 @@ FMT_FUNC void format_error_code(internal::buffer<char>& out, int error_code,
   static const char SEP[] = ": ";
   static const char ERROR_STR[] = "error ";
   // Subtract 2 to account for terminating null characters in SEP and ERROR_STR.
-  std::size_t error_code_size = sizeof(SEP) + sizeof(ERROR_STR) - 2;
+  size_t error_code_size = sizeof(SEP) + sizeof(ERROR_STR) - 2;
   auto abs_value = static_cast<uint32_or_64_or_128_t<int>>(error_code);
   if (internal::is_negative(error_code)) {
     abs_value = 0 - abs_value;
     ++error_code_size;
   }
   error_code_size += internal::to_unsigned(internal::count_digits(abs_value));
-  internal::writer w(out);
-  if (message.size() <= inline_buffer_size - error_code_size) {
-    w.write(message);
-    w.write(SEP);
-  }
-  w.write(ERROR_STR);
-  w.write(error_code);
+  auto it = std::back_inserter(out);
+  if (message.size() <= inline_buffer_size - error_code_size)
+    format_to(it, "{}{}", message, SEP);
+  format_to(it, "{}{}", ERROR_STR, error_code);
   assert(out.size() <= inline_buffer_size);
 }
 
@@ -1345,10 +1345,7 @@ FMT_FUNC void format_system_error(internal::buffer<char>& out, int error_code,
       int result =
           internal::safe_strerror(error_code, system_message, buf.size());
       if (result == 0) {
-        internal::writer w(out);
-        w.write(message);
-        w.write(": ");
-        w.write(system_message);
+        format_to(std::back_inserter(out), "{}: {}", message, system_message);
         return;
       }
       if (result != ERANGE)
