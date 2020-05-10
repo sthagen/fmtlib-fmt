@@ -18,7 +18,7 @@
 #include <vector>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 60201
+#define FMT_VERSION 60202
 
 #ifdef __clang__
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
@@ -610,6 +610,7 @@ using wformat_parse_context = basic_format_parse_context<wchar_t>;
 
 template <typename Context> class basic_format_arg;
 template <typename Context> class basic_format_args;
+template <typename Context> class dynamic_format_arg_store;
 
 // A formatter for objects of type T.
 template <typename T, typename Char = char, typename Enable = void>
@@ -746,8 +747,14 @@ template <typename T, typename Context>
 using has_fallback_formatter =
     std::is_constructible<fallback_formatter<T, typename Context::char_type>>;
 
-template <typename Char> struct named_arg_base;
-template <typename T, typename Char> struct named_arg;
+struct view {};
+
+template <typename Char, typename T>
+struct named_arg : view {
+  const Char* name;
+  const T& value;
+  named_arg(const Char* n, const T& v) : name(n), value(v) {}
+};
 
 template <typename Char> struct named_arg_info {
   const Char* name;
@@ -788,7 +795,7 @@ void init_named_args(named_arg_info<Char>* named_args, int arg_count,
 
 template <typename Char, typename T, typename... Tail>
 void init_named_args(named_arg_info<Char>* named_args, int arg_count,
-                     int named_arg_count, const named_arg<T, Char>& arg,
+                     int named_arg_count, const named_arg<Char, T>& arg,
                      const Tail&... args) {
   named_args[named_arg_count++] = {arg.name, arg_count};
   init_named_args(named_args, arg_count + 1, named_arg_count, args...);
@@ -800,7 +807,7 @@ FMT_INLINE void init_named_args(std::nullptr_t, int, int, const Args&...) {}
 template <typename T> struct is_named_arg : std::false_type {};
 
 template <typename T, typename Char>
-struct is_named_arg<named_arg<T, Char>> : std::true_type {};
+struct is_named_arg<named_arg<Char, T>> : std::true_type {};
 
 template <bool B = false> constexpr size_t count() { return B ? 1 : 0; }
 template <bool B1, bool B2, bool... Tail> constexpr size_t count() {
@@ -813,7 +820,6 @@ template <typename... Args> constexpr size_t count_named_args() {
 
 enum class type {
   none_type,
-  named_arg_type,  // DEPRECATED
   // Integer types should go first,
   int_type,
   uint_type,
@@ -903,7 +909,6 @@ template <typename Context> class value {
     const void* pointer;
     string_value<char_type> string;
     custom_value<Context> custom;
-    const named_arg_base<char_type>* named_arg;  // DEPRECATED
     named_arg_value<char_type> named_args;
   };
 
@@ -1062,7 +1067,7 @@ template <typename Context> struct arg_mapper {
   }
 
   template <typename T>
-  FMT_CONSTEXPR auto map(const named_arg<T, char_type>& val)
+  FMT_CONSTEXPR auto map(const named_arg<char_type, T>& val)
       -> decltype(std::declval<arg_mapper>().map(val.value)) {
     return map(val.value);
   }
@@ -1084,13 +1089,11 @@ using mapped_type_constant =
     type_constant<decltype(arg_mapper<Context>().map(std::declval<const T&>())),
                   typename Context::char_type>;
 
-enum { packed_arg_bits = 5 };
+enum { packed_arg_bits = 4 };
 // Maximum number of arguments with packed types.
 enum { max_packed_args = 62 / packed_arg_bits };
 enum : unsigned long long { is_unpacked_bit = 1ULL << 63 };
 enum : unsigned long long { has_named_args_bit = 1ULL << 62 };
-
-template <typename Context> class arg_map;
 }  // namespace internal
 
 // A formatting argument. It is a trivially copyable/constructible type to
@@ -1110,7 +1113,7 @@ template <typename Context> class basic_format_arg {
       -> decltype(vis(0));
 
   friend class basic_format_args<Context>;
-  friend class internal::arg_map<Context>;
+  friend class dynamic_format_arg_store<Context>;
 
   using char_type = typename Context::char_type;
 
@@ -1160,9 +1163,6 @@ FMT_CONSTEXPR auto visit_format_arg(Visitor&& vis,
   using char_type = typename Context::char_type;
   switch (arg.type_) {
   case internal::type::none_type:
-    break;
-  case internal::type::named_arg_type:
-    FMT_ASSERT(false, "invalid argument type");
     break;
   case internal::type::int_type:
     return vis(arg.value_.int_value);
@@ -1252,9 +1252,13 @@ inline basic_format_arg<Context> make_arg(const T& value) {
 }
 
 template <typename T> struct is_reference_wrapper : std::false_type {};
-
 template <typename T>
 struct is_reference_wrapper<std::reference_wrapper<T>> : std::true_type {};
+
+template <typename T> const T& unwrap(const T& v) { return v; }
+template <typename T> const T& unwrap(const std::reference_wrapper<T>& v) {
+  return static_cast<const T&>(v);
+}
 
 class dynamic_arg_list {
   // Workaround for clang's -Wweak-vtables. Unlike for regular classes, for
@@ -1406,6 +1410,22 @@ inline format_arg_store<Context, Args...> make_format_args(
 
 /**
   \rst
+  Returns a named argument to be used in a formatting function. It should only
+  be used in a call to a formatting function.
+
+  **Example**::
+
+    fmt::print("Elapsed time: {s:.2f} seconds", fmt::arg("s", 1.23));
+  \endrst
+ */
+template <typename Char, typename T>
+inline internal::named_arg<Char, T> arg(const Char* name, const T& arg) {
+  static_assert(!internal::is_named_arg<T>(), "nested named arguments");
+  return {name, arg};
+}
+
+/**
+  \rst
   A dynamic version of `fmt::format_arg_store<>`.
   It's equipped with a storage to potentially temporary objects which lifetime
   could be shorter than the format arguments object.
@@ -1434,8 +1454,7 @@ class dynamic_format_arg_store
                 std::is_same<T, internal::std_string_view<char_type>>::value ||
                 (mapped_type != internal::type::cstring_type &&
                  mapped_type != internal::type::string_type &&
-                 mapped_type != internal::type::custom_type &&
-                 mapped_type != internal::type::named_arg_type))
+                 mapped_type != internal::type::custom_type))
     };
   };
 
@@ -1445,6 +1464,7 @@ class dynamic_format_arg_store
 
   // Storage of basic_format_arg must be contiguous.
   std::vector<basic_format_arg<Context>> data_;
+  std::vector<internal::named_arg_info<char_type>> named_info_;
 
   // Storage of arguments not fitting into basic_format_arg must grow
   // without relocation because items in data_ refer to it.
@@ -1453,11 +1473,36 @@ class dynamic_format_arg_store
   friend class basic_format_args<Context>;
 
   unsigned long long get_types() const {
-    return internal::is_unpacked_bit | data_.size();
+    return internal::is_unpacked_bit | data_.size() |
+           (named_info_.empty() ? 0ULL
+                                : static_cast<unsigned long long>(
+                                      internal::has_named_args_bit));
+  }
+
+  const basic_format_arg<Context>* data() const {
+    return named_info_.empty() ? data_.data() : data_.data() + 1;
   }
 
   template <typename T> void emplace_arg(const T& arg) {
     data_.emplace_back(internal::make_arg<Context>(arg));
+  }
+
+  template <typename T>
+  void emplace_arg(const internal::named_arg<char_type, T>& arg) {
+    if (named_info_.empty()) {
+      constexpr const internal::named_arg_info<char_type>* zero_ptr{nullptr};
+      data_.insert(data_.begin(), {zero_ptr, 0});
+    }
+    data_.emplace_back(
+        internal::make_arg<Context>(internal::unwrap(arg.value)));
+    auto pop_one = [](std::vector<basic_format_arg<Context>>* data) {
+      data->pop_back();
+    };
+    std::unique_ptr<std::vector<basic_format_arg<Context>>, decltype(pop_one)>
+        guard{&data_, pop_one};
+    named_info_.push_back({arg.name, static_cast<int>(data_.size() - 2u)});
+    data_[0].value_.named_args = {named_info_.data(), named_info_.size()};
+    guard.release();
   }
 
  public:
@@ -1479,24 +1524,56 @@ class dynamic_format_arg_store
     \endrst
   */
   template <typename T> void push_back(const T& arg) {
-    static_assert(
-        !std::is_base_of<internal::named_arg_base<char_type>, T>::value,
-        "named arguments are not supported yet");
     if (internal::const_check(need_copy<T>::value))
       emplace_arg(dynamic_args_.push<stored_type<T>>(arg));
     else
-      emplace_arg(arg);
+      emplace_arg(internal::unwrap(arg));
   }
 
   /**
+    \rst
     Adds a reference to the argument into the dynamic store for later passing to
-    a formating function.
+    a formating function. Supports named arguments wrapped in
+    std::reference_wrapper (via std::ref()/std::cref()).
+
+    **Example**::
+      fmt::dynamic_format_arg_store<fmt::format_context> store;
+      char str[] = "1234567890";
+      store.push_back(std::cref(str));
+      int a1_val{42};
+      auto a1 = fmt::arg("a1_", a1_val);
+      store.push_back(std::cref(a1));
+
+      // Changing str affects the output but only for string and custom types.
+      str[0] = 'X';
+
+      std::string result = fmt::vformat("{} and {a1_}");
+      assert(result == "X234567890 and 42");
+    \endrst
   */
   template <typename T> void push_back(std::reference_wrapper<T> arg) {
     static_assert(
-        need_copy<T>::value,
+        internal::is_named_arg<typename std::remove_cv<T>::type>::value ||
+            need_copy<T>::value,
         "objects of built-in types and string views are always copied");
     emplace_arg(arg.get());
+  }
+
+  /**
+    Adds named argument into the dynamic store for later passing to a formating
+    function. std::reference_wrapper is supported to avoid copying of the
+    argument.
+  */
+  template <typename T>
+  void push_back(const internal::named_arg<char_type, T>& arg) {
+    const char_type* arg_name =
+        dynamic_args_.push<std::basic_string<char_type>>(arg.name).c_str();
+    if (internal::const_check(need_copy<T>::value)) {
+      emplace_arg(
+          fmt::arg(arg_name, dynamic_args_.push<stored_type<T>>(arg.value)));
+    } else {
+      emplace_arg(fmt::arg(arg_name, arg.value));
+    }
   }
 };
 
@@ -1542,26 +1619,11 @@ template <typename Context> class basic_format_args {
     return static_cast<internal::type>((desc_ >> shift) & mask);
   }
 
-  friend class internal::arg_map<Context>;
-
   basic_format_args(unsigned long long desc,
                     const internal::value<Context>* values)
       : desc_(desc), values_(values) {}
   basic_format_args(unsigned long long desc, const format_arg* args)
       : desc_(desc), args_(args) {}
-
-  format_arg do_get(int index) const {
-    format_arg arg;
-    if (!is_packed()) {
-      if (index < max_size()) arg = args_[index];
-      return arg;
-    }
-    if (index >= internal::max_packed_args) return arg;
-    arg.type_ = type(index);
-    if (arg.type_ == internal::type::none_type) return arg;
-    arg.value_ = values_[index];
-    return arg;
-  }
 
  public:
   basic_format_args() : desc_(0) {}
@@ -1582,7 +1644,7 @@ template <typename Context> class basic_format_args {
    \endrst
    */
   FMT_INLINE basic_format_args(const dynamic_format_arg_store<Context>& store)
-      : basic_format_args(store.get_types(), store.data_.data()) {}
+      : basic_format_args(store.get_types(), store.data()) {}
 
   /**
    \rst
@@ -1595,9 +1657,15 @@ template <typename Context> class basic_format_args {
 
   /** Returns the argument with the specified id. */
   format_arg get(int id) const {
-    format_arg arg = do_get(id);
-    if (arg.type_ == internal::type::named_arg_type)
-      arg = arg.value_.named_arg->template deserialize<Context>();
+    format_arg arg;
+    if (!is_packed()) {
+      if (id < max_size()) arg = args_[id];
+      return arg;
+    }
+    if (id >= internal::max_packed_args) return arg;
+    arg.type_ = type(id);
+    if (arg.type_ == internal::type::none_type) return arg;
+    arg.value_ = values_[id];
     return arg;
   }
 
@@ -1644,31 +1712,6 @@ template <typename Container>
 struct is_contiguous_back_insert_iterator<std::back_insert_iterator<Container>>
     : is_contiguous<Container> {};
 
-template <typename Char> struct named_arg_base {
-  const Char* name;
-
-  // Serialized value<context>.
-  mutable char data[sizeof(basic_format_arg<buffer_context<Char>>)];
-
-  named_arg_base(const Char* nm) : name(nm) {}
-
-  template <typename Context> basic_format_arg<Context> deserialize() const {
-    basic_format_arg<Context> arg;
-    std::memcpy(&arg, data, sizeof(basic_format_arg<Context>));
-    return arg;
-  }
-};
-
-struct view {};
-
-template <typename T, typename Char>
-struct named_arg : view, named_arg_base<Char> {
-  const T& value;
-
-  named_arg(const Char* name, const T& val)
-      : named_arg_base<Char>(name), value(val) {}
-};
-
 // Reports a compile-time error if S is not a valid format string.
 template <typename..., typename S, FMT_ENABLE_IF(!is_compile_string<S>::value)>
 FMT_INLINE void check_format_string(const S&) {
@@ -1711,22 +1754,6 @@ FMT_API void vprint_mojibake(std::FILE*, string_view, format_args);
 inline void vprint_mojibake(std::FILE*, string_view, format_args) {}
 #endif
 }  // namespace internal
-
-/**
-  \rst
-  Returns a named argument to be used in a formatting function. It should only
-  be used in a call to a formatting function.
-
-  **Example**::
-
-    fmt::print("Elapsed time: {s:.2f} seconds", fmt::arg("s", 1.23));
-  \endrst
- */
-template <typename Char, typename T>
-inline internal::named_arg<T, Char> arg(const Char* name, const T& arg) {
-  static_assert(!internal::is_named_arg<T>(), "nested named arguments");
-  return {name, arg};
-}
 
 /** Formats a string and writes the output to ``out``. */
 // GCC 8 and earlier cannot handle std::back_insert_iterator<Container> with

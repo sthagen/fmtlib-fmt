@@ -1,3 +1,13 @@
+6.2.1 - 2020-05-09
+------------------
+
+* Fixed ostream support in ``sprintf``
+  (`#1631 <https://github.com/fmtlib/fmt/issues/1631>`_).
+
+* Fixed type detection when using implicit conversion to ``string_view`` and
+  ostream ``operator<<`` inconsistently
+  (`#1662 <https://github.com/fmtlib/fmt/issues/1662>`_).
+
 6.2.0 - 2020-04-05
 ------------------
 
