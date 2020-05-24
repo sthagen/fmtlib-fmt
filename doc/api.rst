@@ -69,6 +69,9 @@ Argument Lists
 .. doxygenclass:: fmt::format_arg_store
    :members:
 
+.. doxygenclass:: fmt::dynamic_format_arg_store
+   :members:
+
 .. doxygenclass:: fmt::basic_format_args
    :members:
 
@@ -97,7 +100,7 @@ locale::
   #include <locale>
 
   std::locale::global(std::locale("en_US.UTF-8"));
-  auto s = fmt::format("{:n}", 1000000);  // s == "1,000,000"
+  auto s = fmt::format("{:L}", 1000000);  // s == "1,000,000"
 
 .. _format-api:
 
@@ -247,9 +250,9 @@ Literal-based API
 
 The following user-defined literals are defined in ``fmt/format.h``.
 
-.. doxygenfunction:: operator""_format(const char *, std::size_t)
+.. doxygenfunction:: operator""_format(const char *, size_t)
 
-.. doxygenfunction:: operator""_a(const char *, std::size_t)
+.. doxygenfunction:: operator""_a(const char *, size_t)
 
 Utilities
 ---------
@@ -269,6 +272,9 @@ Utilities
 .. doxygenfunction:: fmt::join(const Range&, string_view)
 
 .. doxygenfunction:: fmt::join(It, It, string_view)
+
+.. doxygenclass:: fmt::detail::buffer
+   :members:
 
 .. doxygenclass:: fmt::basic_memory_buffer
    :protected-members:

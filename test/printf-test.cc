@@ -17,7 +17,7 @@
 
 using fmt::format;
 using fmt::format_error;
-using fmt::internal::max_value;
+using fmt::detail::max_value;
 
 const unsigned BIG_NUM = INT_MAX + 1u;
 
@@ -139,8 +139,11 @@ TEST(PrintfTest, ZeroFlag) {
 
   EXPECT_PRINTF("+00042", "%00+6d", 42);
 
+  EXPECT_PRINTF("   42", "%05.d", 42);
+  EXPECT_PRINTF(" 0042", "%05.4d", 42);
+
   // '0' flag is ignored for non-numeric types.
-  EXPECT_PRINTF("0000x", "%05c", 'x');
+  EXPECT_PRINTF("    x", "%05c", 'x');
 }
 
 TEST(PrintfTest, PlusFlag) {
@@ -151,11 +154,38 @@ TEST(PrintfTest, PlusFlag) {
 
   // '+' flag is ignored for non-numeric types.
   EXPECT_PRINTF("x", "%+c", 'x');
+
+  // '+' flag wins over space flag
+  EXPECT_PRINTF("+42", "%+ d", 42);
+  EXPECT_PRINTF("-42", "%+ d", -42);
+  EXPECT_PRINTF("+42", "% +d", 42);
+  EXPECT_PRINTF("-42", "% +d", -42);
+  EXPECT_PRINTF("+0042", "% +05d", 42);
+  EXPECT_PRINTF("+0042", "%0+ 5d", 42);
+
+  // '+' flag and space flag are both ignored for non-numeric types.
+  EXPECT_PRINTF("x", "%+ c", 'x');
+  EXPECT_PRINTF("x", "% +c", 'x');
 }
 
 TEST(PrintfTest, MinusFlag) {
   EXPECT_PRINTF("abc  ", "%-5s", "abc");
   EXPECT_PRINTF("abc  ", "%0--5s", "abc");
+
+  EXPECT_PRINTF("7    ", "%-5d", 7);
+  EXPECT_PRINTF("97   ", "%-5hhi", 'a');
+  EXPECT_PRINTF("a    ", "%-5c", 'a');
+
+  // '0' flag is ignored if '-' flag is given
+  EXPECT_PRINTF("7    ", "%-05d", 7);
+  EXPECT_PRINTF("7    ", "%0-5d", 7);
+  EXPECT_PRINTF("a    ", "%-05c", 'a');
+  EXPECT_PRINTF("a    ", "%0-5c", 'a');
+  EXPECT_PRINTF("97   ", "%-05hhi", 'a');
+  EXPECT_PRINTF("97   ", "%0-5hhi", 'a');
+
+  // '-' and space flag don't interfere
+  EXPECT_PRINTF(" 42", "%- d", 42);
 }
 
 TEST(PrintfTest, SpaceFlag) {
@@ -300,7 +330,7 @@ void TestLength(const char* length_spec, U value) {
   unsigned long long unsigned_value = 0;
   // Apply integer promotion to the argument.
   unsigned long long max = max_value<U>();
-  using fmt::internal::const_check;
+  using fmt::detail::const_check;
   if (const_check(max <= static_cast<unsigned>(max_value<int>()))) {
     signed_value = static_cast<int>(value);
     unsigned_value = static_cast<unsigned long long>(value);
