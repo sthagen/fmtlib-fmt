@@ -1806,10 +1806,10 @@ TEST(FormatTest, StrongEnum) {
 }
 #endif
 
-using buffer_range = fmt::buffer_range<char>;
+using buffer_iterator = fmt::format_context::iterator;
 
 class mock_arg_formatter
-    : public fmt::detail::arg_formatter_base<buffer_range> {
+    : public fmt::detail::arg_formatter_base<buffer_iterator, char> {
  private:
 #if FMT_USE_INT128
   MOCK_METHOD1(call, void(__int128_t value));
@@ -1818,12 +1818,11 @@ class mock_arg_formatter
 #endif
 
  public:
-  typedef fmt::detail::arg_formatter_base<buffer_range> base;
-  typedef buffer_range range;
+  using base = fmt::detail::arg_formatter_base<buffer_iterator, char>;
 
   mock_arg_formatter(fmt::format_context& ctx, fmt::format_parse_context*,
                      fmt::format_specs* s = nullptr)
-      : base(fmt::detail::get_container(ctx.out()), s, ctx.locale()) {
+      : base(ctx.out(), s, ctx.locale()) {
     EXPECT_CALL(*this, call(42));
   }
 
@@ -1847,7 +1846,9 @@ class mock_arg_formatter
 
 static void custom_vformat(fmt::string_view format_str, fmt::format_args args) {
   fmt::memory_buffer buffer;
-  fmt::vformat_to<mock_arg_formatter>(buffer, format_str, args);
+  fmt::internal::buffer<char>& base = buffer;
+  fmt::vformat_to<mock_arg_formatter>(std::back_inserter(base), format_str,
+                                      args);
 }
 
 template <typename... Args>

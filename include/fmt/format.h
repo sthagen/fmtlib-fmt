@@ -549,8 +549,6 @@ inline size_t code_point_index(basic_string_view<char8_type> s, size_t n) {
   return s.size();
 }
 
-inline char8_type to_char8_t(char c) { return static_cast<char8_type>(c); }
-
 template <typename InputIt, typename OutChar>
 using needs_conversion = bool_constant<
     std::is_same<typename std::iterator_traits<InputIt>::value_type,
@@ -566,7 +564,8 @@ OutputIt copy_str(InputIt begin, InputIt end, OutputIt it) {
 template <typename OutChar, typename InputIt, typename OutputIt,
           FMT_ENABLE_IF(needs_conversion<InputIt, OutChar>::value)>
 OutputIt copy_str(InputIt begin, InputIt end, OutputIt it) {
-  return std::transform(begin, end, it, to_char8_t);
+  return std::transform(begin, end, it,
+                        [](char c) { return static_cast<char8_type>(c); });
 }
 
 #ifndef FMT_USE_GRISU
@@ -886,34 +885,38 @@ template <> inline wchar_t decimal_point(locale_ref loc) {
   return decimal_point_impl<wchar_t>(loc);
 }
 
-// Formats a decimal unsigned integer value writing into buffer.
-// add_thousands_sep is called after writing each char to add a thousands
-// separator if necessary.
-template <typename UInt, typename Char, typename F>
-inline Char* format_decimal(Char* buffer, UInt value, int num_digits,
-                            F add_thousands_sep) {
+template <typename Char> bool equal2(const Char* lhs, const char* rhs) {
+  return lhs[0] == rhs[0] && lhs[1] == rhs[1];
+}
+inline bool equal2(const char* lhs, const char* rhs) {
+  return memcmp(lhs, rhs, 2) == 0;
+}
+
+template <typename Char> void copy2(Char* dst, const char* src) {
+  *dst++ = static_cast<Char>(*src++);
+  *dst = static_cast<Char>(*src);
+}
+inline void copy2(char* dst, const char* src) { memcpy(dst, src, 2); }
+
+// Formats a decimal unsigned integer value writing into out.
+template <typename UInt, typename Char>
+inline Char* format_decimal(Char* out, UInt value, int num_digits) {
   FMT_ASSERT(num_digits >= 0, "invalid digit count");
-  buffer += num_digits;
-  Char* end = buffer;
+  out += num_digits;
+  Char* end = out;
   while (value >= 100) {
     // Integer division is slow so do it for a group of two digits instead
     // of for every digit. The idea comes from the talk by Alexandrescu
     // "Three Optimization Tips for C++". See speed-test for a comparison.
-    auto index = static_cast<unsigned>((value % 100) * 2);
+    out -= 2;
+    copy2(out, data::digits + static_cast<unsigned>((value % 100) * 2));
     value /= 100;
-    *--buffer = static_cast<Char>(data::digits[index + 1]);
-    add_thousands_sep(buffer);
-    *--buffer = static_cast<Char>(data::digits[index]);
-    add_thousands_sep(buffer);
   }
   if (value < 10) {
-    *--buffer = static_cast<Char>('0' + value);
+    *--out = static_cast<Char>('0' + value);
     return end;
   }
-  auto index = static_cast<unsigned>(value * 2);
-  *--buffer = static_cast<Char>(data::digits[index + 1]);
-  add_thousands_sep(buffer);
-  *--buffer = static_cast<Char>(data::digits[index]);
+  copy2(out - 2, data::digits + static_cast<unsigned>(value * 2));
   return end;
 }
 
@@ -923,20 +926,13 @@ template <typename Int> constexpr int digits10() FMT_NOEXCEPT {
 template <> constexpr int digits10<int128_t>() FMT_NOEXCEPT { return 38; }
 template <> constexpr int digits10<uint128_t>() FMT_NOEXCEPT { return 38; }
 
-template <typename Char, typename UInt, typename Iterator, typename F>
-inline Iterator format_decimal(Iterator out, UInt value, int num_digits,
-                               F add_thousands_sep) {
-  FMT_ASSERT(num_digits >= 0, "invalid digit count");
+template <typename Char, typename UInt, typename Iterator>
+inline Iterator format_decimal(Iterator out, UInt value, int num_digits) {
   // Buffer should be large enough to hold all digits (<= digits10 + 1).
   enum { max_size = digits10<UInt>() + 1 };
   Char buffer[2 * max_size];
-  auto end = format_decimal(buffer, value, num_digits, add_thousands_sep);
+  auto end = format_decimal(buffer, value, num_digits);
   return detail::copy_str<Char>(buffer, end, out);
-}
-
-template <typename Char, typename It, typename UInt>
-inline It format_decimal(It out, UInt value, int num_digits) {
-  return format_decimal<Char>(out, value, num_digits, [](Char*) {});
 }
 
 template <unsigned BASE_BITS, typename Char, typename UInt>
@@ -1412,6 +1408,16 @@ inline OutputIt write_padded(OutputIt out,
   return write_padded<align>(out, specs, size, size, f);
 }
 
+template <typename Char, typename OutputIt>
+OutputIt write_bytes(OutputIt out, string_view bytes,
+                     const basic_format_specs<Char>& specs) {
+  using iterator = remove_reference_t<decltype(reserve(out, 0))>;
+  return write_padded(out, specs, bytes.size(), [bytes](iterator it) {
+    const char* data = bytes.data();
+    return copy_str<Char>(data, data + bytes.size(), it);
+  });
+}
+
 // Data for write_int that doesn't depend on output iterator type. It is used to
 // avoid template code bloat.
 template <typename Char> struct write_int_data {
@@ -1531,52 +1537,43 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
 
   enum { sep_size = 1 };
 
-  struct num_writer {
-    UInt abs_value;
-    int size;
-    const std::string& groups;
-    Char sep;
-
-    template <typename It> It operator()(It it) const {
-      basic_string_view<Char> s(&sep, sep_size);
-      // Index of a decimal digit with the least significant digit having
-      // index 0.
-      int digit_index = 0;
-      std::string::const_iterator group = groups.cbegin();
-      return format_decimal<Char>(
-          it, abs_value, size, [this, s, &group, &digit_index](Char*& buffer) {
-            if (*group <= 0 || ++digit_index % *group != 0 ||
-                *group == max_value<char>())
-              return;
-            if (group + 1 != groups.cend()) {
-              digit_index = 0;
-              ++group;
-            }
-            buffer -= s.size();
-            std::uninitialized_copy(s.data(), s.data() + s.size(),
-                                    make_checked(buffer, s.size()));
-          });
-    }
-  };
-
   void on_num() {
     std::string groups = grouping<Char>(locale);
     if (groups.empty()) return on_dec();
     auto sep = thousands_sep<Char>(locale);
     if (!sep) return on_dec();
     int num_digits = count_digits(abs_value);
-    int size = num_digits;
+    int size = num_digits, n = num_digits;
     std::string::const_iterator group = groups.cbegin();
     while (group != groups.cend() && num_digits > *group && *group > 0 &&
            *group != max_value<char>()) {
       size += sep_size;
-      num_digits -= *group;
+      n -= *group;
       ++group;
     }
-    if (group == groups.cend())
-      size += sep_size * ((num_digits - 1) / groups.back());
-    out = write_int(out, size, get_prefix(), specs,
-                    num_writer{abs_value, size, groups, sep});
+    if (group == groups.cend()) size += sep_size * ((n - 1) / groups.back());
+    char digits[40];
+    format_decimal<Char>(digits, abs_value, num_digits);
+    memory_buffer buffer;
+    buffer.resize(size);
+    basic_string_view<Char> s(&sep, sep_size);
+    // Index of a decimal digit with the least significant digit having index 0.
+    int digit_index = 0;
+    group = groups.cbegin();
+    auto p = buffer.data() + size;
+    for (int i = num_digits - 1; i >= 0; --i) {
+      *--p = digits[i];
+      if (*group <= 0 || ++digit_index % *group != 0 ||
+          *group == max_value<char>())
+        continue;
+      if (group + 1 != groups.cend()) {
+        digit_index = 0;
+        ++group;
+      }
+      p -= s.size();
+      std::uninitialized_copy(s.data(), s.data() + s.size(), p);
+    }
+    write_bytes(out, {buffer.data(), buffer.size()}, specs);
   }
 
   void on_chr() { *out++ = static_cast<Char>(abs_value); }
@@ -1585,16 +1582,6 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     FMT_THROW(format_error("invalid type specifier"));
   }
 };
-
-template <typename Char, typename OutputIt>
-OutputIt write_bytes(OutputIt out, string_view bytes,
-                     const basic_format_specs<Char>& specs) {
-  using iterator = remove_reference_t<decltype(reserve(out, 0))>;
-  return write_padded(out, specs, bytes.size(), [bytes](iterator it) {
-    const char* data = bytes.data();
-    return copy_str<Char>(data, data + bytes.size(), it);
-  });
-}
 
 template <typename Char, typename OutputIt>
 OutputIt write_nonfinite(OutputIt out, bool isinf,
@@ -1696,11 +1683,12 @@ template <typename T> struct is_integral : std::is_integral<T> {};
 template <> struct is_integral<int128_t> : std::true_type {};
 template <> struct is_integral<uint128_t> : std::true_type {};
 
-template <typename Range, typename ErrorHandler = detail::error_handler>
+template <typename OutputIt, typename Char,
+          typename ErrorHandler = detail::error_handler>
 class arg_formatter_base {
  public:
-  using char_type = typename Range::value_type;
-  using iterator = typename Range::iterator;
+  using char_type = Char;
+  using iterator = OutputIt;
   using format_specs = basic_format_specs<char_type>;
 
  private:
@@ -1772,8 +1760,8 @@ class arg_formatter_base {
     *it++ = value;
   }
 
-  template <typename Char, FMT_ENABLE_IF(std::is_same<Char, char_type>::value)>
-  void write(Char value) {
+  template <typename Ch, FMT_ENABLE_IF(std::is_same<Ch, char_type>::value)>
+  void write(Ch value) {
     auto&& it = reserve(1);
     *it++ = value;
   }
@@ -1788,18 +1776,18 @@ class arg_formatter_base {
     it = std::copy(value.begin(), value.end(), it);
   }
 
-  template <typename Char>
-  void write(const Char* s, size_t size, const format_specs& specs) {
+  template <typename Ch>
+  void write(const Ch* s, size_t size, const format_specs& specs) {
     auto width = specs.width != 0
-                     ? count_code_points(basic_string_view<Char>(s, size))
+                     ? count_code_points(basic_string_view<Ch>(s, size))
                      : 0;
     out_ = write_padded(out_, specs, size, width, [=](reserve_iterator it) {
       return copy_str<char_type>(s, s + size, it);
     });
   }
 
-  template <typename Char>
-  void write(basic_string_view<Char> s, const format_specs& specs = {}) {
+  template <typename Ch>
+  void write(basic_string_view<Ch> s, const format_specs& specs = {}) {
     out_ = detail::write(out_, s, specs);
   }
 
@@ -1827,8 +1815,8 @@ class arg_formatter_base {
   }
 
  public:
-  arg_formatter_base(Range r, format_specs* s, locale_ref loc)
-      : out_(r.begin()), locale_(loc), specs_(s) {}
+  arg_formatter_base(OutputIt out, format_specs* s, locale_ref loc)
+      : out_(out), locale_(loc), specs_(s) {}
 
   iterator operator()(monostate) {
     FMT_ASSERT(false, "invalid argument type");
@@ -2734,18 +2722,17 @@ FMT_API void report_error(format_func func, int error_code,
 }  // namespace detail
 
 /** The default argument formatter. */
-template <typename Range>
-class arg_formatter : public detail::arg_formatter_base<Range> {
+template <typename OutputIt, typename Char>
+class arg_formatter : public detail::arg_formatter_base<OutputIt, Char> {
  private:
-  using char_type = typename Range::value_type;
-  using base = detail::arg_formatter_base<Range>;
-  using context_type = basic_format_context<typename base::iterator, char_type>;
+  using char_type = Char;
+  using base = detail::arg_formatter_base<OutputIt, Char>;
+  using context_type = basic_format_context<OutputIt, Char>;
 
   context_type& ctx_;
   basic_format_parse_context<char_type>* parse_ctx_;
 
  public:
-  using range = Range;
   using iterator = typename base::iterator;
   using format_specs = typename base::format_specs;
 
@@ -2760,7 +2747,7 @@ class arg_formatter : public detail::arg_formatter_base<Range> {
       context_type& ctx,
       basic_format_parse_context<char_type>* parse_ctx = nullptr,
       format_specs* specs = nullptr)
-      : base(Range(ctx.out()), specs, ctx.locale()),
+      : base(ctx.out(), specs, ctx.locale()),
         ctx_(ctx),
         parse_ctx_(parse_ctx) {}
 
@@ -2862,16 +2849,17 @@ class format_int {
       // "Three Optimization Tips for C++". See speed-test for a comparison.
       auto index = static_cast<unsigned>((value % 100) * 2);
       value /= 100;
-      *--ptr = detail::data::digits[index + 1];
-      *--ptr = detail::data::digits[index];
+      ptr -= 2;
+      // memcpy is faster than copying character by character.
+      memcpy(ptr, detail::data::digits + index, 2);
     }
     if (value < 10) {
       *--ptr = static_cast<char>('0' + value);
       return ptr;
     }
     auto index = static_cast<unsigned>(value * 2);
-    *--ptr = detail::data::digits[index + 1];
-    *--ptr = detail::data::digits[index];
+    ptr -= 2;
+    memcpy(ptr, detail::data::digits + index, 2);
     return ptr;
   }
 
@@ -2997,9 +2985,9 @@ struct formatter<T, Char,
                                                        specs_.width_ref, ctx);
     detail::handle_dynamic_spec<detail::precision_checker>(
         specs_.precision, specs_.precision_ref, ctx);
-    using range_type = detail::output_range<typename FormatContext::iterator,
-                                            typename FormatContext::char_type>;
-    return visit_format_arg(arg_formatter<range_type>(ctx, nullptr, &specs_),
+    using af = arg_formatter<typename FormatContext::iterator,
+                             typename FormatContext::char_type>;
+    return visit_format_arg(af(ctx, nullptr, &specs_),
                             detail::make_arg<FormatContext>(val));
   }
 
@@ -3093,9 +3081,9 @@ template <typename Char = char> class dynamic_formatter {
     }
     if (specs_.alt) checker.on_hash();
     if (specs_.precision >= 0) checker.end_precision();
-    using range = detail::output_range<typename FormatContext::iterator,
-                                       typename FormatContext::char_type>;
-    visit_format_arg(arg_formatter<range>(ctx, nullptr, &specs_),
+    using af = arg_formatter<typename FormatContext::iterator,
+                             typename FormatContext::char_type>;
+    visit_format_arg(af(ctx, nullptr, &specs_),
                      detail::make_arg<FormatContext>(val));
     return ctx.out();
   }
@@ -3120,11 +3108,11 @@ FMT_CONSTEXPR void advance_to(
 
 template <typename ArgFormatter, typename Char, typename Context>
 struct format_handler : detail::error_handler {
-  using range = typename ArgFormatter::range;
+  using iterator = typename ArgFormatter::iterator;
 
-  format_handler(range r, basic_string_view<Char> str,
+  format_handler(iterator out, basic_string_view<Char> str,
                  basic_format_args<Context> format_args, detail::locale_ref loc)
-      : parse_context(str), context(r.begin(), format_args, loc) {}
+      : parse_context(str), context(out, format_args, loc) {}
 
   void on_text(const Char* begin, const Char* end) {
     auto size = detail::to_unsigned(end - begin);
@@ -3177,10 +3165,15 @@ struct format_handler : detail::error_handler {
 /** Formats arguments and writes the output to the range. */
 template <typename ArgFormatter, typename Char, typename Context>
 typename Context::iterator vformat_to(
-    typename ArgFormatter::range out, basic_string_view<Char> format_str,
+    typename ArgFormatter::iterator out, basic_string_view<Char> format_str,
     basic_format_args<Context> args,
     detail::locale_ref loc = detail::locale_ref()) {
   format_handler<ArgFormatter, Char, Context> h(out, format_str, args, loc);
+  if (format_str.size() == 2 && detail::equal2(format_str.data(), "{}")) {
+    auto arg = detail::get_arg(h.context, 0);
+    h.parse_context.advance_to(&format_str[1]);
+    return visit_format_arg(ArgFormatter(h.context, &h.parse_context), arg);
+  }
   detail::parse_format_string<false>(format_str, h);
   return h.context.out();
 }
@@ -3336,9 +3329,9 @@ template <typename Char>
 typename buffer_context<Char>::iterator detail::vformat_to(
     detail::buffer<Char>& buf, basic_string_view<Char> format_str,
     basic_format_args<buffer_context<type_identity_t<Char>>> args) {
-  using range = buffer_range<Char>;
-  return vformat_to<arg_formatter<range>>(buf, to_string_view(format_str),
-                                          args);
+  using af = arg_formatter<typename buffer_context<Char>::iterator, Char>;
+  return vformat_to<af>(std::back_inserter(buf), to_string_view(format_str),
+                        args);
 }
 
 #ifndef FMT_HEADER_ONLY
@@ -3399,9 +3392,8 @@ template <
 inline OutputIt vformat_to(
     OutputIt out, const S& format_str,
     format_args_t<type_identity_t<OutputIt>, char_t<S>> args) {
-  using range = detail::output_range<OutputIt, char_t<S>>;
-  return vformat_to<arg_formatter<range>>(range(out),
-                                          to_string_view(format_str), args);
+  using af = arg_formatter<OutputIt, char_t<S>>;
+  return vformat_to<af>(out, to_string_view(format_str), args);
 }
 
 /**
