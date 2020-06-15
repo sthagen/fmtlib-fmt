@@ -142,3 +142,21 @@ TEST(CompileTest, EmptyFormatString) {
   auto f = fmt::compile<>("");
   EXPECT_EQ(fmt::format(f), "");
 }
+
+#ifdef __cpp_if_constexpr
+TEST(CompileTest, FormatDefault) {
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{}"), 42));
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{}"), 42u));
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{}"), 42ll));
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{}"), 42ull));
+  EXPECT_EQ("true", fmt::format(FMT_COMPILE("{}"), true));
+  EXPECT_EQ("x", fmt::format(FMT_COMPILE("{}"), 'x'));
+  EXPECT_EQ("4.2", fmt::format(FMT_COMPILE("{}"), 4.2));
+  EXPECT_EQ("foo", fmt::format(FMT_COMPILE("{}"), "foo"));
+  EXPECT_EQ("foo", fmt::format(FMT_COMPILE("{}"), std::string("foo")));
+}
+
+TEST(CompileTest, TextAndArg) {
+  EXPECT_EQ(">>>42<<<", fmt::format(FMT_COMPILE(">>>{}<<<"), 42));
+}
+#endif

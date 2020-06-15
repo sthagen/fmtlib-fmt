@@ -201,6 +201,7 @@
 #  ifdef FMT_EXPORT
 #    define FMT_API __declspec(dllexport)
 #    define FMT_EXTERN_TEMPLATE_API FMT_API
+#    define FMT_EXPORTED
 #  elif defined(FMT_SHARED)
 #    define FMT_API __declspec(dllimport)
 #    define FMT_EXTERN_TEMPLATE_API FMT_API
@@ -481,7 +482,7 @@ inline basic_string_view<Char> to_string_view(detail::std_string_view<Char> s) {
 }
 
 // A base class for compile-time strings. It is defined in the fmt namespace to
-// make formatting functions visible via ADL, e.g. format(fmt("{}"), 42).
+// make formatting functions visible via ADL, e.g. format(FMT_STRING("{}"), 42).
 struct compile_string {};
 
 template <typename S>
@@ -1155,9 +1156,8 @@ template <typename Context> class basic_format_arg {
   \endrst
  */
 template <typename Visitor, typename Context>
-FMT_CONSTEXPR auto visit_format_arg(Visitor&& vis,
-                                    const basic_format_arg<Context>& arg)
-    -> decltype(vis(0)) {
+FMT_CONSTEXPR_DECL FMT_INLINE auto visit_format_arg(
+    Visitor&& vis, const basic_format_arg<Context>& arg) -> decltype(vis(0)) {
   using char_type = typename Context::char_type;
   switch (arg.type_) {
   case detail::type::none_type:
@@ -1203,7 +1203,27 @@ FMT_CONSTEXPR auto visit_format_arg(Visitor&& vis,
   return vis(monostate());
 }
 
+// Checks whether T is a container with contiguous storage.
+template <typename T> struct is_contiguous : std::false_type {};
+template <typename Char>
+struct is_contiguous<std::basic_string<Char>> : std::true_type {};
+template <typename Char>
+struct is_contiguous<detail::buffer<Char>> : std::true_type {};
+
 namespace detail {
+
+template <typename OutputIt>
+struct is_back_insert_iterator : std::false_type {};
+template <typename Container>
+struct is_back_insert_iterator<std::back_insert_iterator<Container>>
+    : std::true_type {};
+
+template <typename OutputIt>
+struct is_contiguous_back_insert_iterator : std::false_type {};
+template <typename Container>
+struct is_contiguous_back_insert_iterator<std::back_insert_iterator<Container>>
+    : is_contiguous<Container> {};
+
 // A type-erased reference to an std::locale to avoid heavy <locale> include.
 class locale_ref {
  private:
@@ -1320,10 +1340,9 @@ template <typename OutputIt, typename Char> class basic_format_context {
       : out_(out), args_(ctx_args), loc_(loc) {}
 
   format_arg arg(int id) const { return args_.get(id); }
-
-  // Checks if manual indexing is used and returns the argument with the
-  // specified name.
   format_arg arg(basic_string_view<char_type> name) { return args_.get(name); }
+  int arg_id(basic_string_view<char_type> name) { return args_.get_id(name); }
+  const basic_format_args<basic_format_context>& args() const { return args_; }
 
   detail::error_handler error_handler() { return {}; }
   void on_error(const char* message) { error_handler().on_error(message); }
@@ -1332,7 +1351,9 @@ template <typename OutputIt, typename Char> class basic_format_context {
   iterator out() { return out_; }
 
   // Advances the begin iterator to ``it``.
-  void advance_to(iterator it) { out_ = it; }
+  void advance_to(iterator it) {
+    if (!detail::is_back_insert_iterator<iterator>()) out_ = it;
+  }
 
   detail::locale_ref locale() { return loc_; }
 };
@@ -1687,13 +1708,18 @@ template <typename Context> class basic_format_args {
   }
 
   template <typename Char> format_arg get(basic_string_view<Char> name) const {
+    int id = get_id(name);
+    return id >= 0 ? get(id) : format_arg();
+  }
+
+  template <typename Char> int get_id(basic_string_view<Char> name) const {
     if (!has_named_args()) return {};
     const auto& named_args =
         (is_packed() ? values_[-1] : args_[-1].value_).named_args;
     for (size_t i = 0; i < named_args.size; ++i) {
-      if (named_args.data[i].name == name) return get(named_args.data[i].id);
+      if (named_args.data[i].name == name) return named_args.data[i].id;
     }
-    return {};
+    return -1;
   }
 
   int max_size() const {
@@ -1713,29 +1739,15 @@ struct wformat_args : basic_format_args<wformat_context> {
   using basic_format_args::basic_format_args;
 };
 
-template <typename Container> struct is_contiguous : std::false_type {};
-
-template <typename Char>
-struct is_contiguous<std::basic_string<Char>> : std::true_type {};
-
-template <typename Char>
-struct is_contiguous<detail::buffer<Char>> : std::true_type {};
-
 namespace detail {
-
-template <typename OutputIt>
-struct is_contiguous_back_insert_iterator : std::false_type {};
-template <typename Container>
-struct is_contiguous_back_insert_iterator<std::back_insert_iterator<Container>>
-    : is_contiguous<Container> {};
 
 // Reports a compile-time error if S is not a valid format string.
 template <typename..., typename S, FMT_ENABLE_IF(!is_compile_string<S>::value)>
 FMT_INLINE void check_format_string(const S&) {
 #ifdef FMT_ENFORCE_COMPILE_STRING
   static_assert(is_compile_string<S>::value,
-                "FMT_ENFORCE_COMPILE_STRING requires all format strings to "
-                "utilize FMT_STRING() or fmt().");
+                "FMT_ENFORCE_COMPILE_STRING requires all format strings to use "
+                "FMT_STRING.");
 #endif
 }
 template <typename..., typename S, FMT_ENABLE_IF(is_compile_string<S>::value)>
@@ -1752,10 +1764,12 @@ make_args_checked(const S& format_str,
   return {args...};
 }
 
-template <typename Char>
+template <typename Char, FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
 std::basic_string<Char> vformat(
     basic_string_view<Char> format_str,
     basic_format_args<buffer_context<type_identity_t<Char>>> args);
+
+std::string vformat(string_view format_str, format_args args);
 
 template <typename Char>
 typename buffer_context<Char>::iterator vformat_to(

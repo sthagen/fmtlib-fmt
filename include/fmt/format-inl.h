@@ -584,9 +584,10 @@ class bigint {
   void operator=(const bigint&) = delete;
 
   void assign(const bigint& other) {
-    bigits_.resize(other.bigits_.size());
+    auto size = other.bigits_.size();
+    bigits_.resize(size);
     auto data = other.bigits_.data();
-    std::copy(data, data + other.bigits_.size(), bigits_.data());
+    std::copy(data, data + size, make_checked(bigits_.data(), size));
     exp_ = other.exp_;
   }
 
@@ -1362,6 +1363,12 @@ FMT_FUNC void detail::error_handler::on_error(const char* message) {
 FMT_FUNC void report_system_error(int error_code,
                                   fmt::string_view message) FMT_NOEXCEPT {
   report_error(format_system_error, error_code, message);
+}
+
+FMT_FUNC std::string detail::vformat(string_view format_str, format_args args) {
+  memory_buffer buffer;
+  detail::vformat_to(buffer, format_str, args);
+  return to_string(buffer);
 }
 
 FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
