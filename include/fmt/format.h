@@ -72,7 +72,8 @@
 #if __cplusplus == 201103L || __cplusplus == 201402L
 #  if defined(__clang__)
 #    define FMT_FALLTHROUGH [[clang::fallthrough]]
-#  elif FMT_GCC_VERSION >= 700 && !defined(__PGI)
+#  elif FMT_GCC_VERSION >= 700 && !defined(__PGI) && \
+      (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 520)
 #    define FMT_FALLTHROUGH [[gnu::fallthrough]]
 #  else
 #    define FMT_FALLTHROUGH
@@ -127,11 +128,10 @@ FMT_END_NAMESPACE
 #endif
 
 #ifndef FMT_USE_USER_DEFINED_LITERALS
-// For Intel and NVIDIA compilers both they and the system gcc/msc support UDLs.
-#  if (FMT_HAS_FEATURE(cxx_user_literals) || FMT_GCC_VERSION >= 407 ||      \
-       FMT_MSC_VER >= 1900) &&                                              \
-      (!(FMT_ICC_VERSION || FMT_CUDA_VERSION) || FMT_ICC_VERSION >= 1500 || \
-       FMT_CUDA_VERSION >= 700)
+// EDG based compilers (Intel, NVIDIA, Elbrus, etc), GCC and MSVC support UDLs.
+#  if (FMT_HAS_FEATURE(cxx_user_literals) || FMT_GCC_VERSION >= 407 || \
+       FMT_MSC_VER >= 1900) &&                                         \
+      (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= /* UDL feature */ 480)
 #    define FMT_USE_USER_DEFINED_LITERALS 1
 #  else
 #    define FMT_USE_USER_DEFINED_LITERALS 0
@@ -139,10 +139,10 @@ FMT_END_NAMESPACE
 #endif
 
 #ifndef FMT_USE_UDL_TEMPLATE
-// EDG front end based compilers (icc, nvcc) and GCC < 6.4 do not propertly
+// EDG frontend based compilers (icc, nvcc, etc) and GCC < 6.4 do not properly
 // support UDL templates and GCC >= 9 warns about them.
-#  if FMT_USE_USER_DEFINED_LITERALS && FMT_ICC_VERSION == 0 && \
-      FMT_CUDA_VERSION == 0 &&                                 \
+#  if FMT_USE_USER_DEFINED_LITERALS &&                         \
+      (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 501) && \
       ((FMT_GCC_VERSION >= 604 && __cplusplus >= 201402L) ||   \
        FMT_CLANG_VERSION >= 304)
 #    define FMT_USE_UDL_TEMPLATE 1
@@ -1777,6 +1777,15 @@ OutputIt write(OutputIt out, const void* value) {
   return write_ptr<Char>(out, to_uintptr(value), nullptr);
 }
 
+template <typename Char, typename OutputIt, typename T>
+auto write(OutputIt out, const T& value) -> typename std::enable_if<
+    mapped_type_constant<T, basic_format_context<OutputIt, Char>>::value ==
+        type::custom_type,
+    OutputIt>::type {
+  basic_format_context<OutputIt, Char> ctx(out, {}, {});
+  return formatter<T>().format(value, ctx);
+}
+
 // An argument visitor that formats the argument and writes it via the output
 // iterator. It's a class and not a generic lambda for compatibility with C++11.
 template <typename OutputIt, typename Char> struct default_arg_formatter {
@@ -2831,7 +2840,7 @@ FMT_CONSTEXPR basic_string_view<Char> compile_string_to_view(
   **Example**::
 
     // A compile-time error because 'd' is an invalid specifier for strings.
-    std::string s = format(FMT_STRING("{:d}"), "foo");
+    std::string s = fmt::format(FMT_STRING("{:d}"), "foo");
   \endrst
  */
 #define FMT_STRING(s) FMT_STRING_IMPL(s, fmt::compile_string)
