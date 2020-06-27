@@ -210,13 +210,7 @@
 #  define FMT_CLASS_API
 #endif
 #ifndef FMT_API
-#  if FMT_GCC_VERSION || FMT_CLANG_VERSION
-#    define FMT_API __attribute__((visibility("default")))
-#    define FMT_EXTERN_TEMPLATE_API FMT_API
-#    define FMT_INSTANTIATION_DEF_API
-#  else
-#    define FMT_API
-#  endif
+#  define FMT_API
 #endif
 #ifndef FMT_EXTERN_TEMPLATE_API
 #  define FMT_EXTERN_TEMPLATE_API
@@ -338,7 +332,9 @@ enum char8_type : unsigned char {};
 #endif
 }  // namespace detail
 
+#ifdef FMT_USE_INTERNAL
 namespace internal = detail;  // DEPRECATED
+#endif
 
 /**
   An implementation of ``std::basic_string_view`` for pre-C++17. It provides a
@@ -1598,7 +1594,7 @@ class dynamic_format_arg_store
   void clear() {
     data_.clear();
     named_info_.clear();
-    dynamic_args_ = internal::dynamic_arg_list();
+    dynamic_args_ = detail::dynamic_arg_list();
   }
 
   /**
