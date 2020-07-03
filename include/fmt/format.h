@@ -226,8 +226,8 @@ FMT_END_NAMESPACE
 #endif
 
 // Enable the deprecated numeric alignment.
-#ifndef FMT_NUMERIC_ALIGN
-#  define FMT_NUMERIC_ALIGN 1
+#ifndef FMT_DEPRECATED_NUMERIC_ALIGN
+#  define FMT_DEPRECATED_NUMERIC_ALIGN 1
 #endif
 
 FMT_BEGIN_NAMESPACE
@@ -566,7 +566,7 @@ template <typename U>
 void buffer<T>::append(const U* begin, const U* end) {
   size_t new_size = size_ + to_unsigned(end - begin);
   reserve(new_size);
-  std::uninitialized_copy(begin, end, make_checked(ptr_, capacity_) + size_);
+  std::uninitialized_copy(begin, end, make_checked(ptr_ + size_, capacity_ - size_));
   size_ = new_size;
 }
 }  // namespace detail
@@ -1234,7 +1234,9 @@ FMT_CONSTEXPR void handle_int_type_spec(char spec, Handler&& handler) {
   case 'o':
     handler.on_oct();
     break;
+#ifdef FMT_DEPRECATED_N_SPECIFIER
   case 'n':
+#endif
   case 'L':
     handler.on_num();
     break;
@@ -1282,7 +1284,9 @@ FMT_CONSTEXPR float_specs parse_float_type_spec(
   case 'a':
     result.format = float_format::hex;
     break;
+#ifdef FMT_DEPRECATED_N_SPECIFIER
   case 'n':
+#endif
   case 'L':
     result.locale = true;
     break;
@@ -2441,7 +2445,7 @@ FMT_CONSTEXPR const Char* parse_align(const Char* begin, const Char* end,
     case '>':
       align = align::right;
       break;
-#if FMT_NUMERIC_ALIGN
+#if FMT_DEPRECATED_NUMERIC_ALIGN
     case '=':
       align = align::numeric;
       break;

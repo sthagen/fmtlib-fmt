@@ -605,7 +605,7 @@ TEST(FormatterTest, RightAlign) {
   EXPECT_EQ("  0xface", format("{0:>8}", reinterpret_cast<void*>(0xface)));
 }
 
-#if FMT_NUMERIC_ALIGN
+#if FMT_DEPRECATED_NUMERIC_ALIGN
 TEST(FormatterTest, NumericAlign) { EXPECT_EQ("0042", format("{0:=4}", 42)); }
 #endif
 
@@ -1223,7 +1223,6 @@ TEST(FormatterTest, FormatOct) {
 }
 
 TEST(FormatterTest, FormatIntLocale) {
-  EXPECT_EQ("1234", format("{:n}", 1234));
   EXPECT_EQ("1234", format("{:L}", 1234));
 }
 
@@ -1320,7 +1319,7 @@ TEST(FormatterTest, FormatLongDouble) {
 }
 
 TEST(FormatterTest, FormatChar) {
-  const char types[] = "cbBdoxXnL";
+  const char types[] = "cbBdoxXL";
   check_unknown_types('a', types, "char");
   EXPECT_EQ("a", format("{0}", 'a'));
   EXPECT_EQ("z", format("{0:c}", 'z'));
@@ -1888,7 +1887,7 @@ TEST(FormatTest, DynamicFormatter) {
                    "cannot switch from manual to automatic argument indexing");
   EXPECT_THROW_MSG(format("{:{0}}", num), format_error,
                    "cannot switch from automatic to manual argument indexing");
-#if FMT_NUMERIC_ALIGN
+#if FMT_DEPRECATED_NUMERIC_ALIGN
   EXPECT_THROW_MSG(format("{:=}", str), format_error,
                    "format specifier requires numeric argument");
 #endif
@@ -2328,7 +2327,7 @@ TEST(FormatTest, FormatStringErrors) {
   EXPECT_ERROR("{:10000000000}", "number is too big", int);
   EXPECT_ERROR("{:.10000000000}", "number is too big", int);
   EXPECT_ERROR_NOARGS("{:x}", "argument not found");
-#    if FMT_NUMERIC_ALIGN
+#    if FMT_DEPRECATED_NUMERIC_ALIGN
   EXPECT_ERROR("{0:=5", "unknown format specifier", int);
   EXPECT_ERROR("{:=}", "format specifier requires numeric argument",
                const char*);
