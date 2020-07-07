@@ -244,7 +244,7 @@ Output Iterator Support
 -----------------------
 
 .. doxygenfunction:: fmt::format_to(OutputIt, const S&, Args&&...)
-.. doxygenfunction:: fmt::format_to_n(OutputIt, std::size_t, string_view, Args&&...)
+.. doxygenfunction:: fmt::format_to_n(OutputIt, size_t, const S&, const Args&...)
 .. doxygenstruct:: fmt::format_to_n_result
    :members:
 
@@ -274,7 +274,7 @@ Utilities
 
 .. doxygenfunction:: fmt::join(const Range&, string_view)
 
-.. doxygenfunction:: fmt::join(It, It, string_view)
+.. doxygenfunction:: fmt::join(It, Sentinel, string_view)
 
 .. doxygenclass:: fmt::detail::buffer
    :members:
@@ -334,50 +334,6 @@ The allocator will be used for the output container only. If you are using named
 arguments, the container that stores pointers to them will be allocated using
 the default allocator. Also floating-point formatting falls back on ``sprintf``
 which may do allocations.
-
-Custom Formatting of Built-in Types
------------------------------------
-
-It is possible to change the way arguments are formatted by providing a
-custom argument formatter class::
-
-  using arg_formatter = fmt::arg_formatter<fmt::buffer_range<char>>;
-
-  // A custom argument formatter that formats negative integers as unsigned
-  // with the ``x`` format specifier.
-  class custom_arg_formatter : public arg_formatter {
-   public:
-    custom_arg_formatter(fmt::format_context& ctx,
-                         fmt::format_parse_context* parse_ctx = nullptr,
-                         fmt::format_specs* spec = nullptr)
-      : arg_formatter(ctx, parse_ctx, spec) {}
-
-    using arg_formatter::operator();
-
-    auto operator()(int value) {
-      if (specs() && specs()->type == 'x')
-        return (*this)(static_cast<unsigned>(value)); // convert to unsigned and format
-      return arg_formatter::operator()(value);
-    }
-  };
-
-  std::string custom_vformat(fmt::string_view format_str, fmt::format_args args) {
-    fmt::memory_buffer buffer;
-    // Pass custom argument formatter as a template arg to vformat_to.
-    fmt::vformat_to<custom_arg_formatter>(buffer, format_str, args);
-    return fmt::to_string(buffer);
-  }
-
-  template <typename ...Args>
-  inline std::string custom_format(
-      fmt::string_view format_str, const Args&... args) {
-    return custom_vformat(format_str, fmt::make_format_args(args...));
-  }
-
-  std::string s = custom_format("{:x}", -42); // s == "ffffffd6"
-
-.. doxygenclass:: fmt::arg_formatter
-   :members:
 
 .. _ranges-api:
 
@@ -481,3 +437,19 @@ argument type doesn't match its format specification.
 .. doxygenfunction:: fprintf(std::basic_ostream<Char>&, const S&, const Args&...)
 
 .. doxygenfunction:: sprintf(const S&, const Args&...)
+
+Compatibility with C++20 ``std::format``
+========================================
+
+{fmt} implements nearly all of the `C++20 formatting library
+<https://en.cppreference.com/w/cpp/utility/format>`_ with the following
+differences:
+
+* Names are defined in the ``fmt`` namespace instead of ``std`` to avoid
+  collisions with standard library implementations.
+* The ``'L'`` format specifier cannot be combined with presentation specifiers
+  yet.
+* Width calculation doesn't use grapheme clusterization. The latter has been
+  implemented in a separate branch but hasn't been integrated yet.
+* Chrono formatting doesn't support C++20 date types since they are not provided
+  by standard library implementations.
