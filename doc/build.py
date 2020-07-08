@@ -6,8 +6,7 @@ import errno, os, shutil, sys, tempfile
 from subprocess import check_call, check_output, CalledProcessError, Popen, PIPE
 from distutils.version import LooseVersion
 
-versions = [
-  '1.0.0', '1.1.0', '2.0.0', '3.0.2', '4.0.0', '4.1.0', '5.0.0', '5.1.0', '5.2.0', '5.2.1', '5.3.0', '6.0.0', '6.1.0', '6.1.1', '6.1.2', '6.2.0', '6.2.1', '7.0.0']
+versions = ['1.0.0', '1.1.0', '2.0.0', '3.0.2', '4.0.0', '4.1.0', '5.0.0', '5.1.0', '5.2.0', '5.2.1', '5.3.0', '6.0.0', '6.1.0', '6.1.1', '6.1.2', '6.2.0', '6.2.1', '7.0.0', '7.0.1']
 
 def pip_install(package, commit=None, **kwargs):
   "Install package using pip."
@@ -60,7 +59,7 @@ def create_build_env(dirname='virtualenv'):
               '129222318f7c8f865d2631e7da7b033567e7f56a',
               min_version='4.2.0')
 
-def build_docs(version='dev', **kwargs):
+def build_docs(sphinx_executable='sphinx-build', version='dev', **kwargs):
   doc_dir = kwargs.get('doc_dir', os.path.dirname(os.path.realpath(__file__)))
   work_dir = kwargs.get('work_dir', '.')
   include_dir = kwargs.get(
@@ -102,7 +101,7 @@ def build_docs(version='dev', **kwargs):
     raise CalledProcessError(p.returncode, cmd)
   html_dir = os.path.join(work_dir, 'html')
   main_versions = reversed(versions[-3:])
-  check_call(['sphinx-build',
+  check_call([sphinx_executable,
               '-Dbreathe_projects.format=' + os.path.abspath(doxyxml_dir),
               '-Dversion=' + version, '-Drelease=' + version,
               '-Aversion=' + version, '-Aversions=' + ','.join(main_versions),
@@ -122,4 +121,4 @@ def build_docs(version='dev', **kwargs):
 
 if __name__ == '__main__':
   create_build_env()
-  build_docs(sys.argv[1])
+  build_docs(sys.argv[1], sys.argv[2])
