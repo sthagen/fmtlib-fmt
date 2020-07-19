@@ -114,11 +114,13 @@ string checks, wide string, output iterator and user-defined type support.
 Compile-time Format String Checks
 ---------------------------------
 
-Compile-time checks are supported for built-in and string types as well as
-user-defined types with ``constexpr`` ``parse`` functions in their ``formatter``
-specializations.
+Compile-time checks are enabled when using ``FMT_STRING``. They support built-in
+and string types as well as user-defined types with ``constexpr`` ``parse``
+functions in their ``formatter`` specializations.
 
 .. doxygendefine:: FMT_STRING
+
+.. _udt:
 
 Formatting User-defined Types
 -----------------------------
@@ -236,6 +238,10 @@ You can also write a formatter for a hierarchy of classes::
     A& a = b;
     fmt::print("{}", a); // prints "B"
   }
+
+If a type provides both a ``formatter`` specialization and an implicit
+conversion to a formattable type, the specialization takes precedence over the
+conversion.
 
 .. doxygenclass:: fmt::basic_format_parse_context
    :members:
@@ -383,9 +389,10 @@ The format string syntax is described in the documentation of
 Format string compilation
 =========================
 
-``fmt/compile.h`` provides format string compilation support. Format strings
-are parsed at compile time and converted into efficient formatting code. This
-supports arguments of built-in and string types as well as user-defined types
+``fmt/compile.h`` provides format string compilation support when using
+``FMT_COMPILE``. Format strings are parsed, checked and converted
+into efficient formatting code at compile-time.
+This supports arguments of built-in and string types as well as user-defined types
 with ``constexpr`` ``parse`` functions in their ``formatter`` specializations.
 Format string compilation can generate more binary code compared to the default
 API and is only recommended in places where formatting is a performance

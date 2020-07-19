@@ -616,7 +616,23 @@ template <typename T, typename Context>
 using has_formatter =
     std::is_constructible<typename Context::template formatter_type<T>>;
 
+// Checks whether T is a container with contiguous storage.
+template <typename T> struct is_contiguous : std::false_type {};
+template <typename Char>
+struct is_contiguous<std::basic_string<Char>> : std::true_type {};
+
 namespace detail {
+
+// Extracts a reference to the container from back_insert_iterator.
+template <typename Container>
+inline Container& get_container(std::back_insert_iterator<Container> it) {
+  using bi_iterator = std::back_insert_iterator<Container>;
+  struct accessor : bi_iterator {
+    accessor(bi_iterator iter) : bi_iterator(iter) {}
+    using bi_iterator::container;
+  };
+  return *accessor(it).container;
+}
 
 /**
   \rst
@@ -640,6 +656,8 @@ template <typename T> class buffer {
         size_(sz),
         capacity_(cap) {}
 
+  ~buffer() = default;
+
   /** Sets the buffer data and capacity. */
   void set(T* buf_data, size_t buf_capacity) FMT_NOEXCEPT {
     ptr_ = buf_data;
@@ -655,7 +673,6 @@ template <typename T> class buffer {
 
   buffer(const buffer&) = delete;
   void operator=(const buffer&) = delete;
-  virtual ~buffer() = default;
 
   T* begin() FMT_NOEXCEPT { return ptr_; }
   T* end() FMT_NOEXCEPT { return ptr_ + size_; }
@@ -675,24 +692,26 @@ template <typename T> class buffer {
   /** Returns a pointer to the buffer data. */
   const T* data() const FMT_NOEXCEPT { return ptr_; }
 
-  /**
-    Resizes the buffer. If T is a POD type new elements may not be initialized.
-   */
-  void resize(size_t new_size) {
-    reserve(new_size);
-    size_ = new_size;
-  }
-
   /** Clears this buffer. */
   void clear() { size_ = 0; }
 
-  /** Reserves space to store at least *capacity* elements. */
-  void reserve(size_t new_capacity) {
+  // Tries resizing the buffer to contain *count* elements. If T is a POD type
+  // the new elements may not be initialized.
+  void try_resize(size_t count) {
+    try_reserve(count);
+    size_ = count <= capacity_ ? count : capacity_;
+  }
+
+  // Tries increasing the buffer capacity to *new_capacity*. It can increase the
+  // capacity by a smaller amount than requested but guarantees there is space
+  // for at least one additional element either by increasing the capacity or by
+  // flushing the buffer if it is full.
+  void try_reserve(size_t new_capacity) {
     if (new_capacity > capacity_) grow(new_capacity);
   }
 
   void push_back(const T& value) {
-    reserve(size_ + 1);
+    try_reserve(size_ + 1);
     ptr_[size_++] = value;
   }
 
@@ -705,9 +724,48 @@ template <typename T> class buffer {
   }
 };
 
-// A container-backed buffer.
+// A buffer that writes to an output iterator when flushed.
+template <typename OutputIt, typename T>
+class iterator_buffer : public buffer<T> {
+ private:
+  enum { buffer_size = 256 };
+
+  OutputIt out_;
+  T data_[buffer_size];
+
+ protected:
+  void grow(size_t) final {
+    if (this->size() == buffer_size) flush();
+  }
+  void flush();
+
+ public:
+  explicit iterator_buffer(OutputIt out)
+      : buffer<T>(data_, 0, buffer_size), out_(out) {}
+  ~iterator_buffer() { flush(); }
+
+  OutputIt out() {
+    flush();
+    return out_;
+  }
+};
+
+template <typename T> class iterator_buffer<T*, T> : public buffer<T> {
+ protected:
+  void grow(size_t) final {}
+
+ public:
+  explicit iterator_buffer(T* out) : buffer<T>(out, 0, ~size_t()) {}
+
+  T* out() { return &*this->end(); }
+};
+
+// A buffer that writes to a container with the contiguous storage.
 template <typename Container>
-class container_buffer : public buffer<typename Container::value_type> {
+class iterator_buffer<std::back_insert_iterator<Container>,
+                      enable_if_t<is_contiguous<Container>::value,
+                                  typename Container::value_type>>
+    : public buffer<typename Container::value_type> {
  private:
   Container& container_;
 
@@ -718,9 +776,18 @@ class container_buffer : public buffer<typename Container::value_type> {
   }
 
  public:
-  explicit container_buffer(Container& c)
+  explicit iterator_buffer(Container& c)
       : buffer<typename Container::value_type>(c.size()), container_(c) {}
+  explicit iterator_buffer(std::back_insert_iterator<Container> out)
+      : iterator_buffer(get_container(out)) {}
+  std::back_insert_iterator<Container> out() {
+    return std::back_inserter(container_);
+  }
 };
+
+template <typename Container>
+using container_buffer = iterator_buffer<std::back_insert_iterator<Container>,
+                                         typename Container::value_type>;
 
 // An output iterator that appends to the buffer.
 // It is used to reduce symbol sizes for the common case.
@@ -733,15 +800,24 @@ class buffer_appender : public std::back_insert_iterator<buffer<T>> {
       : std::back_insert_iterator<buffer<T>>(it) {}
 };
 
-// Extracts a reference to the container from back_insert_iterator.
-template <typename Container>
-inline Container& get_container(std::back_insert_iterator<Container> it) {
-  using bi_iterator = std::back_insert_iterator<Container>;
-  struct accessor : bi_iterator {
-    accessor(bi_iterator iter) : bi_iterator(iter) {}
-    using bi_iterator::container;
-  };
-  return *accessor(it).container;
+// Maps an output iterator into a buffer.
+template <typename T, typename OutputIt>
+iterator_buffer<OutputIt, T> get_buffer(OutputIt);
+template <typename T> buffer<T>& get_buffer(buffer_appender<T>);
+
+template <typename OutputIt> OutputIt get_buffer_init(OutputIt out) {
+  return out;
+}
+template <typename T> buffer<T>& get_buffer_init(buffer_appender<T> out) {
+  return get_container(out);
+}
+
+template <typename Buffer>
+auto get_iterator(Buffer& buf) -> decltype(buf.out()) {
+  return buf.out();
+}
+template <typename T> buffer_appender<T> get_iterator(buffer<T>& buf) {
+  return buffer_appender<T>(buf);
 }
 
 template <typename T, typename Char = char, typename Enable = void>
@@ -970,6 +1046,8 @@ enum { long_short = sizeof(long) == sizeof(int) };
 using long_type = conditional_t<long_short, int, long long>;
 using ulong_type = conditional_t<long_short, unsigned, unsigned long long>;
 
+struct unformattable {};
+
 // Maps formatting arguments to core types.
 template <typename Context> struct arg_mapper {
   using char_type = typename Context::char_type;
@@ -1078,15 +1156,7 @@ template <typename Context> struct arg_mapper {
     return map(val.value);
   }
 
-  int map(...) {
-    constexpr bool formattable = sizeof(Context) == 0;
-    static_assert(
-        formattable,
-        "Cannot format argument. To make type T formattable provide a "
-        "formatter<T> specialization: "
-        "https://fmt.dev/latest/api.html#formatting-user-defined-types");
-    return 0;
-  }
+  unformattable map(...) { return {}; }
 };
 
 // A type constant after applying arg_mapper<Context>.
@@ -1210,14 +1280,48 @@ FMT_CONSTEXPR_DECL FMT_INLINE auto visit_format_arg(
   return vis(monostate());
 }
 
-// Checks whether T is a container with contiguous storage.
-template <typename T> struct is_contiguous : std::false_type {};
-template <typename Char>
-struct is_contiguous<std::basic_string<Char>> : std::true_type {};
-template <typename Char>
-struct is_contiguous<detail::buffer<Char>> : std::true_type {};
+template <typename T> struct formattable : std::false_type {};
 
 namespace detail {
+
+// A workaround for gcc 4.8 to make void_t work in a SFINAE context.
+template <typename... Ts> struct void_t_impl { using type = void; };
+
+template <typename... Ts>
+using void_t = typename detail::void_t_impl<Ts...>::type;
+
+// Detect the iterator category of *any* given type in a SFINAE-friendly way.
+// Unfortunately, older implementations of std::iterator_traits are not safe
+// for use in a SFINAE-context.
+template <typename It, typename Enable = void>
+struct iterator_category : std::false_type {};
+
+template <typename T> struct iterator_category<T*> {
+  using type = std::random_access_iterator_tag;
+};
+
+template <typename It>
+struct iterator_category<It, void_t<typename It::iterator_category>> {
+  using type = typename It::iterator_category;
+};
+
+// Detect if *any* given type models the OutputIterator concept.
+template <typename It> class is_output_iterator {
+  // Check for mutability because all iterator categories derived from
+  // std::input_iterator_tag *may* also meet the requirements of an
+  // OutputIterator, thereby falling into the category of 'mutable iterators'
+  // [iterator.requirements.general] clause 4. The compiler reveals this
+  // property only at the point of *actually dereferencing* the iterator!
+  template <typename U>
+  static decltype(*(std::declval<U>())) test(std::input_iterator_tag);
+  template <typename U> static char& test(std::output_iterator_tag);
+  template <typename U> static const char& test(...);
+
+  using type = decltype(test<It>(typename iterator_category<It>::type{}));
+
+ public:
+  enum { value = !std::is_const<remove_reference_t<type>>::value };
+};
 
 template <typename OutputIt>
 struct is_back_insert_iterator : std::false_type {};
@@ -1230,6 +1334,9 @@ struct is_contiguous_back_insert_iterator : std::false_type {};
 template <typename Container>
 struct is_contiguous_back_insert_iterator<std::back_insert_iterator<Container>>
     : is_contiguous<Container> {};
+template <typename Char>
+struct is_contiguous_back_insert_iterator<buffer_appender<Char>>
+    : std::true_type {};
 
 // A type-erased reference to an std::locale to avoid heavy <locale> include.
 class locale_ref {
@@ -1261,13 +1368,24 @@ FMT_CONSTEXPR basic_format_arg<Context> make_arg(const T& value) {
   return arg;
 }
 
+template <typename T> int check(unformattable) {
+  static_assert(
+      formattable<T>(),
+      "Cannot format an argument. To make type T formattable provide a "
+      "formatter<T> specialization: https://fmt.dev/dev/api.html#udt");
+  return 0;
+}
+template <typename T, typename U> inline const U& check(const U& val) {
+  return val;
+}
+
 // The type template parameter is there to avoid an ODR violation when using
 // a fallback formatter in one translation unit and an implicit conversion in
 // another (not recommended).
 template <bool IS_PACKED, typename Context, type, typename T,
           FMT_ENABLE_IF(IS_PACKED)>
 inline value<Context> make_arg(const T& val) {
-  return arg_mapper<Context>().map(val);
+  return check<T>(arg_mapper<Context>().map(val));
 }
 
 template <bool IS_PACKED, typename Context, type, typename T,
@@ -1800,26 +1918,33 @@ inline void vprint_mojibake(std::FILE*, string_view, format_args) {}
 /** Formats a string and writes the output to ``out``. */
 // GCC 8 and earlier cannot handle std::back_insert_iterator<Container> with
 // vformat_to<ArgFormatter>(...) overload, so SFINAE on iterator type instead.
-template <
-    typename OutputIt, typename S, typename Char = char_t<S>,
-    FMT_ENABLE_IF(detail::is_contiguous_back_insert_iterator<OutputIt>::value)>
+template <typename OutputIt, typename S, typename Char = char_t<S>,
+          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt>::value)>
 OutputIt vformat_to(
     OutputIt out, const S& format_str,
     basic_format_args<buffer_context<type_identity_t<Char>>> args) {
-  auto& c = detail::get_container(out);
-  detail::container_buffer<remove_reference_t<decltype(c)>> buf(c);
+  decltype(detail::get_buffer<Char>(out)) buf(detail::get_buffer_init(out));
   detail::vformat_to(buf, to_string_view(format_str), args);
-  return out;
+  return detail::get_iterator(buf);
 }
 
-template <typename Container, typename S, typename... Args,
-          FMT_ENABLE_IF(
-              is_contiguous<Container>::value&& detail::is_string<S>::value)>
-inline std::back_insert_iterator<Container> format_to(
-    std::back_insert_iterator<Container> out, const S& format_str,
-    Args&&... args) {
-  return vformat_to(out, to_string_view(format_str),
-                    detail::make_args_checked<Args...>(format_str, args...));
+/**
+ \rst
+ Formats arguments, writes the result to the output iterator ``out`` and returns
+ the iterator past the end of the output range.
+
+ **Example**::
+
+   std::vector<char> out;
+   fmt::format_to(std::back_inserter(out), "{}", 42);
+ \endrst
+ */
+template <typename OutputIt, typename S, typename... Args,
+          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt>::value&&
+                            detail::is_string<S>::value)>
+inline OutputIt format_to(OutputIt out, const S& format_str, Args&&... args) {
+  const auto& vargs = detail::make_args_checked<Args...>(format_str, args...);
+  return vformat_to(out, to_string_view(format_str), vargs);
 }
 
 template <typename S, typename Char = char_t<S>>
