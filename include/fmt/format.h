@@ -163,6 +163,14 @@ FMT_END_NAMESPACE
 #  define FMT_USE_LONG_DOUBLE 1
 #endif
 
+// Defining FMT_REDUCE_INT_INSTANTIATIONS to 1, will reduce the number of
+// int_writer template instances to just one by only using the largest integer
+// type. This results in a reduction in binary size but will cause a decrease in
+// integer formatting performance.
+#if !defined(FMT_REDUCE_INT_INSTANTIATIONS)
+#  define FMT_REDUCE_INT_INSTANTIATIONS 0
+#endif
+
 // __builtin_clz is broken in clang with Microsoft CodeGen:
 // https://github.com/fmtlib/fmt/issues/519
 #if (FMT_GCC_VERSION || FMT_HAS_BUILTIN(__builtin_clz)) && !FMT_MSC_VER
@@ -283,6 +291,9 @@ template <typename T> constexpr T max_value() {
 template <typename T> constexpr int num_bits() {
   return std::numeric_limits<T>::digits;
 }
+// std::numeric_limits<T>::digits may return 0 for 128-bit ints.
+template <> constexpr int num_bits<int128_t>() { return 128; }
+template <> constexpr int num_bits<uint128_t>() { return 128; }
 template <> constexpr int num_bits<fallback_uintptr>() {
   return static_cast<int>(sizeof(void*) *
                           std::numeric_limits<unsigned char>::digits);
@@ -341,6 +352,18 @@ inline buffer_appender<T> reserve(buffer_appender<T> it, size_t n) {
 
 template <typename Iterator> inline Iterator& reserve(Iterator& it, size_t) {
   return it;
+}
+
+template <typename T, typename OutputIt>
+constexpr T* to_pointer(OutputIt, size_t) {
+  return nullptr;
+}
+template <typename T> T* to_pointer(buffer_appender<T> it, size_t n) {
+  buffer<T>& buf = get_container(it);
+  auto size = buf.size();
+  if (buf.capacity() < size + n) return nullptr;
+  buf.try_resize(size + n);
+  return buf.data() + size;
 }
 
 template <typename Container, FMT_ENABLE_IF(is_contiguous<Container>::value)>
@@ -726,12 +749,19 @@ FMT_CONSTEXPR bool is_supported_floating_point(T) {
          (std::is_same<T, long double>::value && FMT_USE_LONG_DOUBLE);
 }
 
+#if FMT_REDUCE_INT_INSTANTIATIONS
+// Pick the largest integer container to represent all values of T.
+template <typename T>
+using uint32_or_64_or_128_t =
+    conditional_t<sizeof(uint128_t) < sizeof(uint64_t), uint64_t, uint128_t>;
+#else
 // Smallest of uint32_t, uint64_t, uint128_t that is large enough to
 // represent all values of T.
 template <typename T>
 using uint32_or_64_or_128_t = conditional_t<
-    std::numeric_limits<T>::digits <= 32, uint32_t,
-    conditional_t<std::numeric_limits<T>::digits <= 64, uint64_t, uint128_t>>;
+    num_bits<T>() <= 32, uint32_t,
+    conditional_t<num_bits<T>() <= 64, uint64_t, uint128_t>>;
+#endif
 
 // Static data is placed in this class template for the header-only config.
 template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
@@ -1744,7 +1774,13 @@ OutputIt write(OutputIt out, T value) {
   // Don't do -abs_value since it trips unsigned-integer-overflow sanitizer.
   if (negative) abs_value = ~abs_value + 1;
   int num_digits = count_digits(abs_value);
-  auto it = reserve(out, (negative ? 1 : 0) + static_cast<size_t>(num_digits));
+  auto size = (negative ? 1 : 0) + static_cast<size_t>(num_digits);
+  auto it = reserve(out, size);
+  if (auto ptr = to_pointer<Char>(it, size)) {
+    if (negative) *ptr++ = static_cast<Char>('-');
+    format_decimal<Char>(ptr, abs_value, num_digits);
+    return out;
+  }
   if (negative) *it++ = static_cast<Char>('-');
   it = format_decimal<Char>(it, abs_value, num_digits).end;
   return base_iterator(out, it);
@@ -3384,15 +3420,14 @@ arg_join<It, Sentinel, wchar_t> join(It begin, Sentinel end, wstring_view sep) {
   \endrst
  */
 template <typename Range>
-arg_join<detail::iterator_t<const Range>, detail::sentinel_t<const Range>, char>
-join(const Range& range, string_view sep) {
+arg_join<detail::iterator_t<Range>, detail::sentinel_t<Range>, char> join(
+    Range&& range, string_view sep) {
   return join(std::begin(range), std::end(range), sep);
 }
 
 template <typename Range>
-arg_join<detail::iterator_t<const Range>, detail::sentinel_t<const Range>,
-         wchar_t>
-join(const Range& range, wstring_view sep) {
+arg_join<detail::iterator_t<Range>, detail::sentinel_t<Range>, wchar_t> join(
+    Range&& range, wstring_view sep) {
   return join(std::begin(range), std::end(range), sep);
 }
 
@@ -3485,10 +3520,8 @@ template <typename S, typename... Args, size_t SIZE = inline_buffer_size,
           typename Char = enable_if_t<detail::is_string<S>::value, char_t<S>>>
 inline typename buffer_context<Char>::iterator format_to(
     basic_memory_buffer<Char, SIZE>& buf, const S& format_str, Args&&... args) {
-  detail::check_format_string<Args...>(format_str);
-  using context = buffer_context<Char>;
-  return detail::vformat_to(buf, to_string_view(format_str),
-                            make_format_args<context>(args...));
+  const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
+  return detail::vformat_to(buf, to_string_view(format_str), vargs);
 }
 
 template <typename OutputIt, typename Char = char>
@@ -3540,7 +3573,7 @@ template <typename OutputIt, typename S, typename... Args,
 inline format_to_n_result<OutputIt> format_to_n(OutputIt out, size_t n,
                                                 const S& format_str,
                                                 const Args&... args) {
-  const auto& vargs = detail::make_args_checked<Args...>(format_str, args...);
+  const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
   return vformat_to_n(out, n, to_string_view(format_str), vargs);
 }
 
@@ -3586,8 +3619,7 @@ template <typename Char, Char... CHARS> class udl_formatter {
   template <typename... Args>
   std::basic_string<Char> operator()(Args&&... args) const {
     static FMT_CONSTEXPR_DECL Char s[] = {CHARS..., '\0'};
-    check_format_string<remove_cvref_t<Args>...>(FMT_STRING(s));
-    return format(s, std::forward<Args>(args)...);
+    return format(FMT_STRING(s), std::forward<Args>(args)...);
   }
 };
 #  else

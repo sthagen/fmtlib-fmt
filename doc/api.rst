@@ -15,6 +15,7 @@ The {fmt} library API consists of the following parts:
   and tuples
 * :ref:`fmt/chrono.h <chrono-api>`: date and time formatting
 * :ref:`fmt/compile.h <compile-api>`: format string compilation
+* :ref:`fmt/color.h <color-api>`: terminal color and text style
 * :ref:`fmt/ostream.h <ostream-api>`: ``std::ostream`` support
 * :ref:`fmt/printf.h <printf-api>`: ``printf`` formatting
 
@@ -64,6 +65,35 @@ Named arguments are not supported in compile-time checks at the moment.
 
 Argument Lists
 --------------
+
+You can create your own formatting function with compile-time checks and small
+binary footprint, for example (https://godbolt.org/z/oba4Mc):
+
+.. code:: c++
+
+    #include <fmt/format.h>
+
+    void vlog(const char* file, int line, fmt::string_view format,
+              fmt::format_args args) {
+      fmt::print("{}: {}: ", file, line);
+      fmt::vprint(format, args);
+    }
+
+    template <typename S, typename... Args>
+    void log(const char* file, int line, const S& format, Args&&... args) {
+      vlog(file, line, format,
+          fmt::make_args_checked<Args...>(format, args...));
+    }
+
+    #define MY_LOG(format, ...) \
+      log(__FILE__, __LINE__, FMT_STRING(format), __VA_ARGS__)
+
+    MY_LOG("invalid squishiness: {}", 42);
+
+Note that ``vlog`` is not parameterized on argument types which improves compile
+times and reduces binary code size compared to a fully parameterized version.
+
+.. doxygenfunction:: fmt::make_args_checked(const S&, const remove_reference_t<Args>&...)
 
 .. doxygenfunction:: fmt::make_format_args(const Args&...)
 
@@ -399,6 +429,15 @@ API and is only recommended in places where formatting is a performance
 bottleneck.
 
 .. doxygendefine:: FMT_COMPILE
+
+.. _color-api:
+
+Terminal color and text style
+=============================
+
+``fmt/color.h`` provides support for terminal color and text style output.
+
+.. doxygenfunction:: print(const text_style&, const S&, const Args&...)
 
 .. _ostream-api:
 
