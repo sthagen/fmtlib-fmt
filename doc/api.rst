@@ -48,6 +48,10 @@ participate in an overload resolution if the latter is not a string.
 .. doxygenfunction:: format(const S&, Args&&...)
 .. doxygenfunction:: vformat(const S&, basic_format_args<buffer_context<type_identity_t<Char>>>)
 
+.. doxygenfunction:: fmt::format_to(OutputIt, string_view, Args&&...)
+.. doxygenfunction:: fmt::format_to_n(OutputIt, size_t, string_view, Args&&...)
+.. doxygenfunction:: fmt::formatted_size(string_view, Args&&...)
+
 .. _print:
 
 .. doxygenfunction:: print(const S&, Args&&...)
@@ -123,7 +127,7 @@ Compatibility
 Locale
 ------
 
-All formatting is locale-independent by default. Use the ``'n'`` format
+All formatting is locale-independent by default. Use the ``'L'`` format
 specifier to insert the appropriate number separator characters from the
 locale::
 
@@ -300,8 +304,6 @@ Utilities
 
 .. doxygentypedef:: fmt::char_t
 
-.. doxygenfunction:: fmt::formatted_size(string_view, const Args&...)
-
 .. doxygenfunction:: fmt::to_string(const T&)
 
 .. doxygenfunction:: fmt::to_wstring(const T&)
@@ -334,8 +336,6 @@ the value of ``errno`` being preserved by library functions.
 .. doxygenclass:: fmt::windows_error
    :members:
 
-.. _formatstrings:
-
 Custom Allocators
 -----------------
 
@@ -366,10 +366,10 @@ allocator::
       return vformat(alloc, format_str, fmt::make_format_args(args...));
     }
 
-The allocator will be used for the output container only. If you are using named
-arguments, the container that stores pointers to them will be allocated using
-the default allocator. Also floating-point formatting falls back on ``sprintf``
-which may do allocations.
+The allocator will be used for the output container only. Formatting functions
+normally don't do any allocations for built-in and string types except for
+non-default floating-point formatting that occasionally falls back on
+``sprintf``.
 
 .. _ranges-api:
 
@@ -436,6 +436,8 @@ Terminal color and text style
 =============================
 
 ``fmt/color.h`` provides support for terminal color and text style output.
+
+.. doxygenenum:: fmt::color
 
 .. doxygenfunction:: print(const text_style&, const S&, const Args&...)
 

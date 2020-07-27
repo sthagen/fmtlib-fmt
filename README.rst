@@ -25,6 +25,8 @@ It can be used as a safe and fast alternative to (s)printf and iostreams.
 Q&A: ask questions on `StackOverflow with the tag fmt
 <https://stackoverflow.com/questions/tagged/fmt>`_.
 
+Try {fmt} on `Compiler Explorer <https://godbolt.org/z/Eq5763>`_.
+
 Features
 --------
 
@@ -66,7 +68,7 @@ See the `documentation <https://fmt.dev>`_ for more details.
 Examples
 --------
 
-Print ``Hello, world!`` to ``stdout``:
+**Print to stdout**
 
 .. code:: c++
 
@@ -76,21 +78,21 @@ Print ``Hello, world!`` to ``stdout``:
       fmt::print("Hello, world!\n");
     }
 
-Format a string:
+**Format a string**
 
 .. code:: c++
 
     std::string s = fmt::format("The answer is {}.", 42);
     // s == "The answer is 42."
 
-Format a string using positional arguments:
+**Format a string using positional arguments**
 
 .. code:: c++
 
     std::string s = fmt::format("I'd rather be {1} than {0}.", "right", "happy");
     // s == "I'd rather be happy than right."
 
-Print chrono durations:
+**Print chrono durations**
 
 .. code:: c++
 
@@ -102,12 +104,12 @@ Print chrono durations:
       fmt::print("strftime-like format: {:%H:%M:%S}\n", 3h + 15min + 30s);
     }
 
-* Output::
+Output::
 
     Default format: 42s 100ms
     strftime-like format: 03:15:30
 
-Print a container:
+**Print a container**
 
 .. code:: c++
 
@@ -119,11 +121,11 @@ Print a container:
       fmt::print("{}\n", v);
     }
 
-* Output::
+Output::
 
     {1, 2, 3}
 
-Check a format string at compile time:
+**Check a format string at compile time**
 
 .. code:: c++
 
@@ -132,7 +134,7 @@ Check a format string at compile time:
 This gives a compile-time error because ``d`` is an invalid format specifier for
 a string.
 
-Write a file from a single thread:
+**Write a file from a single thread**
 
 .. code:: c++
 
@@ -144,6 +146,26 @@ Write a file from a single thread:
     }
 
 This is up to 6x faster than glibc's ``fprintf``.
+
+**Color support**
+
+.. code:: c++
+
+    #include <fmt/color.h>
+
+    int main() {
+      fmt::print(fg(fmt::color::crimson) | fmt::emphasis::bold,
+                 "Hello, {}!\n", "world");
+      fmt::print(fg(fmt::color::floral_white) | bg(fmt::color::slate_gray) |
+                 fmt::emphasis::underline, "Hello, {}!\n", "мир");
+      fmt::print(fg(fmt::color::steel_blue) | fmt::emphasis::italic,
+                 "Hello, {}!\n", "世界");
+    }
+
+prints the following on a modern terminal:
+
+.. image:: https://user-images.githubusercontent.com/
+           576385/88485597-d312f600-cf2b-11ea-9cbe-61f535a86e28.png
 
 Benchmarks
 ----------

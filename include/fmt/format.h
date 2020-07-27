@@ -566,9 +566,9 @@ void buffer<T>::append(const U* begin, const U* end) {
   } while (begin != end);
 }
 
-template <typename OutputIt, typename T>
-void iterator_buffer<OutputIt, T>::flush() {
-  out_ = std::copy(data_, data_ + this->size(), out_);
+template <typename OutputIt, typename T, typename Traits>
+void iterator_buffer<OutputIt, T, Traits>::flush() {
+  out_ = std::copy_n(data_, this->limit(this->size()), out_);
   this->clear();
 }
 }  // namespace detail
@@ -3530,13 +3530,6 @@ using format_context_t = basic_format_context<OutputIt, Char>;
 template <typename OutputIt, typename Char = char>
 using format_args_t = basic_format_args<format_context_t<OutputIt, Char>>;
 
-template <typename OutputIt> struct format_to_n_result {
-  /** Iterator past the end of the output range. */
-  OutputIt out;
-  /** Total (not truncated) output size. */
-  size_t size;
-};
-
 template <typename OutputIt, typename Char = typename OutputIt::value_type>
 using format_to_n_context FMT_DEPRECATED_ALIAS = buffer_context<Char>;
 
@@ -3550,33 +3543,6 @@ make_format_to_n_args(const Args&... args) {
   return format_arg_store<buffer_context<Char>, Args...>(args...);
 }
 
-template <typename OutputIt, typename Char, typename... Args,
-          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt>::value)>
-inline format_to_n_result<OutputIt> vformat_to_n(
-    OutputIt out, size_t n, basic_string_view<Char> format_str,
-    basic_format_args<buffer_context<type_identity_t<Char>>> args) {
-  auto it = vformat_to(detail::truncating_iterator<OutputIt>(out, n),
-                       format_str, args);
-  return {it.base(), it.count()};
-}
-
-/**
- \rst
- Formats arguments, writes up to ``n`` characters of the result to the output
- iterator ``out`` and returns the total output size and the iterator past the
- end of the output range.
- \endrst
- */
-template <typename OutputIt, typename S, typename... Args,
-          FMT_ENABLE_IF(detail::is_string<S>::value&&
-                            detail::is_output_iterator<OutputIt>::value)>
-inline format_to_n_result<OutputIt> format_to_n(OutputIt out, size_t n,
-                                                const S& format_str,
-                                                const Args&... args) {
-  const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
-  return vformat_to_n(out, n, to_string_view(format_str), vargs);
-}
-
 template <typename Char, enable_if_t<(!std::is_same<Char, char>::value), int>>
 std::basic_string<Char> detail::vformat(
     basic_string_view<Char> format_str,
@@ -3584,15 +3550,6 @@ std::basic_string<Char> detail::vformat(
   basic_memory_buffer<Char> buffer;
   detail::vformat_to(buffer, format_str, args);
   return to_string(buffer);
-}
-
-/**
-  Returns the number of characters in the output of
-  ``format(format_str, args...)``.
- */
-template <typename... Args>
-inline size_t formatted_size(string_view format_str, const Args&... args) {
-  return format_to(detail::counting_iterator(), format_str, args...).count();
 }
 
 template <typename Char, FMT_ENABLE_IF(std::is_same<Char, wchar_t>::value)>
