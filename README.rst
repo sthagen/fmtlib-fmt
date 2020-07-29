@@ -25,7 +25,7 @@ It can be used as a safe and fast alternative to (s)printf and iostreams.
 Q&A: ask questions on `StackOverflow with the tag fmt
 <https://stackoverflow.com/questions/tagged/fmt>`_.
 
-Try {fmt} on `Compiler Explorer <https://godbolt.org/z/Eq5763>`_.
+Try {fmt} in `Compiler Explorer <https://godbolt.org/z/Eq5763>`_.
 
 Features
 --------
@@ -68,7 +68,7 @@ See the `documentation <https://fmt.dev>`_ for more details.
 Examples
 --------
 
-**Print to stdout**
+**Print to stdout** (`run <https://godbolt.org/z/Tevcjh>`_)
 
 .. code:: c++
 
@@ -92,7 +92,7 @@ Examples
     std::string s = fmt::format("I'd rather be {1} than {0}.", "right", "happy");
     // s == "I'd rather be happy than right."
 
-**Print chrono durations**
+**Print chrono durations** (`run <https://godbolt.org/z/K8s4Mc>`_)
 
 .. code:: c++
 
