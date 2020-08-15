@@ -18,7 +18,7 @@
 #include <vector>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 70002
+#define FMT_VERSION 70003
 
 #ifdef __clang__
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
@@ -298,7 +298,8 @@ template <typename T> struct std_string_view {};
 
 #ifdef FMT_USE_INT128
 // Do nothing.
-#elif defined(__SIZEOF_INT128__) && !FMT_NVCC && !(FMT_CLANG_VERSION && FMT_MSC_VER)
+#elif defined(__SIZEOF_INT128__) && !FMT_NVCC && \
+    !(FMT_CLANG_VERSION && FMT_MSC_VER)
 #  define FMT_USE_INT128 1
 using int128_t = __int128_t;
 using uint128_t = __uint128_t;
@@ -556,8 +557,9 @@ class basic_format_parse_context : private ErrorHandler {
   using iterator = typename basic_string_view<Char>::iterator;
 
   explicit constexpr basic_format_parse_context(
-      basic_string_view<Char> format_str, ErrorHandler eh = {})
-      : ErrorHandler(eh), format_str_(format_str), next_arg_id_(0) {}
+      basic_string_view<Char> format_str, ErrorHandler eh = {},
+      int next_arg_id = 0)
+      : ErrorHandler(eh), format_str_(format_str), next_arg_id_(next_arg_id) {}
 
   /**
     Returns an iterator to the beginning of the format string range being
@@ -765,13 +767,13 @@ class iterator_buffer : public Traits, public buffer<T> {
   T data_[buffer_size];
 
  protected:
-  void grow(size_t) final {
+  void grow(size_t) final FMT_OVERRIDE {
     if (this->size() == buffer_size) flush();
   }
   void flush();
 
  public:
-  explicit iterator_buffer(OutputIt out, size_t n = 0)
+  explicit iterator_buffer(OutputIt out, size_t n = buffer_size)
       : Traits(n),
         buffer<T>(data_, 0, n < size_t(buffer_size) ? n : size_t(buffer_size)),
         out_(out) {}
@@ -786,7 +788,7 @@ class iterator_buffer : public Traits, public buffer<T> {
 
 template <typename T> class iterator_buffer<T*, T> : public buffer<T> {
  protected:
-  void grow(size_t) final {}
+  void grow(size_t) final FMT_OVERRIDE {}
 
  public:
   explicit iterator_buffer(T* out, size_t = 0) : buffer<T>(out, 0, ~size_t()) {}
@@ -804,7 +806,7 @@ class iterator_buffer<std::back_insert_iterator<Container>,
   Container& container_;
 
  protected:
-  void grow(size_t capacity) final {
+  void grow(size_t capacity) final FMT_OVERRIDE {
     container_.resize(capacity);
     this->set(&container_[0], capacity);
   }
@@ -827,7 +829,7 @@ template <typename T = char> class counting_buffer : public buffer<T> {
   size_t count_ = 0;
 
  protected:
-  void grow(size_t) final {
+  void grow(size_t) final FMT_OVERRIDE {
     if (this->size() != buffer_size) return;
     count_ += this->size();
     this->clear();

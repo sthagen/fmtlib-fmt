@@ -79,8 +79,8 @@ inline int fmt_snprintf(char* buffer, size_t size, const char* format, ...) {
 //   ERANGE - buffer is not large enough to store the error message
 //   other  - failure
 // Buffer should be at least of size 1.
-FMT_FUNC int safe_strerror(int error_code, char*& buffer,
-                           size_t buffer_size) FMT_NOEXCEPT {
+inline int safe_strerror(int error_code, char*& buffer,
+                         size_t buffer_size) FMT_NOEXCEPT {
   FMT_ASSERT(buffer != nullptr && buffer_size != 0, "invalid buffer");
 
   class dispatcher {
@@ -173,8 +173,8 @@ FMT_FUNC void report_error(format_func func, int error_code,
 }
 
 // A wrapper around fwrite that throws on error.
-FMT_FUNC void fwrite_fully(const void* ptr, size_t size, size_t count,
-                           FILE* stream) {
+inline void fwrite_fully(const void* ptr, size_t size, size_t count,
+                         FILE* stream) {
   size_t written = std::fwrite(ptr, size, count, stream);
   if (written < count) FMT_THROW(system_error(errno, "cannot write to file"));
 }
@@ -274,12 +274,12 @@ const uint64_t basic_data<T>::powers_of_10_64[] = {
     10000000000000000000ULL};
 
 template <typename T>
-const uint32_t basic_data<T>::zero_or_powers_of_10_32[] = {0,
+const uint32_t basic_data<T>::zero_or_powers_of_10_32[] = {0, 0,
                                                            FMT_POWERS_OF_10(1)};
 
 template <typename T>
 const uint64_t basic_data<T>::zero_or_powers_of_10_64[] = {
-    0, FMT_POWERS_OF_10(1), FMT_POWERS_OF_10(1000000000ULL),
+    0, 0, FMT_POWERS_OF_10(1), FMT_POWERS_OF_10(1000000000ULL),
     10000000000000000000ULL};
 
 // Normalized 64-bit significands of pow(10, k), for k = -348, -340, ..., 340.
@@ -1124,7 +1124,7 @@ int format_float(T value, int precision, float_specs specs, buffer<char>& buf) {
     if (grisu_gen_digits(normalized, 1, exp, handler) == digits::error)
       return snprintf_float(value, precision, specs, buf);
     int num_digits = handler.size;
-    if (!fixed) {
+    if (!fixed && !specs.showpoint) {
       // Remove trailing zeros.
       while (num_digits > 0 && buf[num_digits - 1] == '0') {
         --num_digits;
@@ -1257,7 +1257,7 @@ int snprintf_float(T value, int precision, float_specs specs,
  * occurs, this pointer will be a guess that depends on the particular
  * error, but it will always advance at least one byte.
  */
-FMT_FUNC const char* utf8_decode(const char* buf, uint32_t* c, int* e) {
+inline const char* utf8_decode(const char* buf, uint32_t* c, int* e) {
   static const char lengths[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                                  1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
                                  0, 0, 2, 2, 2, 2, 3, 3, 4, 0};

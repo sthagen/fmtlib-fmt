@@ -48,8 +48,10 @@ Features
 * Small code size both in terms of source code with the minimum configuration
   consisting of just three files, ``core.h``, ``format.h`` and ``format-inl.h``,
   and compiled code; see `Compile time and code bloat`_
-* Reliability: the library has an extensive set of `unit tests
-  <https://github.com/fmtlib/fmt/tree/master/test>`_ and is continuously fuzzed
+* Reliability: the library has an extensive set of `tests
+  <https://github.com/fmtlib/fmt/tree/master/test>`_ and is `continuously fuzzed
+  <https://bugs.chromium.org/p/oss-fuzz/issues/list?colspec=ID%20Type%20
+  Component%20Status%20Proj%20Reported%20Owner%20Summary&q=proj%3Dlibfmt&can=1>`_
 * Safety: the library is fully type safe, errors in format strings can be
   reported at compile time, automatic memory management prevents buffer overflow
   errors
@@ -85,7 +87,7 @@ Examples
     std::string s = fmt::format("The answer is {}.", 42);
     // s == "The answer is 42."
 
-**Format a string using positional arguments**
+**Format a string using positional arguments** (`run <https://godbolt.org/z/Yn7Txe>`_)
 
 .. code:: c++
 
@@ -109,7 +111,7 @@ Output::
     Default format: 42s 100ms
     strftime-like format: 03:15:30
 
-**Print a container**
+**Print a container** (`run <https://godbolt.org/z/MjsY7c>`_)
 
 .. code:: c++
 
@@ -145,9 +147,10 @@ a string.
       out.print("Don't {}", "Panic");
     }
 
-This is up to 6x faster than glibc's ``fprintf``.
+This can be `5 to 9 times faster than fprintf
+<http://www.zverovich.net/2020/08/04/optimal-file-buffer-size.html>`_.
 
-**Color support**
+**Print with colors and text styles**
 
 .. code:: c++
 
@@ -162,7 +165,7 @@ This is up to 6x faster than glibc's ``fprintf``.
                  "Hello, {}!\n", "世界");
     }
 
-prints the following on a modern terminal:
+Output on a modern terminal:
 
 .. image:: https://user-images.githubusercontent.com/
            576385/88485597-d312f600-cf2b-11ea-9cbe-61f535a86e28.png
@@ -342,6 +345,8 @@ Projects using this library
 
 * `quasardb <https://www.quasardb.net/>`_: A distributed, high-performance,
   associative database
+  
+* `Quill <https://github.com/odygrd/quill>`_: Asynchronous low-latency logging library
 
 * `readpe <https://bitbucket.org/sys_dev/readpe>`_: Read Portable Executable
 

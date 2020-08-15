@@ -139,12 +139,13 @@ FMT_END_NAMESPACE
 #endif
 
 #ifndef FMT_USE_UDL_TEMPLATE
-// EDG frontend based compilers (icc, nvcc, etc) and GCC < 6.4 do not properly
-// support UDL templates and GCC >= 9 warns about them.
+// EDG frontend based compilers (icc, nvcc, PGI, etc) and GCC < 6.4 do not
+// properly support UDL templates and GCC >= 9 warns about them.
 #  if FMT_USE_USER_DEFINED_LITERALS &&                         \
       (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 501) && \
       ((FMT_GCC_VERSION >= 604 && __cplusplus >= 201402L) ||   \
-       FMT_CLANG_VERSION >= 304)
+       FMT_CLANG_VERSION >= 304) &&                            \
+      !defined(__PGI) && !defined(__NVCC__)
 #    define FMT_USE_UDL_TEMPLATE 1
 #  else
 #    define FMT_USE_UDL_TEMPLATE 0
@@ -622,7 +623,7 @@ class basic_memory_buffer : public detail::buffer<T> {
   }
 
  protected:
-  void grow(size_t size) final;
+  void grow(size_t size) final FMT_OVERRIDE;
 
  public:
   using value_type = T;
@@ -685,6 +686,13 @@ class basic_memory_buffer : public detail::buffer<T> {
 
   /** Increases the buffer capacity to *new_capacity*. */
   void reserve(size_t new_capacity) { this->try_reserve(new_capacity); }
+
+  // Directly append data into the buffer
+  using detail::buffer<T>::append;
+  template <typename ContiguousRange>
+  void append(const ContiguousRange& range) {
+    append(range.data(), range.data() + range.size());
+  }
 };
 
 template <typename T, size_t SIZE, typename Allocator>
@@ -788,6 +796,17 @@ template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
   static const char right_padding_shifts[5];
 };
 
+// Maps bsr(n) to ceil(log10(pow(2, bsr(n) + 1) - 1)).
+// This is a function instead of an array to workaround a bug in GCC10 (#1810).
+FMT_INLINE uint16_t bsr2log10(int bsr) {
+  constexpr uint16_t data[] = {
+    1,  1,  1,  2,  2,  2,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,
+    6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  10, 10, 10,
+    10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 15,
+    15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
+  return data[bsr];
+}
+
 #ifndef FMT_EXPORTED
 FMT_EXTERN template struct basic_data<void>;
 #endif
@@ -799,10 +818,9 @@ struct data : basic_data<> {};
 // Returns the number of decimal digits in n. Leading zeros are not counted
 // except for n == 0 in which case count_digits returns 1.
 inline int count_digits(uint64_t n) {
-  // Based on http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog10
-  // and the benchmark https://github.com/localvoid/cxx-benchmark-count-digits.
-  int t = ((FMT_BUILTIN_CLZLL(n | 1) ^ 63) + 1) * 1233 >> 12;
-  return t - (n < data::zero_or_powers_of_10_64[t]) + 1;
+  // https://github.com/fmtlib/format-benchmark/blob/master/digits10
+  auto t = bsr2log10(FMT_BUILTIN_CLZLL(n | 1) ^ 63);
+  return t - (n < data::zero_or_powers_of_10_64[t]);
 }
 #else
 // Fallback version of count_digits used when __builtin_clz is not available.
@@ -859,8 +877,8 @@ template <> int count_digits<4>(detail::fallback_uintptr n);
 #ifdef FMT_BUILTIN_CLZ
 // Optional version of count_digits for better performance on 32-bit platforms.
 inline int count_digits(uint32_t n) {
-  int t = ((FMT_BUILTIN_CLZ(n | 1) ^ 31) + 1) * 1233 >> 12;
-  return t - (n < data::zero_or_powers_of_10_32[t]) + 1;
+  auto t = bsr2log10(FMT_BUILTIN_CLZ(n | 1) ^ 31);
+  return t - (n < data::zero_or_powers_of_10_32[t]);
 }
 #endif
 
@@ -1592,7 +1610,8 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     format_decimal(digits, abs_value, num_digits);
     basic_memory_buffer<Char> buffer;
     size += prefix_size;
-    buffer.resize(size);
+    const auto usize = to_unsigned(size);
+    buffer.resize(usize);
     basic_string_view<Char> s(&sep, sep_size);
     // Index of a decimal digit with the least significant digit having index 0.
     int digit_index = 0;
@@ -1612,8 +1631,10 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
                               make_checked(p, s.size()));
     }
     if (prefix_size != 0) p[-1] = static_cast<Char>('-');
-    out = write(out, basic_string_view<Char>(buffer.data(), buffer.size()),
-                specs);
+    auto data = buffer.data();
+    out = write_padded<align::right>(out, specs, usize, usize, [=](iterator it) {
+      return copy_str<Char>(data, data + size, it);
+    });
   }
 
   void on_chr() { *out++ = static_cast<Char>(abs_value); }
@@ -2682,17 +2703,17 @@ FMT_CONSTEXPR_DECL FMT_INLINE void parse_format_string(
     return;
   }
   struct writer {
-    FMT_CONSTEXPR void operator()(const Char* begin, const Char* end) {
-      if (begin == end) return;
+    FMT_CONSTEXPR void operator()(const Char* pbegin, const Char* pend) {
+      if (pbegin == pend) return;
       for (;;) {
         const Char* p = nullptr;
-        if (!find<IS_CONSTEXPR>(begin, end, '}', p))
-          return handler_.on_text(begin, end);
+        if (!find<IS_CONSTEXPR>(pbegin, pend, '}', p))
+          return handler_.on_text(pbegin, pend);
         ++p;
-        if (p == end || *p != '}')
+        if (p == pend || *p != '}')
           return handler_.on_error("unmatched '}' in format string");
-        handler_.on_text(begin, p);
-        begin = p + 1;
+        handler_.on_text(pbegin, p);
+        pbegin = p + 1;
       }
     }
     Handler& handler_;
@@ -3341,6 +3362,10 @@ class bytes {
 };
 
 template <> struct formatter<bytes> {
+ private:
+  detail::dynamic_format_specs<char> specs_;
+
+ public:
   template <typename ParseContext>
   FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
     using handler_type = detail::dynamic_specs_handler<ParseContext>;
@@ -3359,9 +3384,6 @@ template <> struct formatter<bytes> {
         specs_.precision, specs_.precision_ref, ctx);
     return detail::write_bytes(ctx.out(), b.data_, specs_);
   }
-
- private:
-  detail::dynamic_format_specs<char> specs_;
 };
 
 template <typename It, typename Sentinel, typename Char>
