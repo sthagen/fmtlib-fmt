@@ -762,8 +762,7 @@ TEST(FormatterTest, HashFlag) {
   EXPECT_EQ("4.e+01", format("{:#.0e}", 42.0));
   EXPECT_EQ("0.", format("{:#.0f}", 0.01));
   EXPECT_EQ("0.50", format("{:#.2g}", 0.5));
-  auto s = format("{:#.0f}", 0.5);  // MSVC's printf uses wrong rounding mode.
-  EXPECT_TRUE(s == "0." || s == "1.");
+  EXPECT_EQ("0.", format("{:#.0f}", 0.5));
   EXPECT_THROW_MSG(format("{0:#", 'c'), format_error,
                    "missing '}' in format string");
   EXPECT_THROW_MSG(format("{0:#}", 'c'), format_error,
@@ -1279,6 +1278,9 @@ TEST(FormatterTest, PrecisionRounding) {
   char buffer[64];
   safe_sprintf(buffer, "%f", n);
   EXPECT_EQ(buffer, format("{:f}", n));
+  EXPECT_EQ("225.51575035152063720",
+            fmt::format("{:.17f}", 225.51575035152064));
+  EXPECT_EQ("-761519619559038.2", fmt::format("{:.1f}", -761519619559038.2));
 }
 
 TEST(FormatterTest, FormatNaN) {
@@ -2476,4 +2478,28 @@ TEST(FormatTest, FormatUTF8Precision) {
   EXPECT_EQ(fmt::detail::count_code_points(result), 4);
   EXPECT_EQ(result.size(), 5);
   EXPECT_EQ(from_u8str(result), from_u8str(str.substr(0, 5)));
+}
+
+struct check_back_appender {};
+
+FMT_BEGIN_NAMESPACE
+template <> struct formatter<check_back_appender> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
+    return ctx.begin();
+  }
+
+  template <typename Context>
+  auto format(check_back_appender, Context& ctx) -> decltype(ctx.out()) {
+    auto out = ctx.out();
+    static_assert(std::is_same<decltype(++out), decltype(out)&>::value,
+                  "needs to satisfy weakly_incrementable");
+    *out = 'y';
+    return ++out;
+  }
+};
+FMT_END_NAMESPACE
+
+TEST(FormatTest, BackInsertSlicing) {
+  EXPECT_EQ(fmt::format("{}", check_back_appender{}), "y");
 }

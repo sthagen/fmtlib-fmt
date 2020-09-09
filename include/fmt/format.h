@@ -800,10 +800,10 @@ template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
 // This is a function instead of an array to workaround a bug in GCC10 (#1810).
 FMT_INLINE uint16_t bsr2log10(int bsr) {
   constexpr uint16_t data[] = {
-    1,  1,  1,  2,  2,  2,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,
-    6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  10, 10, 10,
-    10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 15,
-    15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
+      1,  1,  1,  2,  2,  2,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,
+      6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  10, 10, 10,
+      10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 15,
+      15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
   return data[bsr];
 }
 
@@ -1632,9 +1632,9 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     }
     if (prefix_size != 0) p[-1] = static_cast<Char>('-');
     auto data = buffer.data();
-    out = write_padded<align::right>(out, specs, usize, usize, [=](iterator it) {
-      return copy_str<Char>(data, data + size, it);
-    });
+    out = write_padded<align::right>(
+        out, specs, usize, usize,
+        [=](iterator it) { return copy_str<Char>(data, data + size, it); });
   }
 
   void on_chr() { *out++ = static_cast<Char>(abs_value); }
@@ -1846,8 +1846,13 @@ auto write(OutputIt out, const T& value) -> typename std::enable_if<
     mapped_type_constant<T, basic_format_context<OutputIt, Char>>::value ==
         type::custom_type,
     OutputIt>::type {
-  basic_format_context<OutputIt, Char> ctx(out, {}, {});
-  return formatter<T>().format(value, ctx);
+  using context_type = basic_format_context<OutputIt, Char>;
+  using formatter_type =
+      conditional_t<has_formatter<T, context_type>::value,
+                    typename context_type::template formatter_type<T>,
+                    fallback_formatter<T, Char>>;
+  context_type ctx(out, {}, {});
+  return formatter_type().format(value, ctx);
 }
 
 // An argument visitor that formats the argument and writes it via the output
@@ -3341,9 +3346,15 @@ typename Context::iterator vformat_to(
   return h.context.out();
 }
 
-// Casts ``p`` to ``const void*`` for pointer formatting.
-// Example:
-//   auto s = format("{}", ptr(p));
+/**
+  \rst
+  Converts ``p`` to ``const void*`` for pointer formatting.
+
+  **Example**::
+
+    auto s = fmt::format("{}", fmt::ptr(p));
+  \endrst
+ */
 template <typename T> inline const void* ptr(const T* p) { return p; }
 template <typename T> inline const void* ptr(const std::unique_ptr<T>& p) {
   return p.get();

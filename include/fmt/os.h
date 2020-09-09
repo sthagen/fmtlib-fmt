@@ -29,7 +29,8 @@
 #if FMT_HAS_INCLUDE("winapifamily.h")
 #  include <winapifamily.h>
 #endif
-#if (FMT_HAS_INCLUDE(<fcntl.h>) || defined(__APPLE__)) && \
+#if (FMT_HAS_INCLUDE(<fcntl.h>) || defined(__APPLE__) || \
+     defined(__linux__)) &&                              \
     (!defined(WINAPI_FAMILY) || (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP))
 #  include <fcntl.h>  // for O_RDONLY
 #  define FMT_USE_FCNTL 1
@@ -278,7 +279,8 @@ class file {
     RDONLY = FMT_POSIX(O_RDONLY),  // Open for reading only.
     WRONLY = FMT_POSIX(O_WRONLY),  // Open for writing only.
     RDWR = FMT_POSIX(O_RDWR),      // Open for reading and writing.
-    CREATE = FMT_POSIX(O_CREAT)    // Create if the file doesn't exist.
+    CREATE = FMT_POSIX(O_CREAT),   // Create if the file doesn't exist.
+    APPEND = FMT_POSIX(O_APPEND)   // Open in append mode.
   };
 
   // Constructs a file object which doesn't represent any file.
@@ -394,7 +396,9 @@ class ostream : private detail::buffer<char> {
   }
 
  public:
-  ostream(ostream&& other) : file_(std::move(other.file_)) {
+  ostream(ostream&& other)
+      : detail::buffer<char>(other.data(), other.size(), other.capacity()),
+        file_(std::move(other.file_)) {
     other.set(nullptr, 0);
   }
   ~ostream() {
