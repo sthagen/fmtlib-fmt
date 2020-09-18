@@ -870,8 +870,10 @@ template <> int count_digits<4>(detail::fallback_uintptr n);
 
 #if FMT_GCC_VERSION || FMT_CLANG_VERSION
 #  define FMT_ALWAYS_INLINE inline __attribute__((always_inline))
+#elif FMT_MSC_VER
+#  define FMT_ALWAYS_INLINE __forceinline
 #else
-#  define FMT_ALWAYS_INLINE
+#  define FMT_ALWAYS_INLINE inline
 #endif
 
 #ifdef FMT_BUILTIN_CLZ
@@ -1609,7 +1611,7 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     char digits[40];
     format_decimal(digits, abs_value, num_digits);
     basic_memory_buffer<Char> buffer;
-    size += prefix_size;
+    size += static_cast<int>(prefix_size);
     const auto usize = to_unsigned(size);
     buffer.resize(usize);
     basic_string_view<Char> s(&sep, sep_size);
@@ -3493,7 +3495,7 @@ inline std::string to_string(T value) {
   // The buffer should be large enough to store the number including the sign or
   // "false" for bool.
   constexpr int max_size = detail::digits10<T>() + 2;
-  char buffer[max_size > 5 ? max_size : 5];
+  char buffer[max_size > 5 ? static_cast<unsigned>(max_size) : 5];
   char* begin = buffer;
   return std::string(begin, detail::write<char>(begin, value));
 }
