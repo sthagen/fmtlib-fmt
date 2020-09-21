@@ -167,6 +167,9 @@ TEST(CompileTest, FormatTo) {
   auto end = fmt::format_to(buf, FMT_COMPILE("{}"), 42);
   *end = '\0';
   EXPECT_STREQ("42", buf);
+  end = fmt::format_to(buf, FMT_COMPILE("{:x}"), 42);
+  *end = '\0';
+  EXPECT_STREQ("2a", buf);
 }
 
 TEST(CompileTest, FormatToNWithCompileMacro) {
@@ -175,6 +178,9 @@ TEST(CompileTest, FormatToNWithCompileMacro) {
   auto res = fmt::format_to_n(buffer, buffer_size, FMT_COMPILE("{}"), 42);
   *res.out = '\0';
   EXPECT_STREQ("42", buffer);
+  res = fmt::format_to_n(buffer, buffer_size, FMT_COMPILE("{:x}"), 42);
+  *res.out = '\0';
+  EXPECT_STREQ("2a", buffer);
 }
 
 TEST(CompileTest, TextAndArg) {
