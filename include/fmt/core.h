@@ -180,7 +180,7 @@
 
 #ifndef FMT_BEGIN_NAMESPACE
 #  if FMT_HAS_FEATURE(cxx_inline_namespaces) || FMT_GCC_VERSION >= 404 || \
-      FMT_MSC_VER >= 1900
+      (FMT_MSC_VER >= 1900 && !_MANAGED)
 #    define FMT_INLINE_NAMESPACE inline namespace
 #    define FMT_END_NAMESPACE \
       }                       \
@@ -910,7 +910,8 @@ template <typename Char> struct named_arg_info {
 template <typename T, typename Char, size_t NUM_ARGS, size_t NUM_NAMED_ARGS>
 struct arg_data {
   // args_[0].named_args points to named_args_ to avoid bloating format_args.
-  T args_[1 + (NUM_ARGS != 0 ? NUM_ARGS : 1)];
+  // +1 to workaround a bug in gcc 7.5 that causes duplicated-branches warning.
+  T args_[1 + (NUM_ARGS != 0 ? NUM_ARGS : +1)];
   named_arg_info<Char> named_args_[NUM_NAMED_ARGS];
 
   template <typename... U>
@@ -922,7 +923,8 @@ struct arg_data {
 
 template <typename T, typename Char, size_t NUM_ARGS>
 struct arg_data<T, Char, NUM_ARGS, 0> {
-  T args_[NUM_ARGS != 0 ? NUM_ARGS : 1];
+  // +1 to workaround a bug in gcc 7.5 that causes duplicated-branches warning.
+  T args_[NUM_ARGS != 0 ? NUM_ARGS : +1];
 
   template <typename... U>
   FMT_INLINE arg_data(const U&... init) : args_{init...} {}
