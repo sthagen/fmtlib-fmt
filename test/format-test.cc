@@ -169,20 +169,22 @@ TEST(IteratorTest, TruncatingBackInserter) {
 }
 
 TEST(IteratorTest, IsOutputIterator) {
-  EXPECT_TRUE(fmt::detail::is_output_iterator<char*>::value);
-  EXPECT_FALSE(fmt::detail::is_output_iterator<const char*>::value);
-  EXPECT_FALSE(fmt::detail::is_output_iterator<std::string>::value);
-  EXPECT_TRUE(fmt::detail::is_output_iterator<
-              std::back_insert_iterator<std::string>>::value);
-  EXPECT_TRUE(fmt::detail::is_output_iterator<std::string::iterator>::value);
-  EXPECT_FALSE(
-      fmt::detail::is_output_iterator<std::string::const_iterator>::value);
-  EXPECT_FALSE(fmt::detail::is_output_iterator<std::list<char>>::value);
+  EXPECT_TRUE((fmt::detail::is_output_iterator<char*, char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<const char*, char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<std::string, char>::value));
   EXPECT_TRUE(
-      fmt::detail::is_output_iterator<std::list<char>::iterator>::value);
-  EXPECT_FALSE(
-      fmt::detail::is_output_iterator<std::list<char>::const_iterator>::value);
-  EXPECT_FALSE(fmt::detail::is_output_iterator<uint32_pair>::value);
+      (fmt::detail::is_output_iterator<std::back_insert_iterator<std::string>,
+                                       char>::value));
+  EXPECT_TRUE(
+      (fmt::detail::is_output_iterator<std::string::iterator, char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<std::string::const_iterator,
+                                                char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<std::list<char>, char>::value));
+  EXPECT_TRUE((
+      fmt::detail::is_output_iterator<std::list<char>::iterator, char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<std::list<char>::const_iterator,
+                                                char>::value));
+  EXPECT_FALSE((fmt::detail::is_output_iterator<uint32_pair, char>::value));
 }
 
 TEST(MemoryBufferTest, Ctor) {
@@ -293,12 +295,8 @@ TEST(MemoryBufferTest, MoveAssignment) {
 
 TEST(MemoryBufferTest, Grow) {
   typedef allocator_ref<mock_allocator<int>> Allocator;
-  typedef basic_memory_buffer<int, 10, Allocator> Base;
   mock_allocator<int> alloc;
-  struct TestMemoryBuffer : Base {
-    TestMemoryBuffer(Allocator alloc) : Base(alloc) {}
-    using Base::grow;
-  } buffer((Allocator(&alloc)));
+  basic_memory_buffer<int, 10, Allocator> buffer((Allocator(&alloc)));
   buffer.resize(7);
   using fmt::detail::to_unsigned;
   for (int i = 0; i < 7; ++i) buffer[to_unsigned(i)] = i * i;
@@ -306,7 +304,7 @@ TEST(MemoryBufferTest, Grow) {
   int mem[20];
   mem[7] = 0xdead;
   EXPECT_CALL(alloc, allocate(20)).WillOnce(Return(mem));
-  buffer.grow(20);
+  buffer.try_reserve(20);
   EXPECT_EQ(20u, buffer.capacity());
   // Check if size elements have been copied
   for (int i = 0; i < 7; ++i) EXPECT_EQ(i * i, buffer[to_unsigned(i)]);
@@ -648,7 +646,7 @@ TEST(FormatterTest, Fill) {
   EXPECT_EQ(std::string("\0\0\0*", 4), format(string_view("{:\0>4}", 6), '*'));
   EXPECT_EQ("жж42", format("{0:ж>4}", 42));
   EXPECT_THROW_MSG(format("{:\x80\x80\x80\x80\x80>}", 0), format_error,
-                   "invalid fill");
+                   "missing '}' in format string");
 }
 
 TEST(FormatterTest, PlusSign) {
@@ -721,6 +719,12 @@ TEST(FormatterTest, SpaceSign) {
                    "format specifier requires numeric argument");
   EXPECT_THROW_MSG(format("{0: }", reinterpret_cast<void*>(0x42)), format_error,
                    "format specifier requires numeric argument");
+}
+
+TEST(FormatterTest, SignNotTruncated) {
+  wchar_t format_str[] = {L'{', L':',
+                          '+' | (1 << fmt::detail::num_bits<char>()), L'}', 0};
+  EXPECT_THROW(format(format_str, 42), format_error);
 }
 
 TEST(FormatterTest, HashFlag) {
@@ -1838,62 +1842,6 @@ TEST(FormatTest, StrongEnum) {
 }
 #endif
 
-using buffer_iterator = fmt::format_context::iterator;
-
-class mock_arg_formatter
-    : public fmt::detail::arg_formatter_base<buffer_iterator, char> {
- private:
-#if FMT_USE_INT128
-  MOCK_METHOD1(call, void(__int128_t value));
-#else
-  MOCK_METHOD1(call, void(long long value));
-#endif
-
- public:
-  using base = fmt::detail::arg_formatter_base<buffer_iterator, char>;
-
-  mock_arg_formatter(fmt::format_context& ctx, fmt::format_parse_context*,
-                     fmt::format_specs* s = nullptr, const char* = nullptr)
-      : base(ctx.out(), s, ctx.locale()) {
-    EXPECT_CALL(*this, call(42));
-  }
-
-  template <typename T>
-  typename std::enable_if<fmt::detail::is_integral<T>::value &&
-                              fmt::detail::is_signed<T>::value,
-                          iterator>::type
-  operator()(T value) {
-    call(value);
-    return base::operator()(value);
-  }
-
-  template <typename T>
-  typename std::enable_if<!(fmt::detail::is_integral<T>::value &&
-                            fmt::detail::is_signed<T>::value),
-                          iterator>::type
-  operator()(T value) {
-    return base::operator()(value);
-  }
-
-  iterator operator()(fmt::basic_format_arg<fmt::format_context>::handle) {
-    return base::operator()(fmt::monostate());
-  }
-};
-
-static void custom_vformat(fmt::string_view format_str, fmt::format_args args) {
-  fmt::memory_buffer buf;
-  fmt::vformat_to<mock_arg_formatter>(fmt::detail::buffer_appender<char>(buf),
-                                      format_str, args);
-}
-
-template <typename... Args>
-void custom_format(const char* format_str, const Args&... args) {
-  auto va = fmt::make_format_args(args...);
-  return custom_vformat(format_str, va);
-}
-
-TEST(FormatTest, CustomArgFormatter) { custom_format("{}", 42); }
-
 TEST(FormatTest, NonNullTerminatedFormatString) {
   EXPECT_EQ("42", format(string_view("{}foo", 2), 42));
 }
@@ -2466,24 +2414,26 @@ TEST(FormatTest, CharTraitsIsNotAmbiguous) {
 #endif
 }
 
-struct mychar {
+struct custom_char {
   int value;
-  mychar() = default;
+  custom_char() = default;
 
-  template <typename T> mychar(T val) : value(static_cast<int>(val)) {}
+  template <typename T> custom_char(T val) : value(static_cast<int>(val)) {}
 
   operator int() const { return value; }
 };
 
+int to_ascii(custom_char c) { return c; }
+
 FMT_BEGIN_NAMESPACE
-template <> struct is_char<mychar> : std::true_type {};
+template <> struct is_char<custom_char> : std::true_type {};
 FMT_END_NAMESPACE
 
 TEST(FormatTest, FormatCustomChar) {
-  const mychar format[] = {'{', '}', 0};
-  auto result = fmt::format(format, mychar('x'));
+  const custom_char format[] = {'{', '}', 0};
+  auto result = fmt::format(format, custom_char('x'));
   EXPECT_EQ(result.size(), 1);
-  EXPECT_EQ(result[0], mychar('x'));
+  EXPECT_EQ(result[0], custom_char('x'));
 }
 
 // Convert a char8_t string to std::string. Otherwise GTest will insist on

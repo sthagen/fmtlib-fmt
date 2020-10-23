@@ -651,7 +651,7 @@ enum { inline_buffer_size = 500 };
  */
 template <typename T, size_t SIZE = inline_buffer_size,
           typename Allocator = std::allocator<T>>
-class basic_memory_buffer : public detail::buffer<T> {
+class basic_memory_buffer final : public detail::buffer<T> {
  private:
   T store_[SIZE];
 
@@ -828,7 +828,7 @@ struct FMT_EXTERN_TEMPLATE_API uint128_wrapper {
   uint64_t high() const FMT_NOEXCEPT { return uint64_t(internal_ >> 64); }
   uint64_t low() const FMT_NOEXCEPT { return uint64_t(internal_); }
 
-  uint128_wrapper& operator+=(uint64_t n) & FMT_NOEXCEPT {
+  uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
     internal_ += n;
     return *this;
   }
@@ -842,7 +842,7 @@ struct FMT_EXTERN_TEMPLATE_API uint128_wrapper {
   uint64_t high() const FMT_NOEXCEPT { return high_; }
   uint64_t low() const FMT_NOEXCEPT { return low_; }
 
-  uint128_wrapper& operator+=(uint64_t n) & FMT_NOEXCEPT {
+  uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
 #  if defined(_MSC_VER) && defined(_M_X64)
     unsigned char carry = _addcarry_u64(0, low_, n, &low_);
     _addcarry_u64(carry, high_, 0, &high_);
@@ -1031,7 +1031,7 @@ template <typename Char> void copy2(Char* dst, const char* src) {
   *dst++ = static_cast<Char>(*src++);
   *dst = static_cast<Char>(*src);
 }
-inline void copy2(char* dst, const char* src) { memcpy(dst, src, 2); }
+FMT_INLINE void copy2(char* dst, const char* src) { memcpy(dst, src, 2); }
 
 template <typename Iterator> struct format_decimal_result {
   Iterator begin;
@@ -1067,11 +1067,10 @@ inline format_decimal_result<Char*> format_decimal(Char* out, UInt value,
 template <typename Char, typename UInt, typename Iterator,
           FMT_ENABLE_IF(!std::is_pointer<remove_cvref_t<Iterator>>::value)>
 inline format_decimal_result<Iterator> format_decimal(Iterator out, UInt value,
-                                                      int num_digits) {
-  // Buffer should be large enough to hold all digits (<= digits10 + 1).
-  enum { max_size = digits10<UInt>() + 1 };
-  Char buffer[2 * max_size];
-  auto end = format_decimal(buffer, value, num_digits).end;
+                                                      int size) {
+  // Buffer is large enough to hold all digits (digits10 + 1).
+  Char buffer[digits10<UInt>() + 1];
+  auto end = format_decimal(buffer, value, size).end;
   return {out, detail::copy_str<Char>(buffer, end, out)};
 }
 
@@ -1113,6 +1112,10 @@ Char* format_uint(Char* buffer, detail::fallback_uintptr n, int num_digits,
 
 template <unsigned BASE_BITS, typename Char, typename It, typename UInt>
 inline It format_uint(It out, UInt value, int num_digits, bool upper = false) {
+  if (auto ptr = to_pointer<Char>(out, to_unsigned(num_digits))) {
+    format_uint<BASE_BITS>(ptr, value, num_digits, upper);
+    return out;
+  }
   // Buffer should be large enough to hold all digits (digits / BASE_BITS + 1).
   char buffer[num_bits<UInt>() / BASE_BITS + 1];
   format_uint<BASE_BITS>(buffer, value, num_digits, upper);
@@ -1269,6 +1272,13 @@ template <typename T> struct decimal_fp {
 
 template <typename T> decimal_fp<T> to_decimal(T x) FMT_NOEXCEPT;
 }  // namespace dragonbox
+
+template <typename T>
+constexpr typename dragonbox::float_info<T>::carrier_uint exponent_mask() {
+  using uint = typename dragonbox::float_info<T>::carrier_uint;
+  return ((uint(1) << dragonbox::float_info<T>::exponent_bits) - 1)
+         << dragonbox::float_info<T>::significand_bits;
+}
 
 // A floating-point presentation format.
 enum class float_format : unsigned char {
@@ -1488,7 +1498,7 @@ template <align::type align = align::left, typename OutputIt, typename Char,
           typename F>
 inline OutputIt write_padded(OutputIt out,
                              const basic_format_specs<Char>& specs, size_t size,
-                             size_t width, const F& f) {
+                             size_t width, F&& f) {
   static_assert(align == align::left || align == align::right, "");
   unsigned spec_width = to_unsigned(specs.width);
   size_t padding = spec_width > width ? spec_width - width : 0;
@@ -1506,7 +1516,7 @@ template <align::type align = align::left, typename OutputIt, typename Char,
           typename F>
 inline OutputIt write_padded(OutputIt out,
                              const basic_format_specs<Char>& specs, size_t size,
-                             const F& f) {
+                             F&& f) {
   return write_padded<align>(out, specs, size, size, f);
 }
 
@@ -1680,9 +1690,9 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     // Index of a decimal digit with the least significant digit having index 0.
     int digit_index = 0;
     group = groups.cbegin();
-    auto p = buffer.data() + size;
-    for (int i = num_digits - 1; i >= 0; --i) {
-      *--p = static_cast<Char>(digits[i]);
+    auto p = buffer.data() + size - 1;
+    for (int i = num_digits - 1; i > 0; --i) {
+      *p-- = static_cast<Char>(digits[i]);
       if (*group <= 0 || ++digit_index % *group != 0 ||
           *group == max_value<char>())
         continue;
@@ -1690,11 +1700,12 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
         digit_index = 0;
         ++group;
       }
-      p -= s.size();
       std::uninitialized_copy(s.data(), s.data() + s.size(),
                               make_checked(p, s.size()));
+      p -= s.size();
     }
-    if (prefix_size != 0) p[-1] = static_cast<Char>('-');
+    *p-- = static_cast<Char>(*digits);
+    if (prefix_size != 0) *p = static_cast<Char>('-');
     auto data = buffer.data();
     out = write_padded<align::right>(
         out, specs, usize, usize,
@@ -1728,23 +1739,79 @@ OutputIt write_nonfinite(OutputIt out, bool isinf,
 struct big_decimal_fp {
   const char* significand;
   int significand_size;
-  int exp;
+  int exponent;
 };
 
-// The number is given as v = significand * pow(10, exp).
+inline int get_significand_size(const big_decimal_fp& fp) {
+  return fp.significand_size;
+}
+template <typename T>
+inline int get_significand_size(const dragonbox::decimal_fp<T>& fp) {
+  return count_digits(fp.significand);
+}
+
+template <typename Char, typename OutputIt>
+inline OutputIt write_significand(OutputIt out, const char* significand,
+                                  int& significand_size) {
+  return copy_str<Char>(significand, significand + significand_size, out);
+}
+template <typename Char, typename OutputIt, typename UInt>
+inline OutputIt write_significand(OutputIt out, UInt significand,
+                                  int significand_size) {
+  return format_decimal<Char>(out, significand, significand_size).end;
+}
+
+template <typename Char, typename UInt,
+          FMT_ENABLE_IF(std::is_integral<UInt>::value)>
+inline Char* write_significand(Char* out, UInt significand,
+                               int significand_size, int integral_size,
+                               Char decimal_point) {
+  if (!decimal_point)
+    return format_decimal(out, significand, significand_size).end;
+  auto end = format_decimal(out + 1, significand, significand_size).end;
+  if (integral_size == 1)
+    out[0] = out[1];
+  else
+    std::copy_n(out + 1, integral_size, out);
+  out[integral_size] = decimal_point;
+  return end;
+}
+
+template <typename OutputIt, typename UInt, typename Char,
+          FMT_ENABLE_IF(!std::is_pointer<remove_cvref_t<OutputIt>>::value)>
+inline OutputIt write_significand(OutputIt out, UInt significand,
+                                  int significand_size, int integral_size,
+                                  Char decimal_point) {
+  // Buffer is large enough to hold digits (digits10 + 1) and a decimal point.
+  Char buffer[digits10<UInt>() + 2];
+  auto end = write_significand(buffer, significand, significand_size,
+                               integral_size, decimal_point);
+  return detail::copy_str<Char>(buffer, end, out);
+}
+
 template <typename OutputIt, typename Char>
-OutputIt write_float(OutputIt out, const buffer<char>& significand, int fpexp,
+inline OutputIt write_significand(OutputIt out, const char* significand,
+                                  int significand_size, int integral_size,
+                                  Char decimal_point) {
+  out = detail::copy_str<Char>(significand, significand + integral_size, out);
+  if (!decimal_point) return out;
+  *out++ = decimal_point;
+  return detail::copy_str<Char>(significand + integral_size,
+                                significand + significand_size, out);
+}
+
+template <typename OutputIt, typename DecimalFP, typename Char>
+OutputIt write_float(OutputIt out, const DecimalFP& fp,
                      const basic_format_specs<Char>& specs, float_specs fspecs,
                      Char decimal_point) {
-  auto fp = big_decimal_fp{significand.data(),
-                           static_cast<int>(significand.size()), fpexp};
-  const char* digits = fp.significand;
-  const Char zero = static_cast<Char>('0');
-  char sign = data::signs[fspecs.sign];
-  int size = fp.significand_size + (fspecs.sign ? 1 : 0);
+  auto significand = fp.significand;
+  int significand_size = get_significand_size(fp);
+  static const Char zero = static_cast<Char>('0');
+  auto sign = fspecs.sign;
+  size_t size = to_unsigned(significand_size) + (sign ? 1 : 0);
   using iterator = remove_reference_t<decltype(reserve(out, 0))>;
 
-  int output_exp = fp.exp + fp.significand_size - 1;
+  int output_exp = fp.exponent + significand_size - 1;
   auto use_exp_format = [=]() {
     if (fspecs.format == float_format::exp) return true;
     if (fspecs.format != float_format::general) return false;
@@ -1757,36 +1824,34 @@ OutputIt write_float(OutputIt out, const buffer<char>& significand, int fpexp,
   if (use_exp_format()) {
     int num_zeros = 0;
     if (fspecs.showpoint) {
-      num_zeros = fspecs.precision - fp.significand_size;
-      if (num_zeros < 0) num_zeros = 0;
-    } else if (fp.significand_size == 1) {
+      num_zeros = (std::max)(fspecs.precision - significand_size, 0);
+      size += to_unsigned(num_zeros);
+    } else if (significand_size == 1) {
       decimal_point = Char();
     }
-
-    auto abs_output_exp = static_cast<unsigned>(output_exp);
-    if (output_exp < 0) abs_output_exp = 0 - abs_output_exp;
+    auto abs_output_exp = output_exp >= 0 ? output_exp : -output_exp;
     int exp_digits = 2;
     if (abs_output_exp >= 100) exp_digits = abs_output_exp >= 1000 ? 4 : 3;
 
-    size += (decimal_point ? 1 : 0) + num_zeros + 2 + exp_digits;
+    size += to_unsigned((decimal_point ? 1 : 0) + 2 + exp_digits);
     char exp_char = fspecs.upper ? 'E' : 'e';
-    return write_padded<align::right>(
-        out, specs, to_unsigned(size), [=](iterator it) {
-          if (sign) *it++ = static_cast<Char>(sign);
-          // Insert a decimal point after the first digit and add an exponent.
-          *it++ = static_cast<Char>(*digits);
-          if (decimal_point) *it++ = decimal_point;
-          it = copy_str<Char>(digits + 1, digits + fp.significand_size, it);
-          if (num_zeros > 0) it = std::fill_n(it, num_zeros, zero);
-          *it++ = static_cast<Char>(exp_char);
-          return write_exponent<Char>(output_exp, it);
-        });
+    auto write = [=](iterator it) {
+      if (sign) *it++ = static_cast<Char>(data::signs[sign]);
+      // Insert a decimal point after the first digit and add an exponent.
+      it = write_significand(it, significand, significand_size, 1,
+                             decimal_point);
+      if (num_zeros > 0) it = std::fill_n(it, num_zeros, zero);
+      *it++ = static_cast<Char>(exp_char);
+      return write_exponent<Char>(output_exp, it);
+    };
+    return specs.width > 0 ? write_padded<align::right>(out, specs, size, write)
+                           : base_iterator(out, write(reserve(out, size)));
   }
 
-  int exp = fp.exp + fp.significand_size;
-  if (fp.exp >= 0) {
+  int exp = fp.exponent + significand_size;
+  if (fp.exponent >= 0) {
     // 1234e5 -> 123400000[.0+]
-    size += fp.exp;
+    size += to_unsigned(fp.exponent);
     int num_zeros = fspecs.precision - exp;
 #ifdef FMT_FUZZ
     if (num_zeros > 5000)
@@ -1794,49 +1859,42 @@ OutputIt write_float(OutputIt out, const buffer<char>& significand, int fpexp,
 #endif
     if (fspecs.showpoint) {
       if (num_zeros <= 0 && fspecs.format != float_format::fixed) num_zeros = 1;
-      if (num_zeros > 0) size += num_zeros;
+      if (num_zeros > 0) size += to_unsigned(num_zeros);
     }
-    return write_padded<align::right>(
-        out, specs, to_unsigned(size), [&](iterator it) {
-          if (sign) *it++ = static_cast<Char>(sign);
-          it = copy_str<Char>(digits, digits + fp.significand_size, it);
-          it = std::fill_n(it, fp.exp, zero);
-          if (!fspecs.showpoint) return it;
-          *it++ = decimal_point;
-          return num_zeros > 0 ? std::fill_n(it, num_zeros, zero) : it;
-        });
+    return write_padded<align::right>(out, specs, size, [&](iterator it) {
+      if (sign) *it++ = static_cast<Char>(data::signs[sign]);
+      it = write_significand<Char>(it, significand, significand_size);
+      it = std::fill_n(it, fp.exponent, zero);
+      if (!fspecs.showpoint) return it;
+      *it++ = decimal_point;
+      return num_zeros > 0 ? std::fill_n(it, num_zeros, zero) : it;
+    });
   } else if (exp > 0) {
     // 1234e-2 -> 12.34[0+]
-    int num_zeros =
-        fspecs.showpoint ? fspecs.precision - fp.significand_size : 0;
-    size += 1 + (num_zeros > 0 ? num_zeros : 0);
-    return write_padded<align::right>(
-        out, specs, to_unsigned(size), [&](iterator it) {
-          if (sign) *it++ = static_cast<Char>(sign);
-          it = copy_str<Char>(digits, digits + exp, it);
-          *it++ = decimal_point;
-          it = copy_str<Char>(digits + exp, digits + fp.significand_size, it);
-          // Add trailing zeros.
-          return num_zeros > 0 ? std::fill_n(it, num_zeros, zero) : it;
-        });
+    int num_zeros = fspecs.showpoint ? fspecs.precision - significand_size : 0;
+    size += 1 + to_unsigned(num_zeros > 0 ? num_zeros : 0);
+    return write_padded<align::right>(out, specs, size, [&](iterator it) {
+      if (sign) *it++ = static_cast<Char>(data::signs[sign]);
+      it = write_significand(it, significand, significand_size, exp,
+                             decimal_point);
+      return num_zeros > 0 ? std::fill_n(it, num_zeros, zero) : it;
+    });
   }
   // 1234e-6 -> 0.001234
   int num_zeros = -exp;
-  if (fp.significand_size == 0 && fspecs.precision >= 0 &&
+  if (significand_size == 0 && fspecs.precision >= 0 &&
       fspecs.precision < num_zeros) {
     num_zeros = fspecs.precision;
   }
-  size += 2 + num_zeros;
-  return write_padded<align::right>(
-      out, specs, to_unsigned(size), [&](iterator it) {
-        if (sign) *it++ = static_cast<Char>(sign);
-        *it++ = zero;
-        if (num_zeros == 0 && fp.significand_size == 0 && !fspecs.showpoint)
-          return it;
-        *it++ = decimal_point;
-        it = std::fill_n(it, num_zeros, zero);
-        return copy_str<Char>(digits, digits + fp.significand_size, it);
-      });
+  size += 2 + to_unsigned(num_zeros);
+  return write_padded<align::right>(out, specs, size, [&](iterator it) {
+    if (sign) *it++ = static_cast<Char>(data::signs[sign]);
+    *it++ = zero;
+    if (num_zeros == 0 && significand_size == 0 && !fspecs.showpoint) return it;
+    *it++ = decimal_point;
+    it = std::fill_n(it, num_zeros, zero);
+    return write_significand<Char>(it, significand, significand_size);
+  });
 }
 
 template <typename Char, typename OutputIt, typename T,
@@ -1883,30 +1941,33 @@ OutputIt write(OutputIt out, T value, basic_format_specs<Char> specs,
   fspecs.precision = precision;
   Char point =
       fspecs.locale ? decimal_point<Char>(loc) : static_cast<Char>('.');
-  return write_float(out, buffer, exp, specs, fspecs, point);
+  auto fp = big_decimal_fp{buffer.data(), static_cast<int>(buffer.size()), exp};
+  return write_float(out, fp, specs, fspecs, point);
 }
 
-template <
-    typename Char, typename OutputIt, typename T,
-    FMT_ENABLE_IF(std::is_floating_point<T>::value&& is_fast_float<T>::value)>
+template <typename Char, typename OutputIt, typename T,
+          FMT_ENABLE_IF(is_fast_float<T>::value)>
 OutputIt write(OutputIt out, T value) {
   if (const_check(!is_supported_floating_point(value))) return out;
+
+  using floaty = conditional_t<std::is_same<T, long double>::value, double, T>;
+  using uint = typename dragonbox::float_info<floaty>::carrier_uint;
+  auto bits = bit_cast<uint>(value);
+
   auto fspecs = float_specs();
-  if (std::signbit(value)) {  // value < 0 is false for NaN so use signbit.
+  auto sign_bit = bits & (uint(1) << (num_bits<uint>() - 1));
+  if (sign_bit != 0) {
     fspecs.sign = sign::minus;
     value = -value;
   }
 
-  auto specs = basic_format_specs<Char>();
-  if (!std::isfinite(value))
+  static const auto specs = basic_format_specs<Char>();
+  uint mask = exponent_mask<floaty>();
+  if ((bits & mask) == mask)
     return write_nonfinite(out, std::isinf(value), specs, fspecs);
 
-  using type = conditional_t<std::is_same<T, long double>::value, double, T>;
-  auto dec = dragonbox::to_decimal(static_cast<type>(value));
-  memory_buffer buf;
-  write<char>(buffer_appender<char>(buf), dec.significand);
-  return write_float(out, buf, dec.exponent, specs, fspecs,
-                     static_cast<Char>('.'));
+  auto dec = dragonbox::to_decimal(static_cast<floaty>(value));
+  return write_float(out, dec, specs, fspecs, static_cast<Char>('.'));
 }
 
 template <typename Char, typename OutputIt, typename T,
@@ -2240,6 +2301,48 @@ class arg_formatter_base {
   }
 };
 
+/** The default argument formatter. */
+template <typename OutputIt, typename Char>
+class arg_formatter : public arg_formatter_base<OutputIt, Char> {
+ private:
+  using char_type = Char;
+  using base = arg_formatter_base<OutputIt, Char>;
+  using context_type = basic_format_context<OutputIt, Char>;
+
+  context_type& ctx_;
+  basic_format_parse_context<char_type>* parse_ctx_;
+  const Char* ptr_;
+
+ public:
+  using iterator = typename base::iterator;
+  using format_specs = typename base::format_specs;
+
+  /**
+    \rst
+    Constructs an argument formatter object.
+    *ctx* is a reference to the formatting context,
+    *specs* contains format specifier information for standard argument types.
+    \endrst
+   */
+  explicit arg_formatter(
+      context_type& ctx,
+      basic_format_parse_context<char_type>* parse_ctx = nullptr,
+      format_specs* specs = nullptr, const Char* ptr = nullptr)
+      : base(ctx.out(), specs, ctx.locale()),
+        ctx_(ctx),
+        parse_ctx_(parse_ctx),
+        ptr_(ptr) {}
+
+  using base::operator();
+
+  /** Formats an argument of a user-defined type. */
+  iterator operator()(typename basic_format_arg<context_type>::handle handle) {
+    if (ptr_) advance_to(*parse_ctx_, ptr_);
+    handle.format(*parse_ctx_, ctx_);
+    return ctx_.out();
+  }
+};
+
 template <typename Char> FMT_CONSTEXPR bool is_name_start(Char c) {
   return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || '_' == c;
 }
@@ -2279,12 +2382,11 @@ template <typename Context> class custom_formatter {
                             Context& ctx)
       : parse_ctx_(parse_ctx), ctx_(ctx) {}
 
-  bool operator()(typename basic_format_arg<Context>::handle h) const {
+  void operator()(typename basic_format_arg<Context>::handle h) const {
     h.format(parse_ctx_, ctx_);
-    return true;
   }
 
-  template <typename T> bool operator()(T) const { return false; }
+  template <typename T> void operator()(T) const {}
 };
 
 template <typename T>
@@ -2666,12 +2768,30 @@ template <typename SpecHandler, typename Char> struct precision_adapter {
 };
 
 template <typename Char>
-FMT_CONSTEXPR const Char* next_code_point(const Char* begin, const Char* end) {
-  if (const_check(sizeof(Char) != 1) || (*begin & 0x80) == 0) return begin + 1;
-  do {
-    ++begin;
-  } while (begin != end && (*begin & 0xc0) == 0x80);
-  return begin;
+FMT_CONSTEXPR int code_point_length(const Char* begin) {
+  if (const_check(sizeof(Char) != 1)) return 1;
+  constexpr char lengths[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                              0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 3, 3, 4, 0};
+  int len = lengths[static_cast<unsigned char>(*begin) >> 3];
+
+  // Compute the pointer to the next character early so that the next
+  // iteration can start working on the next character. Neither Clang
+  // nor GCC figure out this reordering on their own.
+  return len + !len;
+}
+
+template <typename Char> constexpr bool is_ascii_letter(Char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+// Converts a character to ASCII. Returns a number > 127 on conversion failure.
+template <typename Char, FMT_ENABLE_IF(std::is_integral<Char>::value)>
+constexpr Char to_ascii(Char value) {
+  return value;
+}
+template <typename Char, FMT_ENABLE_IF(std::is_enum<Char>::value)>
+constexpr typename std::underlying_type<Char>::type to_ascii(Char value) {
+  return value;
 }
 
 // Parses fill and alignment.
@@ -2680,10 +2800,10 @@ FMT_CONSTEXPR const Char* parse_align(const Char* begin, const Char* end,
                                       Handler&& handler) {
   FMT_ASSERT(begin != end, "");
   auto align = align::none;
-  auto p = next_code_point(begin, end);
-  if (p == end) p = begin;
+  auto p = begin + code_point_length(begin);
+  if (p >= end) p = begin;
   for (;;) {
-    switch (static_cast<int>(*p)) {
+    switch (to_ascii(*p)) {
     case '<':
       align = align::left;
       break;
@@ -2762,13 +2882,13 @@ FMT_CONSTEXPR const Char* parse_precision(const Char* begin, const Char* end,
 template <typename Char, typename SpecHandler>
 FMT_CONSTEXPR const Char* parse_format_specs(const Char* begin, const Char* end,
                                              SpecHandler&& handler) {
-  if (begin == end || *begin == '}') return begin;
+  if (begin == end) return begin;
 
   begin = parse_align(begin, end, handler);
   if (begin == end) return begin;
 
   // Parse sign.
-  switch (static_cast<char>(*begin)) {
+  switch (to_ascii(*begin)) {
   case '+':
     handler.on_plus();
     ++begin;
@@ -2845,7 +2965,7 @@ FMT_CONSTEXPR const Char* parse_replacement_field(const Char* begin,
                                                   Handler&& handler) {
   ++begin;
   if (begin == end) return handler.on_error("invalid format string"), end;
-  if (static_cast<char>(*begin) == '}') {
+  if (*begin == '}') {
     handler.on_replacement_field(handler.on_arg_id(), begin);
   } else if (*begin == '{') {
     handler.on_text(begin, begin + 1);
@@ -2931,12 +3051,12 @@ FMT_CONSTEXPR const typename ParseContext::char_type* parse_format_specs(
   return f.parse(ctx);
 }
 
-template <typename ArgFormatter, typename Char, typename Context>
+template <typename OutputIt, typename Char, typename Context>
 struct format_handler : detail::error_handler {
   basic_format_parse_context<Char> parse_context;
   Context context;
 
-  format_handler(typename ArgFormatter::iterator out,
+  format_handler(OutputIt out,
                  basic_string_view<Char> str,
                  basic_format_args<Context> format_args, detail::locale_ref loc)
       : parse_context(str), context(out, format_args, loc) {}
@@ -2960,26 +3080,33 @@ struct format_handler : detail::error_handler {
   FMT_INLINE void on_replacement_field(int id, const Char*) {
     auto arg = get_arg(context, id);
     context.advance_to(visit_format_arg(
-        default_arg_formatter<typename ArgFormatter::iterator, Char>{
+        default_arg_formatter<OutputIt, Char>{
             context.out(), context.args(), context.locale()},
         arg));
   }
 
   const Char* on_format_specs(int id, const Char* begin, const Char* end) {
-    advance_to(parse_context, begin);
     auto arg = get_arg(context, id);
-    custom_formatter<Context> f(parse_context, context);
-    if (visit_format_arg(f, arg)) return parse_context.begin();
-    basic_format_specs<Char> specs;
-    using parse_context_t = basic_format_parse_context<Char>;
-    specs_checker<specs_handler<parse_context_t, Context>> handler(
-        specs_handler<parse_context_t, Context>(specs, parse_context, context),
-        arg.type());
-    begin = parse_format_specs(begin, end, handler);
-    if (begin == end || *begin != '}') on_error("missing '}' in format string");
-    advance_to(parse_context, begin);
+    if (arg.type() == type::custom_type) {
+      advance_to(parse_context, begin);
+      visit_format_arg(custom_formatter<Context>(parse_context, context), arg);
+      return parse_context.begin();
+    }
+    auto specs = basic_format_specs<Char>();
+    if (begin + 1 < end && begin[1] == '}' && is_ascii_letter(*begin)) {
+      specs.type = static_cast<char>(*begin++);
+    } else {
+      using parse_context_t = basic_format_parse_context<Char>;
+      specs_checker<specs_handler<parse_context_t, Context>> handler(
+          specs_handler<parse_context_t, Context>(specs, parse_context,
+                                                  context),
+          arg.type());
+      begin = parse_format_specs(begin, end, handler);
+      if (begin == end || *begin != '}')
+        on_error("missing '}' in format string");
+    }
     context.advance_to(
-        visit_format_arg(ArgFormatter(context, &parse_context, &specs), arg));
+        visit_format_arg(arg_formatter<OutputIt, Char>(context, &parse_context, &specs), arg));
     return begin;
   }
 };
@@ -3131,48 +3258,6 @@ FMT_API void format_error_code(buffer<char>& out, int error_code,
 
 FMT_API void report_error(format_func func, int error_code,
                           string_view message) FMT_NOEXCEPT;
-
-/** The default argument formatter. */
-template <typename OutputIt, typename Char>
-class arg_formatter : public arg_formatter_base<OutputIt, Char> {
- private:
-  using char_type = Char;
-  using base = arg_formatter_base<OutputIt, Char>;
-  using context_type = basic_format_context<OutputIt, Char>;
-
-  context_type& ctx_;
-  basic_format_parse_context<char_type>* parse_ctx_;
-  const Char* ptr_;
-
- public:
-  using iterator = typename base::iterator;
-  using format_specs = typename base::format_specs;
-
-  /**
-    \rst
-    Constructs an argument formatter object.
-    *ctx* is a reference to the formatting context,
-    *specs* contains format specifier information for standard argument types.
-    \endrst
-   */
-  explicit arg_formatter(
-      context_type& ctx,
-      basic_format_parse_context<char_type>* parse_ctx = nullptr,
-      format_specs* specs = nullptr, const Char* ptr = nullptr)
-      : base(ctx.out(), specs, ctx.locale()),
-        ctx_(ctx),
-        parse_ctx_(parse_ctx),
-        ptr_(ptr) {}
-
-  using base::operator();
-
-  /** Formats an argument of a user-defined type. */
-  iterator operator()(typename basic_format_arg<context_type>::handle handle) {
-    if (ptr_) advance_to(*parse_ctx_, ptr_);
-    handle.format(*parse_ctx_, ctx_);
-    return ctx_.out();
-  }
-};
 }  // namespace detail
 
 template <typename OutputIt, typename Char>
@@ -3511,25 +3596,6 @@ FMT_CONSTEXPR void advance_to(
   ctx.advance_to(ctx.begin() + (p - &*ctx.begin()));
 }
 
-/** Formats arguments and writes the output to the range. */
-template <typename ArgFormatter, typename Char, typename Context>
-typename Context::iterator vformat_to(
-    typename ArgFormatter::iterator out, basic_string_view<Char> format_str,
-    basic_format_args<Context> args,
-    detail::locale_ref loc = detail::locale_ref()) {
-  if (format_str.size() == 2 && detail::equal2(format_str.data(), "{}")) {
-    auto arg = args.get(0);
-    if (!arg) detail::error_handler().on_error("argument not found");
-    using iterator = typename ArgFormatter::iterator;
-    return visit_format_arg(
-        detail::default_arg_formatter<iterator, Char>{out, args, loc}, arg);
-  }
-  detail::format_handler<ArgFormatter, Char, Context> h(out, format_str, args,
-                                                        loc);
-  detail::parse_format_string<false>(format_str, h);
-  return h.context.out();
-}
-
 /**
   \rst
   Converts ``p`` to ``const void*`` for pointer formatting.
@@ -3697,16 +3763,28 @@ std::basic_string<Char> to_string(const basic_memory_buffer<Char, SIZE>& buf) {
 }
 
 template <typename Char>
-detail::buffer_appender<Char> detail::vformat_to(
+void detail::vformat_to(
     detail::buffer<Char>& buf, basic_string_view<Char> format_str,
-    basic_format_args<buffer_context<type_identity_t<Char>>> args) {
-  using af = arg_formatter<typename buffer_context<Char>::iterator, Char>;
-  return vformat_to<af>(buffer_appender<Char>(buf), format_str, args);
+    basic_format_args<buffer_context<type_identity_t<Char>>> args,
+    detail::locale_ref loc) {
+  using iterator = typename buffer_context<Char>::iterator;
+  auto out = buffer_appender<Char>(buf);
+  if (format_str.size() == 2 && equal2(format_str.data(), "{}")) {
+    auto arg = args.get(0);
+    if (!arg) error_handler().on_error("argument not found");
+    visit_format_arg(default_arg_formatter<iterator, Char>{out, args, loc},
+                     arg);
+    return;
+  }
+  format_handler<iterator, Char, buffer_context<Char>> h(
+      out, format_str, args, loc);
+  parse_format_string<false>(format_str, h);
 }
 
 #ifndef FMT_HEADER_ONLY
-extern template format_context::iterator detail::vformat_to(
-    detail::buffer<char>&, string_view, basic_format_args<format_context>);
+extern template void detail::vformat_to(detail::buffer<char>&, string_view,
+                                        basic_format_args<format_context>,
+                                        detail::locale_ref);
 namespace detail {
 extern template FMT_API std::string grouping_impl<char>(locale_ref loc);
 extern template FMT_API std::string grouping_impl<wchar_t>(locale_ref loc);
@@ -3733,7 +3811,7 @@ extern template int snprintf_float<long double>(long double value,
 
 template <typename S, typename Char = char_t<S>,
           FMT_ENABLE_IF(detail::is_string<S>::value)>
-inline typename FMT_BUFFER_CONTEXT(Char)::iterator vformat_to(
+inline void vformat_to(
     detail::buffer<Char>& buf, const S& format_str,
     basic_format_args<FMT_BUFFER_CONTEXT(type_identity_t<Char>)> args) {
   return detail::vformat_to(buf, to_string_view(format_str), args);
@@ -3744,7 +3822,8 @@ template <typename S, typename... Args, size_t SIZE = inline_buffer_size,
 inline typename buffer_context<Char>::iterator format_to(
     basic_memory_buffer<Char, SIZE>& buf, const S& format_str, Args&&... args) {
   const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
-  return detail::vformat_to(buf, to_string_view(format_str), vargs);
+  detail::vformat_to(buf, to_string_view(format_str), vargs);
+  return detail::buffer_appender<Char>(buf);
 }
 
 template <typename OutputIt, typename Char = char>
