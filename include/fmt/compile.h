@@ -175,9 +175,9 @@ class format_string_compiler : public error_handler {
     repl.arg_id = part_.part_kind == part::kind::arg_index
                       ? arg_ref<Char>(part_.val.arg_index)
                       : arg_ref<Char>(part_.val.str);
-    auto part = part::make_replacement(repl);
-    part.arg_id_end = begin;
-    handler_(part);
+    auto replacement_part = part::make_replacement(repl);
+    replacement_part.arg_id_end = begin;
+    handler_(replacement_part);
     return it;
   }
 };
@@ -530,14 +530,14 @@ constexpr auto compile_format_string(S format_str) {
     if constexpr (str[POS + 1] == '{') {
       return parse_tail<Args, POS + 2, ID>(make_text(str, POS, 1), format_str);
     } else if constexpr (str[POS + 1] == '}') {
-      using type = get_type<ID, Args>;
-      return parse_tail<Args, POS + 2, ID + 1>(field<char_type, type, ID>(),
+      using id_type = get_type<ID, Args>;
+      return parse_tail<Args, POS + 2, ID + 1>(field<char_type, id_type, ID>(),
                                                format_str);
     } else if constexpr (str[POS + 1] == ':') {
-      using type = get_type<ID, Args>;
-      constexpr auto result = parse_specs<type>(str, POS + 2, ID);
+      using id_type = get_type<ID, Args>;
+      constexpr auto result = parse_specs<id_type>(str, POS + 2, ID);
       return parse_tail<Args, result.end, result.next_arg_id>(
-          spec_field<char_type, type, ID>{result.fmt}, format_str);
+          spec_field<char_type, id_type, ID>{result.fmt}, format_str);
     } else {
       return unknown_format();
     }
@@ -667,14 +667,15 @@ OutputIt format_to(OutputIt out, const S&, const Args&... args) {
   return format_to(out, compiled, args...);
 }
 
-template <typename OutputIt, typename CompiledFormat, typename... Args,
-          FMT_ENABLE_IF(detail::is_output_iterator<
-                        OutputIt, typename CompiledFormat::char_type>::value&&
-                            std::is_base_of<detail::basic_compiled_format,
-                                            CompiledFormat>::value)>
-format_to_n_result<OutputIt> format_to_n(OutputIt out, size_t n,
-                                         const CompiledFormat& cf,
-                                         const Args&... args) {
+template <typename OutputIt, typename CompiledFormat, typename... Args>
+auto format_to_n(OutputIt out, size_t n, const CompiledFormat& cf,
+                 const Args&... args) ->
+    typename std::enable_if<
+        detail::is_output_iterator<OutputIt,
+                                   typename CompiledFormat::char_type>::value &&
+            std::is_base_of<detail::basic_compiled_format,
+                            CompiledFormat>::value,
+        format_to_n_result<OutputIt>>::type {
   auto it =
       format_to(detail::truncating_iterator<OutputIt>(out, n), cf, args...);
   return {it.base(), it.count()};

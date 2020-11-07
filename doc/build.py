@@ -6,20 +6,10 @@ import errno, os, shutil, sys, tempfile
 from subprocess import check_call, check_output, CalledProcessError, Popen, PIPE
 from distutils.version import LooseVersion
 
-versions = ['1.0.0', '1.1.0', '2.0.0', '3.0.2', '4.0.0', '4.1.0', '5.0.0', '5.1.0', '5.2.0', '5.2.1', '5.3.0', '6.0.0', '6.1.0', '6.1.1', '6.1.2', '6.2.0', '6.2.1', '7.0.0', '7.0.1', '7.0.2', '7.0.3']
+versions = ['1.0.0', '1.1.0', '2.0.0', '3.0.2', '4.0.0', '4.1.0', '5.0.0', '5.1.0', '5.2.0', '5.2.1', '5.3.0', '6.0.0', '6.1.0', '6.1.1', '6.1.2', '6.2.0', '6.2.1', '7.0.0', '7.0.1', '7.0.2', '7.0.3', '7.1.0', '7.1.1', '7.1.2']
 
 def pip_install(package, commit=None, **kwargs):
   "Install package using pip."
-  min_version = kwargs.get('min_version')
-  if min_version:
-    from pkg_resources import get_distribution, DistributionNotFound
-    try:
-      installed_version = get_distribution(os.path.basename(package)).version
-      if LooseVersion(installed_version) >= min_version:
-        print('{} {} already installed'.format(package, min_version))
-        return
-    except DistributionNotFound:
-      pass
   if commit:
     package = 'git+https://github.com/{0}.git@{1}'.format(package, commit)
   print('Installing {0}'.format(package))
@@ -56,8 +46,7 @@ def create_build_env(dirname='virtualenv'):
   # compatible with Breathe.
   pip_install('sphinx-doc/sphinx', '12b83372ac9316e8cbe86e7fed889296a4cc29ee')
   pip_install('michaeljones/breathe',
-              '129222318f7c8f865d2631e7da7b033567e7f56a',
-              min_version='4.2.0')
+              '129222318f7c8f865d2631e7da7b033567e7f56a')
 
 def build_docs(version='dev', **kwargs):
   doc_dir = kwargs.get('doc_dir', os.path.dirname(os.path.realpath(__file__)))
