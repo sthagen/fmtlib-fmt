@@ -11,13 +11,12 @@ jobs:
 
     - name: Create Build Environment
       run: |
-        sudo apt install doxygen
+        sudo apt install doxygen python-virtualenv
+        sudo npm install -g less clean-css
         cmake -E make_directory ${{runner.workspace}}/build
-
-    - name: Configure
-      working-directory: ${{runner.workspace}}/build
-      run: cmake -DCMAKE_BUILD_TYPE=${{matrix.build_type}} $GITHUB_WORKSPACE
 
     - name: Build
       working-directory: ${{runner.workspace}}/build
-      run: cmake --build . --config ${{matrix.build_type}}
+      env:
+        KEY: ${{secrets.KEY}}
+      run: $GITHUB_WORKSPACE/support/build-docs.py

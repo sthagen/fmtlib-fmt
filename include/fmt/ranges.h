@@ -36,20 +36,18 @@ struct formatting_range : formatting_base<Char> {
   static FMT_CONSTEXPR_DECL const size_t range_length_limit =
       FMT_RANGE_OUTPUT_LENGTH_LIMIT;  // output only up to N items from the
                                       // range.
-  Char prefix;
-  Char delimiter;
-  Char postfix;
-  formatting_range() : prefix('{'), delimiter(','), postfix('}') {}
+  Char prefix = '{';
+  Char delimiter = ',';
+  Char postfix = '}';
   static FMT_CONSTEXPR_DECL const bool add_delimiter_spaces = true;
   static FMT_CONSTEXPR_DECL const bool add_prepostfix_space = false;
 };
 
 template <typename Char, typename Enable = void>
 struct formatting_tuple : formatting_base<Char> {
-  Char prefix;
-  Char delimiter;
-  Char postfix;
-  formatting_tuple() : prefix('('), delimiter(','), postfix(')') {}
+  Char prefix = '(';
+  Char delimiter = ',';
+  Char postfix = ')';
   static FMT_CONSTEXPR_DECL const bool add_delimiter_spaces = true;
   static FMT_CONSTEXPR_DECL const bool add_prepostfix_space = false;
 };
@@ -343,7 +341,10 @@ struct formatter<
     enable_if_t<fmt::is_range<T, Char>::value
 // Workaround a bug in MSVC 2017 and earlier.
 #if !FMT_MSC_VER || FMT_MSC_VER >= 1927
-                && has_formatter<detail::value_type<T>, format_context>::value
+                &&
+                (has_formatter<detail::value_type<T>, format_context>::value ||
+                 detail::has_fallback_formatter<detail::value_type<T>,
+                                                format_context>::value)
 #endif
                 >> {
   formatting_range<Char> formatting;
