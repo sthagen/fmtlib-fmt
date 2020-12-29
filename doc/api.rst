@@ -163,6 +163,11 @@ functions in their ``formatter`` specializations.
 
 .. doxygendefine:: FMT_STRING
 
+To force the use of compile-time checks, define the preprocessor variable
+``FMT_ENFORCE_COMPILE_STRING``. When set, functions accepting ``FMT_STRING``
+will fail to compile with regular strings. Runtime-checked
+formatting is still possible using ``fmt::vformat``, ``fmt::vprint``, etc.
+
 .. _udt:
 
 Formatting User-defined Types
