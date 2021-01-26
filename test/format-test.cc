@@ -1112,7 +1112,7 @@ TEST(FormatterTest, RuntimePrecision) {
 template <typename T>
 void check_unknown_types(const T& value, const char* types, const char*) {
   char format_str[BUFFER_SIZE];
-  const char* special = ".0123456789}";
+  const char* special = ".0123456789L}";
   for (int i = CHAR_MIN; i <= CHAR_MAX; ++i) {
     char c = static_cast<char>(i);
     if (std::strchr(types, c) || std::strchr(special, c) || !c) continue;
@@ -1129,6 +1129,9 @@ TEST(BoolTest, FormatBool) {
   EXPECT_EQ("1", format("{:d}", true));
   EXPECT_EQ("true ", format("{:5}", true));
   EXPECT_EQ(L"true", format(L"{}", true));
+  EXPECT_EQ("true", format("{:s}", true));
+  EXPECT_EQ("false", format("{:s}", false));
+  EXPECT_EQ("false ", format("{:6s}", false));
 }
 
 TEST(FormatterTest, FormatShort) {
@@ -1408,7 +1411,7 @@ TEST(FormatterTest, FormatLongDouble) {
 }
 
 TEST(FormatterTest, FormatChar) {
-  const char types[] = "cbBdoxXL";
+  const char types[] = "cbBdoxX";
   check_unknown_types('a', types, "char");
   EXPECT_EQ("a", format("{0}", 'a'));
   EXPECT_EQ("z", format("{0:c}", 'z'));
@@ -1416,7 +1419,8 @@ TEST(FormatterTest, FormatChar) {
   int n = 'x';
   for (const char* type = types + 1; *type; ++type) {
     std::string format_str = fmt::format("{{:{}}}", *type);
-    EXPECT_EQ(fmt::format(format_str, n), fmt::format(format_str, 'x'));
+    EXPECT_EQ(fmt::format(format_str, n), fmt::format(format_str, 'x'))
+        << format_str;
   }
   EXPECT_EQ(fmt::format("{:02X}", n), fmt::format("{:02X}", 'x'));
 }
@@ -2017,6 +2021,17 @@ TEST(FormatTest, FormatTo) {
   EXPECT_EQ(string_view(v.data(), v.size()), "foo");
 }
 
+struct nongrowing_container {
+  using value_type = char;
+  void push_back(char) { throw std::runtime_error("can't take it any more"); }
+};
+
+TEST(FormatTest, FormatToPropagatesExceptions) {
+  auto c = nongrowing_container();
+  EXPECT_THROW(fmt::format_to(std::back_inserter(c), "{}", 42),
+               std::runtime_error);
+}
+
 TEST(FormatTest, FormatToN) {
   char buffer[4];
   buffer[3] = 'x';
@@ -2140,7 +2155,7 @@ TEST(FormatTest, ConstexprParseArgID) {
 }
 
 struct test_format_specs_handler {
-  enum Result { NONE, PLUS, MINUS, SPACE, HASH, ZERO, ERROR };
+  enum Result { NONE, PLUS, MINUS, SPACE, HASH, ZERO, LOC, ERROR };
   Result res = NONE;
 
   fmt::align_t alignment = fmt::align::none;
@@ -2172,6 +2187,7 @@ struct test_format_specs_handler {
   FMT_CONSTEXPR void on_space() { res = SPACE; }
   FMT_CONSTEXPR void on_hash() { res = HASH; }
   FMT_CONSTEXPR void on_zero() { res = ZERO; }
+  FMT_CONSTEXPR void on_localized() { res = LOC; }
 
   FMT_CONSTEXPR void on_width(int w) { width = w; }
   FMT_CONSTEXPR void on_dynamic_width(fmt::detail::auto_id) {}
@@ -2204,6 +2220,7 @@ TEST(FormatTest, ConstexprParseFormatSpecs) {
   static_assert(parse_test_specs(" ").res == handler::SPACE, "");
   static_assert(parse_test_specs("#").res == handler::HASH, "");
   static_assert(parse_test_specs("0").res == handler::ZERO, "");
+  static_assert(parse_test_specs("L").res == handler::LOC, "");
   static_assert(parse_test_specs("42").width == 42, "");
   static_assert(parse_test_specs("{42}").width_ref.val.index == 42, "");
   static_assert(parse_test_specs(".42").precision == 42, "");
@@ -2432,7 +2449,6 @@ TEST(FormatTest, FormatStringErrors) {
   EXPECT_ERROR("{:.{}}", "argument not found", double);
   EXPECT_ERROR("{:.2}", "precision not allowed for this argument type", int);
   EXPECT_ERROR("{:s}", "invalid type specifier", int);
-  EXPECT_ERROR("{:s}", "invalid type specifier", bool);
   EXPECT_ERROR("{:s}", "invalid type specifier", char);
   EXPECT_ERROR("{:+}", "invalid format specifier for char", char);
   EXPECT_ERROR("{:s}", "invalid type specifier", double);

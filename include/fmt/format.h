@@ -658,8 +658,9 @@ void buffer<T>::append(const U* begin, const U* end) {
 
 template <typename OutputIt, typename T, typename Traits>
 void iterator_buffer<OutputIt, T, Traits>::flush() {
-  out_ = copy_str<T>(data_, data_ + this->limit(this->size()), out_);
+  auto size = this->size();
   this->clear();
+  out_ = copy_str<T>(data_, data_ + this->limit(size), out_);
 }
 }  // namespace detail
 
@@ -1252,6 +1253,7 @@ template <typename Char> struct basic_format_specs {
   align_t align : 4;
   sign_t sign : 3;
   bool alt : 1;  // Alternate form ('#').
+  bool localized : 1;
   detail::fill_t<Char> fill;
 
   constexpr basic_format_specs()
@@ -1260,7 +1262,8 @@ template <typename Char> struct basic_format_specs {
         type(0),
         align(align::none),
         sign(sign::none),
-        alt(false) {}
+        alt(false),
+        localized(false) {}
 };
 
 using format_specs = basic_format_specs<char>;
@@ -1410,10 +1413,9 @@ FMT_CONSTEXPR void handle_int_type_spec(char spec, Handler&& handler) {
     break;
 #ifdef FMT_DEPRECATED_N_SPECIFIER
   case 'n':
-#endif
-  case 'L':
     handler.on_num();
     break;
+#endif
   case 'c':
     handler.on_chr();
     break;
@@ -1422,11 +1424,20 @@ FMT_CONSTEXPR void handle_int_type_spec(char spec, Handler&& handler) {
   }
 }
 
+template <typename Char, typename Handler>
+FMT_CONSTEXPR void handle_bool_type_spec(const basic_format_specs<Char>* specs,
+                                         Handler&& handler) {
+  if (!specs) return handler.on_str();
+  if (specs->type && specs->type != 's') return handler.on_int();
+  handler.on_str();
+}
+
 template <typename ErrorHandler = error_handler, typename Char>
 FMT_CONSTEXPR float_specs parse_float_type_spec(
     const basic_format_specs<Char>& specs, ErrorHandler&& eh = {}) {
   auto result = float_specs();
   result.showpoint = specs.alt;
+  result.locale = specs.localized;
   switch (specs.type) {
   case 0:
     result.format = float_format::general;
@@ -1459,10 +1470,9 @@ FMT_CONSTEXPR float_specs parse_float_type_spec(
     break;
 #ifdef FMT_DEPRECATED_N_SPECIFIER
   case 'n':
-#endif
-  case 'L':
     result.locale = true;
     break;
+#endif
   default:
     eh.on_error("invalid type specifier");
     break;
@@ -1539,6 +1549,21 @@ class cstring_type_checker : public ErrorHandler {
 
   FMT_CONSTEXPR void on_string() {}
   FMT_CONSTEXPR void on_pointer() {}
+};
+
+template <typename ErrorHandler>
+class bool_type_checker : private ErrorHandler {
+ private:
+  char type_;
+
+ public:
+  FMT_CONSTEXPR explicit bool_type_checker(char type, ErrorHandler eh)
+      : ErrorHandler(eh), type_(type) {}
+
+  FMT_CONSTEXPR void on_int() {
+    handle_int_type_spec(type_, int_type_checker<ErrorHandler>(*this));
+  }
+  FMT_CONSTEXPR void on_str() {}
 };
 
 template <typename OutputIt, typename Char>
@@ -1673,6 +1698,14 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
     return string_view(prefix, prefix_size);
   }
 
+  FMT_CONSTEXPR void write_dec() {
+    auto num_digits = count_digits(abs_value);
+    out = write_int(
+        out, num_digits, get_prefix(), specs, [this, num_digits](iterator it) {
+          return format_decimal<Char>(it, abs_value, num_digits).end;
+        });
+  }
+
   template <typename Int>
   FMT_CONSTEXPR int_writer(OutputIt output, locale_ref loc, Int value,
                            const basic_format_specs<Char>& s)
@@ -1693,11 +1726,8 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
   }
 
   FMT_CONSTEXPR void on_dec() {
-    auto num_digits = count_digits(abs_value);
-    out = write_int(
-        out, num_digits, get_prefix(), specs, [this, num_digits](iterator it) {
-          return format_decimal<Char>(it, abs_value, num_digits).end;
-        });
+    if (specs.localized) return on_num();
+    write_dec();
   }
 
   FMT_CONSTEXPR void on_hex() {
@@ -1742,9 +1772,9 @@ template <typename OutputIt, typename Char, typename UInt> struct int_writer {
 
   void on_num() {
     std::string groups = grouping<Char>(locale);
-    if (groups.empty()) return on_dec();
+    if (groups.empty()) return write_dec();
     auto sep = thousands_sep<Char>(locale);
-    if (!sep) return on_dec();
+    if (!sep) return write_dec();
     int num_digits = count_digits(abs_value);
     int size = num_digits, n = num_digits;
     std::string::const_iterator group = groups.cbegin();
@@ -2338,7 +2368,8 @@ class arg_formatter_base {
   }
 
   FMT_CONSTEXPR iterator operator()(bool value) {
-    if (specs_ && specs_->type) return (*this)(value ? 1 : 0);
+    if (specs_ && specs_->type && specs_->type != 's')
+      return (*this)(value ? 1 : 0);
     write(value != 0);
     return out_;
   }
@@ -2527,6 +2558,7 @@ template <typename Char> class specs_setter {
   FMT_CONSTEXPR void on_minus() { specs_.sign = sign::minus; }
   FMT_CONSTEXPR void on_space() { specs_.sign = sign::space; }
   FMT_CONSTEXPR void on_hash() { specs_.alt = true; }
+  FMT_CONSTEXPR void on_localized() { specs_.localized = true; }
 
   FMT_CONSTEXPR void on_zero() {
     specs_.align = align::numeric;
@@ -2614,6 +2646,11 @@ template <typename Handler> class specs_checker : public Handler {
   FMT_CONSTEXPR void on_hash() {
     checker_.require_numeric_argument();
     Handler::on_hash();
+  }
+
+  FMT_CONSTEXPR void on_localized() {
+    checker_.require_numeric_argument();
+    Handler::on_localized();
   }
 
   FMT_CONSTEXPR void on_zero() {
@@ -2996,6 +3033,12 @@ FMT_CONSTEXPR const Char* parse_format_specs(const Char* begin, const Char* end,
   // Parse precision.
   if (*begin == '.') {
     begin = parse_precision(begin, end, handler);
+    if (begin == end) return begin;
+  }
+
+  if (*begin == 'L') {
+    handler.on_localized();
+    ++begin;
   }
 
   // Parse type.
@@ -3163,7 +3206,8 @@ struct format_handler : detail::error_handler {
       return parse_context.begin();
     }
     auto specs = basic_format_specs<Char>();
-    if (begin + 1 < end && begin[1] == '}' && is_ascii_letter(*begin)) {
+    if (begin + 1 < end && begin[1] == '}' && is_ascii_letter(*begin) &&
+        *begin != 'L') {
       specs.type = static_cast<char>(*begin++);
     } else {
       using parse_context_t = basic_format_parse_context<Char>;
@@ -3496,9 +3540,12 @@ struct formatter<T, Char,
     case detail::type::ulong_long_type:
     case detail::type::int128_type:
     case detail::type::uint128_type:
-    case detail::type::bool_type:
       handle_int_type_spec(specs_.type,
                            detail::int_type_checker<decltype(eh)>(eh));
+      break;
+    case detail::type::bool_type:
+      handle_bool_type_spec(
+          &specs_, detail::bool_type_checker<decltype(eh)>(specs_.type, eh));
       break;
     case detail::type::char_type:
       handle_char_specs(
