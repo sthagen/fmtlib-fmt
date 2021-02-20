@@ -13,6 +13,7 @@
 #  include <windows.h>
 #endif
 
+#include "fmt/chrono.h"
 #include "fmt/compile.h"
 #include "gmock.h"
 #include "gtest-extra.h"
@@ -141,11 +142,65 @@ TEST(CompileTest, FormatWideString) {
 
 TEST(CompileTest, FormatSpecs) {
   EXPECT_EQ("42", fmt::format(FMT_COMPILE("{:x}"), 0x42));
+  EXPECT_EQ("1.2 ms ",
+            fmt::format(FMT_COMPILE("{:7.1%Q %q}"),
+                        std::chrono::duration<double, std::milli>(1.234)));
 }
 
-TEST(CompileTest, DynamicWidth) {
-  EXPECT_EQ("  42foo  ",
-            fmt::format(FMT_COMPILE("{:{}}{:{}}"), 42, 4, "foo", 5));
+TEST(CompileTest, DynamicFormatSpecs) {
+  EXPECT_EQ("foo  ", fmt::format(FMT_COMPILE("{:{}}"), "foo", 5));
+  EXPECT_EQ("  3.14", fmt::format(FMT_COMPILE("{:{}.{}f}"), 3.141592, 6, 2));
+  EXPECT_EQ(
+      "=1.234ms=",
+      fmt::format(FMT_COMPILE("{:=^{}.{}}"),
+                  std::chrono::duration<double, std::milli>(1.234), 9, 3));
+}
+
+TEST(CompileTest, ManualOrdering) {
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{0}"), 42));
+  EXPECT_EQ(" -42", fmt::format(FMT_COMPILE("{0:4}"), -42));
+  EXPECT_EQ("41 43", fmt::format(FMT_COMPILE("{0} {1}"), 41, 43));
+  EXPECT_EQ("41 43", fmt::format(FMT_COMPILE("{1} {0}"), 43, 41));
+  EXPECT_EQ("41 43", fmt::format(FMT_COMPILE("{0} {2}"), 41, 42, 43));
+  EXPECT_EQ("  41   43", fmt::format(FMT_COMPILE("{1:{2}} {0:4}"), 43, 41, 4));
+  EXPECT_EQ("42 1.2 ms ",
+            fmt::format(FMT_COMPILE("{0} {1:7.1%Q %q}"), 42,
+                        std::chrono::duration<double, std::milli>(1.234)));
+  EXPECT_EQ(
+      "true 42 42 foo 0x1234 foo",
+      fmt::format(FMT_COMPILE("{0} {1} {2} {3} {4} {5}"), true, 42, 42.0f,
+                  "foo", reinterpret_cast<void*>(0x1234), test_formattable()));
+  EXPECT_EQ(L"42", fmt::format(FMT_COMPILE(L"{0}"), 42));
+}
+
+TEST(CompileTest, Named) {
+  EXPECT_EQ("42", fmt::format(FMT_COMPILE("{}"), fmt::arg("arg", 42)));
+  EXPECT_EQ("41 43", fmt::format(FMT_COMPILE("{} {}"), fmt::arg("arg", 41),
+                                 fmt::arg("arg", 43)));
+
+  EXPECT_EQ("foobar",
+            fmt::format(FMT_COMPILE("{a0}{a1}"), fmt::arg("a0", "foo"),
+                        fmt::arg("a1", "bar")));
+  EXPECT_EQ("foobar", fmt::format(FMT_COMPILE("{}{a1}"), fmt::arg("a0", "foo"),
+                                  fmt::arg("a1", "bar")));
+  EXPECT_EQ("foofoo", fmt::format(FMT_COMPILE("{a0}{}"), fmt::arg("a0", "foo"),
+                                  fmt::arg("a1", "bar")));
+  EXPECT_EQ("foobar", fmt::format(FMT_COMPILE("{0}{a1}"), fmt::arg("a0", "foo"),
+                                  fmt::arg("a1", "bar")));
+  EXPECT_EQ("foobar", fmt::format(FMT_COMPILE("{a0}{1}"), fmt::arg("a0", "foo"),
+                                  fmt::arg("a1", "bar")));
+
+  EXPECT_EQ("foobar",
+            fmt::format(FMT_COMPILE("{}{a1}"), "foo", fmt::arg("a1", "bar")));
+  EXPECT_EQ("foobar",
+            fmt::format(FMT_COMPILE("{a0}{a1}"), fmt::arg("a1", "bar"),
+                        fmt::arg("a2", "baz"), fmt::arg("a0", "foo")));
+  EXPECT_EQ(" bar foo ",
+            fmt::format(FMT_COMPILE(" {foo} {bar} "), fmt::arg("foo", "bar"),
+                        fmt::arg("bar", "foo")));
+
+  EXPECT_THROW(fmt::format(FMT_COMPILE("{invalid}"), fmt::arg("valid", 42)),
+               fmt::format_error);
 }
 
 TEST(CompileTest, FormatTo) {
@@ -174,9 +229,7 @@ TEST(CompileTest, TextAndArg) {
   EXPECT_EQ("42!", fmt::format(FMT_COMPILE("{}!"), 42));
 }
 
-TEST(CompileTest, Empty) {
-  EXPECT_EQ("", fmt::format(FMT_COMPILE("")));
-}
+TEST(CompileTest, Empty) { EXPECT_EQ("", fmt::format(FMT_COMPILE(""))); }
 #endif
 
 #if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
