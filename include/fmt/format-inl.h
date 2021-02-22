@@ -166,11 +166,8 @@ inline void fwrite_fully(const void* ptr, size_t size, size_t count,
   size_t written = std::fwrite(ptr, size, count, stream);
   if (written < count) FMT_THROW(system_error(errno, "cannot write to file"));
 }
-}  // namespace detail
 
-#if !defined(FMT_STATIC_THOUSANDS_SEPARATOR)
-namespace detail {
-
+#ifndef FMT_STATIC_THOUSANDS_SEPARATOR
 template <typename Locale>
 locale_ref::locale_ref(const Locale& loc) : locale_(&loc) {
   static_assert(std::is_same<Locale, std::locale>::value, "");
@@ -192,19 +189,18 @@ template <typename Char> FMT_FUNC Char decimal_point_impl(locale_ref loc) {
   return std::use_facet<std::numpunct<Char>>(loc.get<std::locale>())
       .decimal_point();
 }
-}  // namespace detail
 #else
-template <typename Char>
-FMT_FUNC std::string detail::grouping_impl(locale_ref) {
+template <typename Char> FMT_FUNC std::string grouping_impl(locale_ref) {
   return "\03";
 }
-template <typename Char> FMT_FUNC Char detail::thousands_sep_impl(locale_ref) {
+template <typename Char> FMT_FUNC Char thousands_sep_impl(locale_ref) {
   return FMT_STATIC_THOUSANDS_SEPARATOR;
 }
-template <typename Char> FMT_FUNC Char detail::decimal_point_impl(locale_ref) {
+template <typename Char> FMT_FUNC Char decimal_point_impl(locale_ref) {
   return '.';
 }
 #endif
+}  // namespace detail
 
 FMT_API FMT_FUNC format_error::~format_error() FMT_NOEXCEPT = default;
 FMT_API FMT_FUNC system_error::~system_error() FMT_NOEXCEPT = default;
@@ -248,11 +244,6 @@ const typename basic_data<T>::digit_pair basic_data<T>::digits[] = {
     {'9', '0'}, {'9', '1'}, {'9', '2'}, {'9', '3'}, {'9', '4'}, {'9', '5'},
     {'9', '6'}, {'9', '7'}, {'9', '8'}, {'9', '9'}};
 
-#define FMT_POWERS_OF_10(factor)                                             \
-  factor * 10, (factor)*100, (factor)*1000, (factor)*10000, (factor)*100000, \
-      (factor)*1000000, (factor)*10000000, (factor)*100000000,               \
-      (factor)*1000000000
-
 template <typename T>
 const uint64_t basic_data<T>::powers_of_10_64[] = {
     1, FMT_POWERS_OF_10(1), FMT_POWERS_OF_10(1000000000ULL),
@@ -267,8 +258,7 @@ const uint64_t basic_data<T>::zero_or_powers_of_10_64[] = {
     10000000000000000000ULL};
 
 template <typename T>
-const uint32_t basic_data<T>::zero_or_powers_of_10_32_new[] = {
-    0, 0, FMT_POWERS_OF_10(1)};
+constexpr uint32_t basic_data<T>::zero_or_powers_of_10_32_new[];
 
 template <typename T>
 const uint64_t basic_data<T>::zero_or_powers_of_10_64_new[] = {
