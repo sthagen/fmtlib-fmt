@@ -147,20 +147,6 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
-#ifndef FMT_USE_UDL_TEMPLATE
-// EDG frontend based compilers (icc, nvcc, PGI, etc) and GCC < 6.4 do not
-// properly support UDL templates and GCC >= 9 warns about them.
-#  if FMT_USE_USER_DEFINED_LITERALS &&                         \
-      (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 501) && \
-      ((FMT_GCC_VERSION >= 604 && __cplusplus >= 201402L) ||   \
-       FMT_CLANG_VERSION >= 304) &&                            \
-      !defined(__PGI) && !defined(__NVCC__)
-#    define FMT_USE_UDL_TEMPLATE 1
-#  else
-#    define FMT_USE_UDL_TEMPLATE 0
-#  endif
-#endif
-
 #ifndef FMT_USE_FLOAT
 #  define FMT_USE_FLOAT 1
 #endif
@@ -203,8 +189,7 @@ FMT_END_NAMESPACE
 // Some compilers masquerade as both MSVC and GCC-likes or otherwise support
 // __builtin_clz and __builtin_clzll, so only define FMT_BUILTIN_CLZ using the
 // MSVC intrinsics if the clz and clzll builtins are not available.
-#if FMT_MSC_VER && !defined(FMT_BUILTIN_CLZLL) && \
-    !defined(FMT_BUILTIN_CTZLL)
+#if FMT_MSC_VER && !defined(FMT_BUILTIN_CLZLL) && !defined(FMT_BUILTIN_CTZLL)
 FMT_BEGIN_NAMESPACE
 namespace detail {
 // Avoid Clang with Microsoft CodeGen's -Wunknown-pragmas warning.
@@ -1089,6 +1074,7 @@ template <typename Int> constexpr int digits10() FMT_NOEXCEPT {
 template <> constexpr int digits10<int128_t>() FMT_NOEXCEPT { return 38; }
 template <> constexpr int digits10<uint128_t>() FMT_NOEXCEPT { return 38; }
 
+// DEPRECATED! grouping will be merged into thousands_sep.
 template <typename Char> FMT_API std::string grouping_impl(locale_ref loc);
 template <typename Char> inline std::string grouping(locale_ref loc) {
   return grouping_impl<char>(loc);
@@ -2104,6 +2090,12 @@ FMT_CONSTEXPR OutputIt write(OutputIt out, basic_string_view<Char> value) {
 }
 
 template <typename Char, typename OutputIt, typename T,
+          FMT_ENABLE_IF(is_string<T>::value)>
+constexpr OutputIt write(OutputIt out, const T& value) {
+  return write<Char>(out, to_string_view(value));
+}
+
+template <typename Char, typename OutputIt, typename T,
           FMT_ENABLE_IF(is_integral<T>::value &&
                         !std::is_same<T, bool>::value &&
                         !std::is_same<T, Char>::value)>
@@ -2882,6 +2874,8 @@ FMT_CONSTEXPR const Char* parse_align(const Char* begin, const Char* end,
     case '^':
       align = align::center;
       break;
+    default:
+      break;
     }
     if (align != align::none) {
       if (p != begin) {
@@ -2970,6 +2964,8 @@ FMT_CONSTEXPR_DECL FMT_INLINE const Char* parse_format_specs(
   case ' ':
     handler.on_space();
     ++begin;
+    break;
+  default:
     break;
   }
   if (begin == end) return begin;
@@ -3989,17 +3985,6 @@ void vprint(basic_string_view<Char> format_str, wformat_args args) {
 
 #if FMT_USE_USER_DEFINED_LITERALS
 namespace detail {
-
-#  if FMT_USE_UDL_TEMPLATE
-template <typename Char, Char... CHARS> class udl_formatter {
- public:
-  template <typename... Args>
-  std::basic_string<Char> operator()(Args&&... args) const {
-    static FMT_CONSTEXPR_DECL Char s[] = {CHARS..., '\0'};
-    return format(FMT_STRING(s), std::forward<Args>(args)...);
-  }
-};
-#  else
 template <typename Char> struct udl_formatter {
   basic_string_view<Char> str;
 
@@ -4008,7 +3993,6 @@ template <typename Char> struct udl_formatter {
     return format(str, std::forward<Args>(args)...);
   }
 };
-#  endif  // FMT_USE_UDL_TEMPLATE
 
 template <typename Char> struct udl_arg {
   const Char* str;
@@ -4020,18 +4004,6 @@ template <typename Char> struct udl_arg {
 }  // namespace detail
 
 inline namespace literals {
-#  if FMT_USE_UDL_TEMPLATE
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wpedantic"
-#    if FMT_CLANG_VERSION
-#      pragma GCC diagnostic ignored "-Wgnu-string-literal-operator-template"
-#    endif
-template <typename Char, Char... CHARS>
-FMT_CONSTEXPR detail::udl_formatter<Char, CHARS...> operator""_format() {
-  return {};
-}
-#    pragma GCC diagnostic pop
-#  else
 /**
   \rst
   User-defined literal equivalent of :func:`fmt::format`.
@@ -4042,15 +4014,14 @@ FMT_CONSTEXPR detail::udl_formatter<Char, CHARS...> operator""_format() {
     std::string message = "The answer is {}"_format(42);
   \endrst
  */
-FMT_CONSTEXPR inline detail::udl_formatter<char> operator"" _format(
-    const char* s, size_t n) {
+constexpr detail::udl_formatter<char> operator"" _format(const char* s,
+                                                         size_t n) {
   return {{s, n}};
 }
-FMT_CONSTEXPR inline detail::udl_formatter<wchar_t> operator"" _format(
-    const wchar_t* s, size_t n) {
+constexpr detail::udl_formatter<wchar_t> operator"" _format(const wchar_t* s,
+                                                            size_t n) {
   return {{s, n}};
 }
-#  endif  // FMT_USE_UDL_TEMPLATE
 
 /**
   \rst
@@ -4062,12 +4033,10 @@ FMT_CONSTEXPR inline detail::udl_formatter<wchar_t> operator"" _format(
     fmt::print("Elapsed time: {s:.2f} seconds", "s"_a=1.23);
   \endrst
  */
-FMT_CONSTEXPR inline detail::udl_arg<char> operator"" _a(const char* s,
-                                                         size_t) {
+constexpr detail::udl_arg<char> operator"" _a(const char* s, size_t) {
   return {s};
 }
-FMT_CONSTEXPR inline detail::udl_arg<wchar_t> operator"" _a(const wchar_t* s,
-                                                            size_t) {
+constexpr detail::udl_arg<wchar_t> operator"" _a(const wchar_t* s, size_t) {
   return {s};
 }
 }  // namespace literals
