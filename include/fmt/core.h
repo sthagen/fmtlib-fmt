@@ -254,7 +254,9 @@
 
 // Enable minimal optimizations for more compact code in debug mode.
 FMT_GCC_PRAGMA("GCC push_options")
+#ifndef __OPTIMIZE__
 FMT_GCC_PRAGMA("GCC optimize(\"Og\")")
+#endif
 
 FMT_BEGIN_NAMESPACE
 
@@ -1144,36 +1146,40 @@ struct unformattable {};
 template <typename Context> struct arg_mapper {
   using char_type = typename Context::char_type;
 
-  FMT_CONSTEXPR int map(signed char val) { return val; }
-  FMT_CONSTEXPR unsigned map(unsigned char val) { return val; }
-  FMT_CONSTEXPR int map(short val) { return val; }
-  FMT_CONSTEXPR unsigned map(unsigned short val) { return val; }
-  FMT_CONSTEXPR int map(int val) { return val; }
-  FMT_CONSTEXPR unsigned map(unsigned val) { return val; }
-  FMT_CONSTEXPR long_type map(long val) { return val; }
-  FMT_CONSTEXPR ulong_type map(unsigned long val) { return val; }
-  FMT_CONSTEXPR long long map(long long val) { return val; }
-  FMT_CONSTEXPR unsigned long long map(unsigned long long val) { return val; }
-  FMT_CONSTEXPR int128_t map(int128_t val) { return val; }
-  FMT_CONSTEXPR uint128_t map(uint128_t val) { return val; }
-  FMT_CONSTEXPR bool map(bool val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE int map(signed char val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE unsigned map(unsigned char val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE int map(short val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE unsigned map(unsigned short val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE int map(int val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE unsigned map(unsigned val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE long_type map(long val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE ulong_type map(unsigned long val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE long long map(long long val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE unsigned long long map(unsigned long long val) {
+    return val;
+  }
+  FMT_CONSTEXPR FMT_INLINE int128_t map(int128_t val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE uint128_t map(uint128_t val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE bool map(bool val) { return val; }
 
   template <typename T, FMT_ENABLE_IF(is_char<T>::value)>
-  FMT_CONSTEXPR char_type map(T val) {
+  FMT_CONSTEXPR FMT_INLINE char_type map(T val) {
     static_assert(
         std::is_same<T, char>::value || std::is_same<T, char_type>::value,
         "mixing character types is disallowed");
     return val;
   }
 
-  FMT_CONSTEXPR float map(float val) { return val; }
-  FMT_CONSTEXPR double map(double val) { return val; }
-  FMT_CONSTEXPR long double map(long double val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE float map(float val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE double map(double val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE long double map(long double val) { return val; }
 
-  FMT_CONSTEXPR const char_type* map(char_type* val) { return val; }
-  FMT_CONSTEXPR const char_type* map(const char_type* val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE const char_type* map(char_type* val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE const char_type* map(const char_type* val) {
+    return val;
+  }
   template <typename T, FMT_ENABLE_IF(is_string<T>::value)>
-  FMT_CONSTEXPR basic_string_view<char_type> map(const T& val) {
+  FMT_CONSTEXPR FMT_INLINE basic_string_view<char_type> map(const T& val) {
     static_assert(std::is_same<char_type, char_t<T>>::value,
                   "mixing character types is disallowed");
     return to_string_view(val);
@@ -1183,7 +1189,7 @@ template <typename Context> struct arg_mapper {
                 std::is_constructible<basic_string_view<char_type>, T>::value &&
                 !is_string<T>::value && !has_formatter<T, Context>::value &&
                 !has_fallback_formatter<T, Context>::value)>
-  FMT_CONSTEXPR basic_string_view<char_type> map(const T& val) {
+  FMT_CONSTEXPR FMT_INLINE basic_string_view<char_type> map(const T& val) {
     return basic_string_view<char_type>(val);
   }
   template <
@@ -1193,29 +1199,29 @@ template <typename Context> struct arg_mapper {
           !std::is_constructible<basic_string_view<char_type>, T>::value &&
           !is_string<T>::value && !has_formatter<T, Context>::value &&
           !has_fallback_formatter<T, Context>::value)>
-  FMT_CONSTEXPR basic_string_view<char_type> map(const T& val) {
+  FMT_CONSTEXPR FMT_INLINE basic_string_view<char_type> map(const T& val) {
     return std_string_view<char_type>(val);
   }
-  FMT_CONSTEXPR const char* map(const signed char* val) {
+  FMT_CONSTEXPR FMT_INLINE const char* map(const signed char* val) {
     static_assert(std::is_same<char_type, char>::value, "invalid string type");
     return reinterpret_cast<const char*>(val);
   }
-  FMT_CONSTEXPR const char* map(const unsigned char* val) {
+  FMT_CONSTEXPR FMT_INLINE const char* map(const unsigned char* val) {
     static_assert(std::is_same<char_type, char>::value, "invalid string type");
     return reinterpret_cast<const char*>(val);
   }
-  FMT_CONSTEXPR const char* map(signed char* val) {
+  FMT_CONSTEXPR FMT_INLINE const char* map(signed char* val) {
     const auto* const_val = val;
     return map(const_val);
   }
-  FMT_CONSTEXPR const char* map(unsigned char* val) {
+  FMT_CONSTEXPR FMT_INLINE const char* map(unsigned char* val) {
     const auto* const_val = val;
     return map(const_val);
   }
 
-  FMT_CONSTEXPR const void* map(void* val) { return val; }
-  FMT_CONSTEXPR const void* map(const void* val) { return val; }
-  FMT_CONSTEXPR const void* map(std::nullptr_t val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE const void* map(void* val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE const void* map(const void* val) { return val; }
+  FMT_CONSTEXPR FMT_INLINE const void* map(std::nullptr_t val) { return val; }
 
   // We use SFINAE instead of a const T* parameter to avoid conflicting with
   // the C array overload.
@@ -1230,7 +1236,7 @@ template <typename Context> struct arg_mapper {
   }
 
   template <typename T, std::size_t N>
-  FMT_CONSTEXPR auto map(const T (&values)[N]) -> const T (&)[N] {
+  FMT_CONSTEXPR FMT_INLINE auto map(const T (&values)[N]) -> const T (&)[N] {
     return values;
   }
 
@@ -1238,7 +1244,7 @@ template <typename Context> struct arg_mapper {
             FMT_ENABLE_IF(std::is_enum<T>::value &&
                           !has_formatter<T, Context>::value &&
                           !has_fallback_formatter<T, Context>::value)>
-  FMT_CONSTEXPR auto map(const T& val)
+  FMT_CONSTEXPR FMT_INLINE auto map(const T& val)
       -> decltype(std::declval<arg_mapper>().map(
           static_cast<typename std::underlying_type<T>::type>(val))) {
     return map(static_cast<typename std::underlying_type<T>::type>(val));
@@ -1247,12 +1253,12 @@ template <typename Context> struct arg_mapper {
             FMT_ENABLE_IF(!is_string<T>::value && !is_char<T>::value &&
                           (has_formatter<T, Context>::value ||
                            has_fallback_formatter<T, Context>::value))>
-  FMT_CONSTEXPR const T& map(const T& val) {
+  FMT_CONSTEXPR FMT_INLINE const T& map(const T& val) {
     return val;
   }
 
   template <typename T>
-  FMT_CONSTEXPR auto map(const named_arg<char_type, T>& val)
+  FMT_CONSTEXPR FMT_INLINE auto map(const named_arg<char_type, T>& val)
       -> decltype(std::declval<arg_mapper>().map(val.value)) {
     return map(val.value);
   }
@@ -1449,24 +1455,18 @@ FMT_CONSTEXPR basic_format_arg<Context> make_arg(const T& value) {
   return arg;
 }
 
-template <typename T> int check(unformattable) {
-  static_assert(
-      formattable<T>(),
-      "Cannot format an argument. To make type T formattable provide a "
-      "formatter<T> specialization: https://fmt.dev/latest/api.html#udt");
-  return 0;
-}
-template <typename T, typename U> constexpr const U& check(const U& val) {
-  return val;
-}
-
 // The type template parameter is there to avoid an ODR violation when using
 // a fallback formatter in one translation unit and an implicit conversion in
 // another (not recommended).
 template <bool IS_PACKED, typename Context, type, typename T,
           FMT_ENABLE_IF(IS_PACKED)>
-constexpr value<Context> make_arg(const T& val) {
-  return detail::check<T>(arg_mapper<Context>().map(val));
+FMT_CONSTEXPR FMT_INLINE value<Context> make_arg(const T& val) {
+  const auto& arg = arg_mapper<Context>().map(val);
+  static_assert(
+      !std::is_same<decltype(arg), const unformattable&>::value,
+      "Cannot format an argument. To make type T formattable provide a "
+      "formatter<T> specialization: https://fmt.dev/latest/api.html#udt");
+  return arg;
 }
 
 template <bool IS_PACKED, typename Context, type, typename T,
