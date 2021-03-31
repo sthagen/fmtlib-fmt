@@ -395,8 +395,12 @@ template <typename Char> class basic_string_view {
 #if __cplusplus >= 201703L  // C++17's char_traits::length() is constexpr.
   FMT_CONSTEXPR
 #endif
-  FMT_INLINE basic_string_view(const Char* s)
-      : data_(s), size_(std::char_traits<Char>::length(s)) {}
+  FMT_INLINE basic_string_view(const Char* s) : data_(s) {
+    if (std::is_same<Char, char>::value)
+      size_ = std::strlen(reinterpret_cast<const char*>(s));
+    else
+      size_ = std::char_traits<Char>::length(s);
+  }
 
   /** Constructs a string reference from a ``std::basic_string`` object. */
   template <typename Traits, typename Alloc>
@@ -1387,8 +1391,6 @@ FMT_CONSTEXPR_DECL FMT_INLINE auto visit_format_arg(
   return vis(monostate());
 }
 
-template <typename T> struct formattable : std::false_type {};
-
 namespace detail {
 
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
@@ -1684,8 +1686,8 @@ template <typename Context> class basic_format_args {
     return static_cast<detail::type>((desc_ >> shift) & mask);
   }
 
-  constexpr basic_format_args(unsigned long long desc,
-                              const detail::value<Context>* values)
+  constexpr FMT_INLINE basic_format_args(unsigned long long desc,
+                                         const detail::value<Context>* values)
       : desc_(desc), values_(values) {}
   constexpr basic_format_args(unsigned long long desc, const format_arg* args)
       : desc_(desc), args_(args) {}

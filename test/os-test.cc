@@ -267,21 +267,7 @@ TEST(BufferedFileTest, CloseError) {
 }
 
 TEST(BufferedFileTest, Fileno) {
-  buffered_file f;
-#  ifndef __COVERITY__
-  // fileno on a null FILE pointer either crashes or returns an error.
-  // Disable Coverity because this is intentional.
-  EXPECT_DEATH_IF_SUPPORTED(
-      {
-        try {
-          f.fileno();
-        } catch (const fmt::system_error&) {
-          std::exit(1);
-        }
-      },
-      "");
-#  endif
-  f = open_buffered_file();
+  auto f = open_buffered_file();
   EXPECT_TRUE(f.fileno() != -1);
   file copy = file::dup(f.fileno());
   EXPECT_READ(copy, FILE_CONTENT);
@@ -291,6 +277,19 @@ TEST(OStreamTest, Move) {
   fmt::ostream out = fmt::output_file("test-file");
   fmt::ostream moved(std::move(out));
   moved.print("hello");
+}
+
+TEST(OStreamTest, MoveWhileHoldingData) {
+  {
+    fmt::ostream out = fmt::output_file("test-file");
+    out.print("Hello, ");
+    fmt::ostream moved(std::move(out));
+    moved.print("world!\n");
+  }
+  {
+    file in("test-file", file::RDONLY);
+    EXPECT_READ(in, "Hello, world!\n");
+  }
 }
 
 TEST(OStreamTest, Print) {

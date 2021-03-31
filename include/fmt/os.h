@@ -291,7 +291,8 @@ class file {
 
   file(file&& other) FMT_NOEXCEPT : fd_(other.fd_) { other.fd_ = -1; }
 
-  file& operator=(file&& other) FMT_NOEXCEPT {
+  // Move assignment is not noexcept because close may throw.
+  file& operator=(file&& other) {
     close();
     fd_ = other.fd_;
     other.fd_ = -1;
@@ -396,6 +397,7 @@ class ostream final : private detail::buffer<char> {
   ostream(ostream&& other)
       : detail::buffer<char>(other.data(), other.size(), other.capacity()),
         file_(std::move(other.file_)) {
+    other.clear();
     other.set(nullptr, 0);
   }
   ~ostream() {
