@@ -396,7 +396,7 @@ template <typename Char> class basic_string_view {
   FMT_CONSTEXPR
 #endif
   FMT_INLINE basic_string_view(const Char* s) : data_(s) {
-    if (std::is_same<Char, char>::value)
+    if (std::is_same<Char, char>::value && !detail::is_constant_evaluated())
       size_ = std::strlen(reinterpret_cast<const char*>(s));
     else
       size_ = std::char_traits<Char>::length(s);
@@ -877,7 +877,7 @@ class buffer_appender : public std::back_insert_iterator<buffer<T>> {
   using base = std::back_insert_iterator<buffer<T>>;
 
  public:
-  explicit buffer_appender(buffer<T>& buf) : base(buf) {}
+  using std::back_insert_iterator<buffer<T>>::back_insert_iterator;
   buffer_appender(base it) : base(it) {}
 
   buffer_appender& operator++() {
