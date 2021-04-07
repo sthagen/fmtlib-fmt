@@ -901,14 +901,16 @@ struct FMT_EXTERN_TEMPLATE_API uint128_wrapper {
 #if FMT_USE_INT128
   uint128_t internal_;
 
-  uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT
+  constexpr uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT
       : internal_{static_cast<uint128_t>(low) |
                   (static_cast<uint128_t>(high) << 64)} {}
 
-  uint128_wrapper(uint128_t u) : internal_{u} {}
+  constexpr uint128_wrapper(uint128_t u) : internal_{u} {}
 
-  uint64_t high() const FMT_NOEXCEPT { return uint64_t(internal_ >> 64); }
-  uint64_t low() const FMT_NOEXCEPT { return uint64_t(internal_); }
+  constexpr uint64_t high() const FMT_NOEXCEPT {
+    return uint64_t(internal_ >> 64);
+  }
+  constexpr uint64_t low() const FMT_NOEXCEPT { return uint64_t(internal_); }
 
   uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
     internal_ += n;
@@ -918,11 +920,12 @@ struct FMT_EXTERN_TEMPLATE_API uint128_wrapper {
   uint64_t high_;
   uint64_t low_;
 
-  uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT : high_{high},
-                                                              low_{low} {}
+  constexpr uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT
+      : high_{high},
+        low_{low} {}
 
-  uint64_t high() const FMT_NOEXCEPT { return high_; }
-  uint64_t low() const FMT_NOEXCEPT { return low_; }
+  constexpr uint64_t high() const FMT_NOEXCEPT { return high_; }
+  constexpr uint64_t low() const FMT_NOEXCEPT { return low_; }
 
   uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
 #  if defined(_MSC_VER) && defined(_M_X64)
@@ -971,8 +974,8 @@ template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
   static const char reset_color[5];
   static const wchar_t wreset_color[5];
   static const char signs[];
-  static constexpr const unsigned prefixes[] = {0, 0, 0x1000000u | '+',
-                                                0x1000000u | ' '};
+  static constexpr const unsigned prefixes[4] = {0, 0, 0x1000000u | '+',
+                                                 0x1000000u | ' '};
   static constexpr const char left_padding_shifts[] = {31, 31, 0, 1, 0};
   static constexpr const char right_padding_shifts[] = {0, 31, 0, 1, 0};
 
