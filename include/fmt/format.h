@@ -692,6 +692,8 @@ void iterator_buffer<OutputIt, T, Traits>::flush() {
 }
 }  // namespace detail
 
+FMT_MODULE_EXPORT_BEGIN
+
 // The number of characters to store in the basic_memory_buffer object itself
 // to avoid dynamic memory allocation.
 enum { inline_buffer_size = 500 };
@@ -859,6 +861,7 @@ class FMT_API format_error : public std::runtime_error {
   ~format_error() FMT_NOEXCEPT FMT_OVERRIDE;
 };
 
+FMT_MODULE_EXPORT_END
 namespace detail {
 
 template <typename T>
@@ -995,7 +998,9 @@ FMT_INLINE uint16_t bsr2log10(int bsr) {
   return data[bsr];
 }
 
+#ifndef FMT_EXPORTED
 FMT_EXTERN template struct FMT_INSTANTIATION_DECL_API basic_data<void>;
+#endif
 
 // This is a struct rather than an alias to avoid shadowing warnings in gcc.
 struct data : basic_data<> {};
@@ -1255,7 +1260,7 @@ template <typename Char> struct fill_t {
   }
 };
 }  // namespace detail
-
+FMT_MODULE_EXPORT_BEGIN
 // We cannot use enum classes as bit fields because of a gcc bug
 // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=61414.
 namespace align {
@@ -1291,6 +1296,7 @@ template <typename Char> struct basic_format_specs {
 
 using format_specs = basic_format_specs<char>;
 
+FMT_MODULE_EXPORT_END
 namespace detail {
 namespace dragonbox {
 
@@ -2394,7 +2400,7 @@ FMT_CONSTEXPR int parse_nonnegative_int(const Char*& begin, const Char* end,
   FMT_ASSERT(begin != end && '0' <= *begin && *begin <= '9', "");
   unsigned value = 0;
   // Convert to unsigned to prevent a warning.
-  constexpr unsigned max_int = max_value<int>();
+  const unsigned max_int = to_unsigned(max_value<int>());
   unsigned big = max_int / 10;
   do {
     // Check for overflow.
@@ -3305,6 +3311,7 @@ FMT_API void format_error_code(buffer<char>& out, int error_code,
 FMT_API void report_error(format_func func, int error_code,
                           string_view message) FMT_NOEXCEPT;
 }  // namespace detail
+FMT_MODULE_EXPORT_BEGIN
 
 template <typename OutputIt, typename Char>
 using arg_formatter FMT_DEPRECATED_ALIAS =
@@ -3459,7 +3466,7 @@ struct formatter<T, Char,
     auto type = detail::type_constant<T, Char>::value;
     detail::specs_checker<handler_type> handler(handler_type(specs_, ctx),
                                                 type);
-    auto it = parse_format_specs(begin, end, handler);
+    auto it = detail::parse_format_specs(begin, end, handler);
     auto eh = ctx.error_handler();
     switch (type) {
     case detail::type::none_type:
@@ -3477,7 +3484,7 @@ struct formatter<T, Char,
       detail::check_int_type_spec(specs_.type, eh);
       break;
     case detail::type::char_type:
-      handle_char_specs(
+      detail::handle_char_specs(
           specs_, detail::char_specs_checker<decltype(eh)>(specs_.type, eh));
       break;
     case detail::type::float_type:
@@ -3603,7 +3610,7 @@ template <typename Char = char> class dynamic_formatter {
     format_str_ = ctx.begin();
     // Checks are deferred to formatting time when the argument type is known.
     detail::dynamic_specs_handler<ParseContext> handler(specs_, ctx);
-    return parse_format_specs(ctx.begin(), ctx.end(), handler);
+    return detail::parse_format_specs(ctx.begin(), ctx.end(), handler);
   }
 
   template <typename T, typename FormatContext>
@@ -3833,6 +3840,8 @@ std::basic_string<Char> to_string(const basic_memory_buffer<Char, SIZE>& buf) {
   return std::basic_string<Char>(buf.data(), size);
 }
 
+FMT_MODULE_EXPORT_END
+
 template <typename Char>
 void detail::vformat_to(
     detail::buffer<Char>& buf, basic_string_view<Char> format_str,
@@ -3880,6 +3889,8 @@ extern template int snprintf_float<long double>(long double value,
                                                 buffer<char>& buf);
 }  // namespace detail
 #endif
+
+FMT_MODULE_EXPORT_BEGIN
 
 template <typename S, typename Char = char_t<S>,
           FMT_ENABLE_IF(detail::is_string<S>::value)>
@@ -3965,6 +3976,7 @@ void vprint(basic_string_view<Char> format_str, wformat_args args) {
   vprint(stdout, format_str, args);
 }
 
+FMT_MODULE_EXPORT_END
 #if FMT_USE_USER_DEFINED_LITERALS
 namespace detail {
 template <typename Char> struct udl_formatter {
@@ -3984,6 +3996,7 @@ template <typename Char> struct udl_arg {
   }
 };
 }  // namespace detail
+FMT_MODULE_EXPORT_BEGIN
 
 inline namespace literals {
 /**
@@ -4022,6 +4035,8 @@ constexpr detail::udl_arg<wchar_t> operator"" _a(const wchar_t* s, size_t) {
   return {s};
 }
 }  // namespace literals
+
+FMT_MODULE_EXPORT_END
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 FMT_END_NAMESPACE
 
