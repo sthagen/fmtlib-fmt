@@ -263,11 +263,6 @@ inline int ctzll(uint64_t x) {
 FMT_END_NAMESPACE
 #endif
 
-// Enable the deprecated numeric alignment.
-#ifndef FMT_DEPRECATED_NUMERIC_ALIGN
-#  define FMT_DEPRECATED_NUMERIC_ALIGN 0
-#endif
-
 FMT_BEGIN_NAMESPACE
 namespace detail {
 
@@ -897,95 +892,54 @@ using uint32_or_64_or_128_t =
 template <typename T>
 using uint64_or_128_t = conditional_t<num_bits<T>() <= 64, uint64_t, uint128_t>;
 
-// 128-bit integer type used internally
-struct FMT_EXTERN_TEMPLATE_API uint128_wrapper {
-  uint128_wrapper() = default;
-
-#if FMT_USE_INT128
-  uint128_t internal_;
-
-  constexpr uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT
-      : internal_{static_cast<uint128_t>(low) |
-                  (static_cast<uint128_t>(high) << 64)} {}
-
-  constexpr uint128_wrapper(uint128_t u) : internal_{u} {}
-
-  constexpr uint64_t high() const FMT_NOEXCEPT {
-    return uint64_t(internal_ >> 64);
-  }
-  constexpr uint64_t low() const FMT_NOEXCEPT { return uint64_t(internal_); }
-
-  uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
-    internal_ += n;
-    return *this;
-  }
-#else
-  uint64_t high_;
-  uint64_t low_;
-
-  constexpr uint128_wrapper(uint64_t high, uint64_t low) FMT_NOEXCEPT
-      : high_{high},
-        low_{low} {}
-
-  constexpr uint64_t high() const FMT_NOEXCEPT { return high_; }
-  constexpr uint64_t low() const FMT_NOEXCEPT { return low_; }
-
-  uint128_wrapper& operator+=(uint64_t n) FMT_NOEXCEPT {
-#  if defined(_MSC_VER) && defined(_M_X64)
-    unsigned char carry = _addcarry_u64(0, low_, n, &low_);
-    _addcarry_u64(carry, high_, 0, &high_);
-    return *this;
-#  else
-    uint64_t sum = low_ + n;
-    high_ += (sum < low_ ? 1 : 0);
-    low_ = sum;
-    return *this;
-#  endif
-  }
-#endif
-};
-
-// Table entry type for divisibility test used internally
-template <typename T> struct FMT_EXTERN_TEMPLATE_API divtest_table_entry {
-  T mod_inv;
-  T max_quotient;
-};
+#define FMT_POWERS_OF_10(factor)                                             \
+  factor * 10, (factor)*100, (factor)*1000, (factor)*10000, (factor)*100000, \
+      (factor)*1000000, (factor)*10000000, (factor)*100000000,               \
+      (factor)*1000000000
 
 // Static data is placed in this class template for the header-only config.
-template <typename T = void> struct FMT_EXTERN_TEMPLATE_API basic_data {
-  static const uint64_t powers_of_10_64[];
-  static const uint32_t zero_or_powers_of_10_32_new[];
-  static const uint64_t zero_or_powers_of_10_64_new[];
-  static const uint64_t grisu_pow10_significands[];
-  static const int16_t grisu_pow10_exponents[];
-  static const divtest_table_entry<uint32_t> divtest_table_for_pow5_32[];
-  static const divtest_table_entry<uint64_t> divtest_table_for_pow5_64[];
-  static const uint64_t dragonbox_pow10_significands_64[];
-  static const uint128_wrapper dragonbox_pow10_significands_128[];
+template <typename T = void> struct basic_data {
+  static constexpr const uint32_t zero_or_powers_of_10_32[] = {
+      0, 0, FMT_POWERS_OF_10(1U)};
+
+  static constexpr const uint64_t zero_or_powers_of_10_64[] = {
+      0, 0, FMT_POWERS_OF_10(1U), FMT_POWERS_OF_10(1000000000ULL),
+      10000000000000000000ULL};
+
   // log10(2) = 0x0.4d104d427de7fbcc...
   static const uint64_t log10_2_significand = 0x4d104d427de7fbcc;
-#if !FMT_USE_FULL_CACHE_DRAGONBOX
-  static const uint64_t powers_of_5_64[];
-  static const uint32_t dragonbox_pow10_recovery_errors[];
-#endif
+
   // GCC generates slightly better code for pairs than chars.
   using digit_pair = char[2];
-  static const digit_pair digits[];
+  static constexpr const digit_pair digits[] = {
+      {'0', '0'}, {'0', '1'}, {'0', '2'}, {'0', '3'}, {'0', '4'}, {'0', '5'},
+      {'0', '6'}, {'0', '7'}, {'0', '8'}, {'0', '9'}, {'1', '0'}, {'1', '1'},
+      {'1', '2'}, {'1', '3'}, {'1', '4'}, {'1', '5'}, {'1', '6'}, {'1', '7'},
+      {'1', '8'}, {'1', '9'}, {'2', '0'}, {'2', '1'}, {'2', '2'}, {'2', '3'},
+      {'2', '4'}, {'2', '5'}, {'2', '6'}, {'2', '7'}, {'2', '8'}, {'2', '9'},
+      {'3', '0'}, {'3', '1'}, {'3', '2'}, {'3', '3'}, {'3', '4'}, {'3', '5'},
+      {'3', '6'}, {'3', '7'}, {'3', '8'}, {'3', '9'}, {'4', '0'}, {'4', '1'},
+      {'4', '2'}, {'4', '3'}, {'4', '4'}, {'4', '5'}, {'4', '6'}, {'4', '7'},
+      {'4', '8'}, {'4', '9'}, {'5', '0'}, {'5', '1'}, {'5', '2'}, {'5', '3'},
+      {'5', '4'}, {'5', '5'}, {'5', '6'}, {'5', '7'}, {'5', '8'}, {'5', '9'},
+      {'6', '0'}, {'6', '1'}, {'6', '2'}, {'6', '3'}, {'6', '4'}, {'6', '5'},
+      {'6', '6'}, {'6', '7'}, {'6', '8'}, {'6', '9'}, {'7', '0'}, {'7', '1'},
+      {'7', '2'}, {'7', '3'}, {'7', '4'}, {'7', '5'}, {'7', '6'}, {'7', '7'},
+      {'7', '8'}, {'7', '9'}, {'8', '0'}, {'8', '1'}, {'8', '2'}, {'8', '3'},
+      {'8', '4'}, {'8', '5'}, {'8', '6'}, {'8', '7'}, {'8', '8'}, {'8', '9'},
+      {'9', '0'}, {'9', '1'}, {'9', '2'}, {'9', '3'}, {'9', '4'}, {'9', '5'},
+      {'9', '6'}, {'9', '7'}, {'9', '8'}, {'9', '9'}};
+
   static constexpr const char hex_digits[] = "0123456789abcdef";
-  static const char foreground_color[];
-  static const char background_color[];
-  static const char reset_color[5];
-  static const wchar_t wreset_color[5];
-  static const char signs[];
+  static constexpr const char signs[] = {0, '-', '+', ' '};
   static constexpr const unsigned prefixes[4] = {0, 0, 0x1000000u | '+',
                                                  0x1000000u | ' '};
   static constexpr const char left_padding_shifts[] = {31, 31, 0, 1, 0};
   static constexpr const char right_padding_shifts[] = {0, 31, 0, 1, 0};
-
-  // DEPRECATED! These are for ABI compatibility.
-  static const uint32_t zero_or_powers_of_10_32[];
-  static const uint64_t zero_or_powers_of_10_64[];
 };
+
+// This is a struct rather than an alias to avoid shadowing warnings in gcc.
+struct data : basic_data<> {};
 
 // Maps bsr(n) to ceil(log10(pow(2, bsr(n) + 1) - 1)).
 // This is a function instead of an array to workaround a bug in GCC10 (#1810).
@@ -997,13 +951,6 @@ FMT_INLINE uint16_t bsr2log10(int bsr) {
       15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
   return data[bsr];
 }
-
-#ifndef FMT_EXPORTED
-FMT_EXTERN template struct FMT_INSTANTIATION_DECL_API basic_data<void>;
-#endif
-
-// This is a struct rather than an alias to avoid shadowing warnings in gcc.
-struct data : basic_data<> {};
 
 template <typename T> FMT_CONSTEXPR int count_digits_fallback(T n) {
   int count = 1;
@@ -1034,7 +981,7 @@ FMT_CONSTEXPR20 inline int count_digits(uint64_t n) {
 #ifdef FMT_BUILTIN_CLZLL
   // https://github.com/fmtlib/format-benchmark/blob/master/digits10
   auto t = bsr2log10(FMT_BUILTIN_CLZLL(n | 1) ^ 63);
-  return t - (n < data::zero_or_powers_of_10_64_new[t]);
+  return t - (n < data::zero_or_powers_of_10_64[t]);
 #else
   return count_digits_fallback(n);
 #endif
@@ -1070,7 +1017,7 @@ FMT_CONSTEXPR20 inline int count_digits(uint32_t n) {
     return count_digits_fallback(n);
   }
   auto t = bsr2log10(FMT_BUILTIN_CLZ(n | 1) ^ 31);
-  return t - (n < data::zero_or_powers_of_10_32_new[t]);
+  return t - (n < data::zero_or_powers_of_10_32[t]);
 }
 #endif
 
@@ -1458,11 +1405,6 @@ FMT_CONSTEXPR float_specs parse_float_type_spec(
   case 'a':
     result.format = float_format::hex;
     break;
-#ifdef FMT_DEPRECATED_N_SPECIFIER
-  case 'n':
-    result.locale = true;
-    break;
-#endif
   default:
     eh.on_error("invalid type specifier");
     break;
@@ -1480,9 +1422,6 @@ FMT_CONSTEXPR void check_int_type_spec(char spec, ErrorHandler&& eh) {
   case 'b':
   case 'B':
   case 'o':
-#ifdef FMT_DEPRECATED_N_SPECIFIER
-  case 'n':
-#endif
   case 'c':
     break;
   default:
@@ -1769,10 +1708,6 @@ FMT_CONSTEXPR OutputIt write_int(OutputIt out, T value,
                        return format_uint<3, Char>(it, abs_value, num_digits);
                      });
   }
-#ifdef FMT_DEPRECATED_N_SPECIFIER
-  case 'n':
-    return write_int_localized(out, abs_value, prefix, specs, loc);
-#endif
   case 'c':
     return write_char(out, static_cast<Char>(abs_value), specs);
   default:
@@ -2149,7 +2084,7 @@ FMT_CONSTEXPR OutputIt write(OutputIt out, Char value) {
 }
 
 template <typename Char, typename OutputIt>
-FMT_CONSTEXPR OutputIt write(OutputIt out, const Char* value) {
+FMT_CONSTEXPR_CHAR_TRAITS OutputIt write(OutputIt out, const Char* value) {
   if (!value) {
     FMT_THROW(format_error("string pointer is null"));
   } else {
@@ -2303,7 +2238,8 @@ class arg_formatter_base {
   }
 
  public:
-  constexpr arg_formatter_base(OutputIt out, const format_specs& s, locale_ref loc)
+  constexpr arg_formatter_base(OutputIt out, const format_specs& s,
+                               locale_ref loc)
       : out_(out), specs_(s), locale_(loc) {}
 
   iterator operator()(monostate) {
@@ -2854,11 +2790,6 @@ FMT_CONSTEXPR const Char* parse_align(const Char* begin, const Char* end,
     case '>':
       align = align::right;
       break;
-#if FMT_DEPRECATED_NUMERIC_ALIGN
-    case '=':
-      align = align::numeric;
-      break;
-#endif
     case '^':
       align = align::center;
       break;

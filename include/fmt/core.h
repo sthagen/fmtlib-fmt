@@ -15,7 +15,7 @@
 #include <type_traits>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 70103
+#define FMT_VERSION 70104
 
 #ifdef __clang__
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
@@ -41,6 +41,22 @@
 #  define FMT_HAS_GXX_CXX11 FMT_GCC_VERSION
 #else
 #  define FMT_HAS_GXX_CXX11 0
+#endif
+
+// Check if constexpr std::char_traits<>::compare,length is supported.
+// libstdc++: present on GCC 7 and newer and __cplusplus >= 201703L
+// MSVC, libc++: always if __cplusplus >= 201703L
+// NOTE: FMT_GCC_VERSION  - is not libstdc++ version.
+//       _GLIBCXX_RELEASE - is present in GCC 7 libstdc++ and newer.
+#if __cplusplus >= 201703L
+#  ifndef __GLIBCXX__
+#    define FMT_CONSTEXPR_CHAR_TRAITS constexpr
+#  elif defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE >= 7
+#    define FMT_CONSTEXPR_CHAR_TRAITS constexpr
+#  endif
+#endif
+#ifndef FMT_CONSTEXPR_CHAR_TRAITS
+#  define FMT_CONSTEXPR_CHAR_TRAITS
 #endif
 
 #ifdef __NVCC__
@@ -218,40 +234,14 @@
 #  define FMT_CLASS_API FMT_MSC_WARNING(suppress : 4275)
 #  ifdef FMT_EXPORT
 #    define FMT_API __declspec(dllexport)
-#    define FMT_EXTERN_TEMPLATE_API FMT_API
-#    define FMT_EXPORTED
 #  elif defined(FMT_SHARED)
 #    define FMT_API __declspec(dllimport)
-#    define FMT_EXTERN_TEMPLATE_API FMT_API
 #  endif
 #else
 #  define FMT_CLASS_API
 #endif
 #ifndef FMT_API
 #  define FMT_API
-#endif
-#ifndef FMT_EXTERN_TEMPLATE_API
-#  define FMT_EXTERN_TEMPLATE_API
-#endif
-#ifndef FMT_INSTANTIATION_DECL_API // clang marks dllexport at extern template.
-#  ifndef _MSC_VER
-#    define FMT_INSTANTIATION_DECL_API FMT_API
-#  else
-#    define FMT_INSTANTIATION_DECL_API
-#  endif
-#endif
-#ifndef FMT_INSTANTIATION_DEF_API // msvc marks dllexport at the definition itself.
-#  ifndef _MSC_VER
-#    define FMT_INSTANTIATION_DEF_API
-#  else
-#    define FMT_INSTANTIATION_DEF_API FMT_API
-# endif
-#endif
-
-#ifndef FMT_HEADER_ONLY
-#  define FMT_EXTERN extern
-#else
-#  define FMT_EXTERN
 #endif
 
 // libc++ supports string_view in pre-c++17.
@@ -280,6 +270,7 @@ FMT_GCC_PRAGMA("GCC optimize(\"Og\")")
 #endif
 
 FMT_BEGIN_NAMESPACE
+FMT_MODULE_EXPORT_BEGIN
 
 // Implementations of enable_if_t and other metafunctions for older systems.
 template <bool B, class T = void>
@@ -297,6 +288,8 @@ template <typename T> struct type_identity { using type = T; };
 template <typename T> using type_identity_t = typename type_identity<T>::type;
 
 struct monostate {};
+
+FMT_MODULE_EXPORT_END
 
 // An enable_if helper to be used in template parameters which results in much
 // shorter symbols: https://godbolt.org/z/sWw4vP. Extra parentheses are needed
@@ -380,10 +373,6 @@ enum char8_type : unsigned char {};
 #endif
 }  // namespace detail
 
-#ifdef FMT_USE_INTERNAL
-namespace internal = detail;  // DEPRECATED
-#endif
-
 /**
   An implementation of ``std::basic_string_view`` for pre-C++17. It provides a
   subset of the API. ``fmt::basic_string_view`` is used for format strings even
@@ -415,12 +404,9 @@ template <typename Char> class basic_string_view {
     the size with ``std::char_traits<Char>::length``.
     \endrst
    */
-#if __cplusplus >= 201703L  // C++17's char_traits::length() is constexpr.
-  constexpr
-#endif
-      FMT_INLINE
-      basic_string_view(const Char* s)
-      : data_(s) {
+  FMT_CONSTEXPR_CHAR_TRAITS
+  FMT_INLINE
+  basic_string_view(const Char* s) : data_(s) {
     if (detail::const_check(std::is_same<Char, char>::value &&
                             !detail::is_constant_evaluated()))
       size_ = std::strlen(reinterpret_cast<const char*>(s));
@@ -457,7 +443,7 @@ template <typename Char> class basic_string_view {
   }
 
   // Lexicographically compare this string reference to other.
-  int compare(basic_string_view other) const {
+  FMT_CONSTEXPR_CHAR_TRAITS int compare(basic_string_view other) const {
     size_t str_size = size_ < other.size_ ? size_ : other.size_;
     int result = std::char_traits<Char>::compare(data_, other.data_, str_size);
     if (result == 0)
@@ -682,6 +668,7 @@ struct formatter {
   formatter() = delete;
 };
 
+// DEPRECATED!
 // Specifies if T has an enabled formatter specialization. A type can be
 // formattable even if it doesn't have a formatter e.g. via a conversion.
 template <typename T, typename Context>
@@ -1527,6 +1514,7 @@ template <typename OutputIt, typename Char> class basic_format_context {
   using parse_context_type = basic_format_parse_context<Char>;
   template <typename T> using formatter_type = formatter<T, char_type>;
 
+  basic_format_context(basic_format_context&&) = default;
   basic_format_context(const basic_format_context&) = delete;
   void operator=(const basic_format_context&) = delete;
   /**
@@ -1797,23 +1785,11 @@ template <typename Context> class basic_format_args {
   }
 };
 
-#ifdef FMT_ARM_ABI_COMPATIBILITY
 /** An alias to ``basic_format_args<format_context>``. */
 // Separate types would result in shorter symbols but break ABI compatibility
 // between clang and gcc on ARM (#1919).
 using format_args = basic_format_args<format_context>;
 using wformat_args = basic_format_args<wformat_context>;
-#else
-// DEPRECATED! These are kept for ABI compatibility.
-// It is a separate type rather than an alias to make symbols readable.
-struct format_args : basic_format_args<format_context> {
-  template <typename... Args>
-  FMT_INLINE format_args(const Args&... args) : basic_format_args(args...) {}
-};
-struct wformat_args : basic_format_args<wformat_context> {
-  using basic_format_args::basic_format_args;
-};
-#endif
 
 FMT_MODULE_EXPORT_END
 namespace detail {
@@ -1995,12 +1971,6 @@ FMT_GCC_PRAGMA("GCC pop_options")
 FMT_END_NAMESPACE
 
 #ifdef FMT_HEADER_ONLY
-#include "format.h"
+#  include "format.h"
 #endif
 #endif  // FMT_CORE_H_
-
-// Define FMT_DYNAMIC_ARGS to make core.h provide dynamic_format_arg_store
-// DEPRECATED! Include fmt/args.h directly instead.
-#ifdef FMT_DYNAMIC_ARGS
-#include "args.h"
-#endif
