@@ -66,8 +66,7 @@ inline int fmt_snprintf(char* buffer, size_t size, const char* format, ...) {
 //   ERANGE - buffer is not large enough to store the error message
 //   other  - failure
 // Buffer should be at least of size 1.
-inline int safe_strerror(int error_code, char*& buffer,
-                         size_t buffer_size) FMT_NOEXCEPT {
+inline int safe_strerror(int error_code, char*& buffer, size_t buffer_size) {
   FMT_ASSERT(buffer != nullptr && buffer_size != 0, "invalid buffer");
 
   class dispatcher {
@@ -201,8 +200,10 @@ template <typename Char> FMT_FUNC Char decimal_point_impl(locale_ref) {
 #endif
 }  // namespace detail
 
+#if !FMT_MSC_VER
 FMT_API FMT_FUNC format_error::~format_error() FMT_NOEXCEPT = default;
 FMT_API FMT_FUNC system_error::~system_error() FMT_NOEXCEPT = default;
+#endif
 
 FMT_FUNC void system_error::init(int err_code, string_view format_str,
                                  format_args args) {
@@ -224,10 +225,6 @@ template <> FMT_FUNC int count_digits<4>(detail::fallback_uintptr n) {
 }
 
 #if __cplusplus < 201703L
-template <typename T>
-constexpr const uint32_t basic_data<T>::zero_or_powers_of_10_32[];
-template <typename T>
-constexpr const uint64_t basic_data<T>::zero_or_powers_of_10_64[];
 template <typename T>
 constexpr const typename basic_data<T>::digit_pair basic_data<T>::digits[];
 template <typename T> constexpr const char basic_data<T>::hex_digits[];

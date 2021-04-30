@@ -77,6 +77,12 @@
 #  define FMT_GCC_VISIBILITY_HIDDEN
 #endif
 
+#if FMT_MSC_VER
+#  define FMT_MSC_DEFAULT = default
+#else
+#  define FMT_MSC_DEFAULT
+#endif
+
 #if __cplusplus == 201103L || __cplusplus == 201402L
 #  if defined(__INTEL_COMPILER) || defined(__PGI)
 #    define FMT_FALLTHROUGH
@@ -264,8 +270,9 @@ FMT_END_NAMESPACE
 #endif
 
 #ifndef FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
-#  if defined(__cpp_nontype_template_parameter_class) && \
-      (!FMT_GCC_VERSION || FMT_GCC_VERSION >= 903)
+#  if defined(__cpp_nontype_template_args) &&                \
+      ((FMT_GCC_VERSION >= 903 && __cplusplus >= 201709L) || \
+       __cpp_nontype_template_args >= 201911L)
 #    define FMT_USE_NONTYPE_TEMPLATE_PARAMETERS 1
 #  else
 #    define FMT_USE_NONTYPE_TEMPLATE_PARAMETERS 0
@@ -497,7 +504,9 @@ FMT_CONSTEXPR20 OutChar* copy_str(InputIt begin, InputIt end, OutChar* out) {
   if (is_constant_evaluated()) {
     return copy_str<OutChar, InputIt, OutChar*>(begin, end, out);
   }
-  return std::uninitialized_copy(begin, end, out);
+  auto size = to_unsigned(end - begin);
+  std::uninitialized_copy(begin, end, make_checked(out, size));
+  return out + size;
 }
 
 template <typename OutChar, typename InputIt, typename OutputIt,
@@ -862,7 +871,7 @@ class FMT_API format_error : public std::runtime_error {
   format_error& operator=(const format_error&) = default;
   format_error(format_error&&) = default;
   format_error& operator=(format_error&&) = default;
-  ~format_error() FMT_NOEXCEPT FMT_OVERRIDE;
+  ~format_error() FMT_NOEXCEPT FMT_OVERRIDE FMT_MSC_DEFAULT;
 };
 
 FMT_MODULE_EXPORT_END
@@ -908,13 +917,6 @@ using uint64_or_128_t = conditional_t<num_bits<T>() <= 64, uint64_t, uint128_t>;
 
 // Static data is placed in this class template for the header-only config.
 template <typename T = void> struct basic_data {
-  static constexpr const uint32_t zero_or_powers_of_10_32[] = {
-      0, 0, FMT_POWERS_OF_10(1U)};
-
-  static constexpr const uint64_t zero_or_powers_of_10_64[] = {
-      0, 0, FMT_POWERS_OF_10(1U), FMT_POWERS_OF_10(1000000000ULL),
-      10000000000000000000ULL};
-
   // log10(2) = 0x0.4d104d427de7fbcc...
   static const uint64_t log10_2_significand = 0x4d104d427de7fbcc;
 
@@ -990,7 +992,10 @@ FMT_CONSTEXPR20 inline int count_digits(uint64_t n) {
 #ifdef FMT_BUILTIN_CLZLL
   // https://github.com/fmtlib/format-benchmark/blob/master/digits10
   auto t = bsr2log10(FMT_BUILTIN_CLZLL(n | 1) ^ 63);
-  return t - (n < data::zero_or_powers_of_10_64[t]);
+  constexpr const uint64_t zero_or_powers_of_10[] = {
+      0, 0, FMT_POWERS_OF_10(1U), FMT_POWERS_OF_10(1000000000ULL),
+      10000000000000000000ULL};
+  return t - (n < zero_or_powers_of_10[t]);
 #else
   return count_digits_fallback(n);
 #endif
@@ -1026,7 +1031,9 @@ FMT_CONSTEXPR20 inline int count_digits(uint32_t n) {
     return count_digits_fallback(n);
   }
   auto t = bsr2log10(FMT_BUILTIN_CLZ(n | 1) ^ 31);
-  return t - (n < data::zero_or_powers_of_10_32[t]);
+  constexpr const uint32_t zero_or_powers_of_10[] = {0, 0,
+                                                     FMT_POWERS_OF_10(1U)};
+  return t - (n < zero_or_powers_of_10[t]);
 }
 #endif
 
@@ -1790,10 +1797,12 @@ inline Char* write_significand(Char* out, UInt significand,
   if (!decimal_point)
     return format_decimal(out, significand, significand_size).end;
   auto end = format_decimal(out + 1, significand, significand_size).end;
-  if (integral_size == 1)
+  if (integral_size == 1) {
     out[0] = out[1];
-  else
-    std::uninitialized_copy_n(out + 1, integral_size, out);
+  } else {
+    std::uninitialized_copy_n(out + 1, integral_size,
+                              make_checked(out, to_unsigned(integral_size)));
+  }
   out[integral_size] = decimal_point;
   return end;
 }
@@ -2989,6 +2998,9 @@ FMT_CONSTEXPR const Char* parse_replacement_field(const Char* begin,
 template <bool IS_CONSTEXPR, typename Char, typename Handler>
 FMT_CONSTEXPR_DECL FMT_INLINE void parse_format_string(
     basic_string_view<Char> format_str, Handler&& handler) {
+  // this is most likely a name-lookup defect in msvc's modules implementation
+  using detail::find;
+
   auto begin = format_str.data();
   auto end = begin + format_str.size();
   if (end - begin < 32) {
@@ -3299,7 +3311,7 @@ class FMT_API system_error : public std::runtime_error {
   system_error& operator=(const system_error&) = default;
   system_error(system_error&&) = default;
   system_error& operator=(system_error&&) = default;
-  ~system_error() FMT_NOEXCEPT FMT_OVERRIDE;
+  ~system_error() FMT_NOEXCEPT FMT_OVERRIDE FMT_MSC_DEFAULT;
 
   int error_code() const { return error_code_; }
 };
