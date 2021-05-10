@@ -9,10 +9,11 @@
 #define FMT_OS_H_
 
 #include <cerrno>
-#include <clocale>  // for locale_t
+#include <clocale>  // locale_t
 #include <cstddef>
 #include <cstdio>
-#include <cstdlib>  // for strtod_l
+#include <cstdlib>       // strtod_l
+#include <system_error>  // std::system_error
 
 #if defined __APPLE__ || defined(__FreeBSD__)
 #  include <xlocale.h>  // for LC_NUMERIC_MASK on OS X
@@ -117,15 +118,21 @@ template <typename Char> class basic_cstring_view {
 using cstring_view = basic_cstring_view<char>;
 using wcstring_view = basic_cstring_view<wchar_t>;
 
-// An error code.
-class error_code {
- private:
-  int value_;
+template <typename Char> struct formatter<std::error_code, Char> {
+  template <typename ParseContext>
+  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
+    return ctx.begin();
+  }
 
- public:
-  explicit error_code(int value = 0) FMT_NOEXCEPT : value_(value) {}
-
-  int get() const FMT_NOEXCEPT { return value_; }
+  template <typename FormatContext>
+  FMT_CONSTEXPR auto format(const std::error_code& ec, FormatContext& ctx) const
+      -> decltype(ctx.out()) {
+    auto out = ctx.out();
+    out = detail::write<Char>(out, to_string_view(ec.category().name()));
+    out = detail::write<Char>(out, Char(':'));
+    out = detail::write<Char>(out, ec.value());
+    return out;
+  }
 };
 
 #ifdef _WIN32
@@ -151,53 +158,50 @@ class utf16_to_utf8 {
 };
 
 FMT_API void format_windows_error(buffer<char>& out, int error_code,
-                                  string_view message) FMT_NOEXCEPT;
+                                  const char* message) FMT_NOEXCEPT;
 }  // namespace detail
 
-/** A Windows error. */
-class windows_error : public system_error {
- private:
-  FMT_API void init(int error_code, string_view format_str, format_args args);
+FMT_API std::system_error vwindows_error(int error_code, string_view format_str,
+                                         format_args args);
 
- public:
-  /**
-   \rst
-   Constructs a :class:`fmt::windows_error` object with the description
-   of the form
+/**
+ \rst
+ Constructs a :class:`std::system_error` object with the description
+ of the form
 
-   .. parsed-literal::
-     *<message>*: *<system-message>*
+ .. parsed-literal::
+   *<message>*: *<system-message>*
 
-   where *<message>* is the formatted message and *<system-message>* is the
-   system message corresponding to the error code.
-   *error_code* is a Windows error code as given by ``GetLastError``.
-   If *error_code* is not a valid error code such as -1, the system message
-   will look like "error -1".
+ where *<message>* is the formatted message and *<system-message>* is the
+ system message corresponding to the error code.
+ *error_code* is a Windows error code as given by ``GetLastError``.
+ If *error_code* is not a valid error code such as -1, the system message
+ will look like "error -1".
 
-   **Example**::
+ **Example**::
 
-     // This throws a windows_error with the description
-     //   cannot open file 'madeup': The system cannot find the file specified.
-     // or similar (system message may vary).
-     const char *filename = "madeup";
-     LPOFSTRUCT of = LPOFSTRUCT();
-     HFILE file = OpenFile(filename, &of, OF_READ);
-     if (file == HFILE_ERROR) {
-       throw fmt::windows_error(GetLastError(),
-                                "cannot open file '{}'", filename);
-     }
-   \endrst
-  */
-  template <typename... Args>
-  windows_error(int error_code, string_view message, const Args&... args) {
-    init(error_code, message, make_format_args(args...));
-  }
-};
+   // This throws a system_error with the description
+   //   cannot open file 'madeup': The system cannot find the file specified.
+   // or similar (system message may vary).
+   const char *filename = "madeup";
+   LPOFSTRUCT of = LPOFSTRUCT();
+   HFILE file = OpenFile(filename, &of, OF_READ);
+   if (file == HFILE_ERROR) {
+     throw fmt::windows_error(GetLastError(),
+                              "cannot open file '{}'", filename);
+   }
+ \endrst
+*/
+template <typename... Args>
+std::system_error windows_error(int error_code, string_view message,
+                                const Args&... args) {
+  return vwindows_error(error_code, message, make_format_args(args...));
+}
 
 // Reports a Windows error without throwing an exception.
 // Can be used to report errors from destructors.
 FMT_API void report_windows_error(int error_code,
-                                  string_view message) FMT_NOEXCEPT;
+                                  const char* message) FMT_NOEXCEPT;
 #endif  // _WIN32
 
 // std::system is not available on some platforms such as iOS (#2248).
@@ -336,7 +340,7 @@ class file {
 
   // Makes fd be the copy of this file descriptor, closing fd first if
   // necessary.
-  FMT_API void dup2(int fd, error_code& ec) FMT_NOEXCEPT;
+  FMT_API void dup2(int fd, std::error_code& ec) FMT_NOEXCEPT;
 
   // Creates a pipe setting up read_end and write_end file objects for reading
   // and writing respectively.

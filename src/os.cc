@@ -100,17 +100,14 @@ int detail::utf16_to_utf8::convert(wstring_view s) {
   return 0;
 }
 
-void windows_error::init(int err_code, string_view format_str,
-                         format_args args) {
-  error_code_ = err_code;
-  memory_buffer buffer;
-  detail::format_windows_error(buffer, err_code, vformat(format_str, args));
-  std::runtime_error& base = *this;
-  base = std::runtime_error(to_string(buffer));
+std::system_error vwindows_error(int err_code, string_view format_str,
+                                 format_args args) {
+  auto ec = std::error_code(err_code, std::system_category());
+  throw std::system_error(ec, vformat(format_str, args));
 }
 
 void detail::format_windows_error(detail::buffer<char>& out, int error_code,
-                                  string_view message) FMT_NOEXCEPT {
+                                  const char* message) FMT_NOEXCEPT {
   FMT_TRY {
     wmemory_buffer buf;
     buf.resize(inline_buffer_size);
@@ -138,8 +135,7 @@ void detail::format_windows_error(detail::buffer<char>& out, int error_code,
   format_error_code(out, error_code, message);
 }
 
-void report_windows_error(int error_code,
-                          fmt::string_view message) FMT_NOEXCEPT {
+void report_windows_error(int error_code, const char* message) FMT_NOEXCEPT {
   report_error(detail::format_windows_error, error_code, message);
 }
 #endif  // _WIN32
@@ -259,10 +255,10 @@ void file::dup2(int fd) {
   }
 }
 
-void file::dup2(int fd, error_code& ec) FMT_NOEXCEPT {
+void file::dup2(int fd, std::error_code& ec) FMT_NOEXCEPT {
   int result = 0;
   FMT_RETRY(result, FMT_POSIX_CALL(dup2(fd_, fd)));
-  if (result == -1) ec = error_code(errno);
+  if (result == -1) ec = std::error_code(errno, std::generic_category());
 }
 
 void file::pipe(file& read_end, file& write_end) {

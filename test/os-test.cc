@@ -19,7 +19,7 @@
 #endif
 
 using fmt::buffered_file;
-using fmt::error_code;
+using testing::HasSubstr;
 
 #ifdef _WIN32
 
@@ -45,14 +45,15 @@ void check_utf_conversion_error(
     fmt::basic_string_view<Char> str = fmt::basic_string_view<Char>(0, 1)) {
   fmt::memory_buffer out;
   fmt::detail::format_windows_error(out, ERROR_INVALID_PARAMETER, message);
-  auto error = fmt::system_error(0, "");
+  out.resize(out.size() - 2);  // Remove newline.
+  auto error = std::system_error(std::error_code());
   try {
     (Converter)(str);
-  } catch (const fmt::system_error& e) {
+  } catch (const std::system_error& e) {
     error = e;
   }
-  EXPECT_EQ(ERROR_INVALID_PARAMETER, error.error_code());
-  EXPECT_EQ(fmt::to_string(out), error.what());
+  EXPECT_EQ(ERROR_INVALID_PARAMETER, error.code().value());
+  EXPECT_THAT(error.what(), HasSubstr(fmt::to_string(out)));
 }
 
 TEST(util_test, utf16_to_utf8_error) {
@@ -67,13 +68,37 @@ TEST(util_test, utf16_to_utf8_convert) {
             u.convert(fmt::wstring_view(L"foo", INT_MAX + 1u)));
 }
 
+TEST(os_test, format_std_error_code) {
+  EXPECT_EQ("generic:42",
+            fmt::format(FMT_STRING("{0}"),
+                        std::error_code(42, std::generic_category())));
+  EXPECT_EQ("system:42",
+            fmt::format(FMT_STRING("{0}"),
+                        std::error_code(42, std::system_category())));
+  EXPECT_EQ("system:-42",
+            fmt::format(FMT_STRING("{0}"),
+                        std::error_code(-42, std::system_category())));
+}
+
+TEST(os_test, format_std_error_code_wide) {
+  EXPECT_EQ(L"generic:42",
+            fmt::format(FMT_STRING(L"{0}"),
+                        std::error_code(42, std::generic_category())));
+  EXPECT_EQ(L"system:42",
+            fmt::format(FMT_STRING(L"{0}"),
+                        std::error_code(42, std::system_category())));
+  EXPECT_EQ(L"system:-42",
+            fmt::format(FMT_STRING(L"{0}"),
+                        std::error_code(-42, std::system_category())));
+}
+
 TEST(os_test, format_windows_error) {
   LPWSTR message = 0;
-  FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                     FORMAT_MESSAGE_IGNORE_INSERTS,
-                 0, ERROR_FILE_EXISTS,
-                 MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                 reinterpret_cast<LPWSTR>(&message), 0, 0);
+  auto result = FormatMessageW(
+      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+          FORMAT_MESSAGE_IGNORE_INSERTS,
+      0, ERROR_FILE_EXISTS, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+      reinterpret_cast<LPWSTR>(&message), 0, 0);
   fmt::detail::utf16_to_utf8 utf8_message(message);
   LocalFree(message);
   fmt::memory_buffer actual_message;
@@ -81,11 +106,6 @@ TEST(os_test, format_windows_error) {
   EXPECT_EQ(fmt::format("test: {}", utf8_message.str()),
             fmt::to_string(actual_message));
   actual_message.resize(0);
-  auto max_size = fmt::detail::max_value<size_t>() / 2;
-  fmt::detail::format_windows_error(actual_message, ERROR_FILE_EXISTS,
-                                    fmt::string_view(nullptr, max_size));
-  EXPECT_EQ(fmt::format("error {}", ERROR_FILE_EXISTS),
-            fmt::to_string(actual_message));
 }
 
 TEST(os_test, format_long_windows_error) {
@@ -93,16 +113,14 @@ TEST(os_test, format_long_windows_error) {
   // this error code is not available on all Windows platforms and
   // Windows SDKs, so do not fail the test if the error string cannot
   // be retrieved.
-  const int provisioning_not_allowed =
-      0x80284013L /*TBS_E_PROVISIONING_NOT_ALLOWED*/;
-  if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                         FORMAT_MESSAGE_FROM_SYSTEM |
-                         FORMAT_MESSAGE_IGNORE_INSERTS,
-                     0, static_cast<DWORD>(provisioning_not_allowed),
-                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                     reinterpret_cast<LPWSTR>(&message), 0, 0) == 0) {
-    return;
-  }
+  int provisioning_not_allowed = 0x80284013L;  // TBS_E_PROVISIONING_NOT_ALLOWED
+  auto result = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                                   FORMAT_MESSAGE_FROM_SYSTEM |
+                                   FORMAT_MESSAGE_IGNORE_INSERTS,
+                               0, static_cast<DWORD>(provisioning_not_allowed),
+                               MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                               reinterpret_cast<LPWSTR>(&message), 0, 0);
+  EXPECT_NE(result, 0);
   fmt::detail::utf16_to_utf8 utf8_message(message);
   LocalFree(message);
   fmt::memory_buffer actual_message;
@@ -113,16 +131,17 @@ TEST(os_test, format_long_windows_error) {
 }
 
 TEST(os_test, windows_error) {
-  auto error = fmt::system_error(0, "");
+  auto error = std::system_error(std::error_code());
   try {
     throw fmt::windows_error(ERROR_FILE_EXISTS, "test {}", "error");
-  } catch (const fmt::system_error& e) {
+  } catch (const std::system_error& e) {
     error = e;
   }
   fmt::memory_buffer message;
   fmt::detail::format_windows_error(message, ERROR_FILE_EXISTS, "test error");
-  EXPECT_EQ(to_string(message), error.what());
-  EXPECT_EQ(ERROR_FILE_EXISTS, error.error_code());
+  message.resize(message.size() - 2);
+  EXPECT_THAT(error.what(), HasSubstr(to_string(message)));
+  EXPECT_EQ(ERROR_FILE_EXISTS, error.code().value());
 }
 
 TEST(os_test, report_windows_error) {
@@ -151,7 +170,7 @@ bool isclosed(int fd) {
 file open_file() {
   file read_end, write_end;
   file::pipe(read_end, write_end);
-  write_end.write(FILE_CONTENT, std::strlen(FILE_CONTENT));
+  write_end.write(file_content, std::strlen(file_content));
   write_end.close();
   return read_end;
 }
@@ -243,7 +262,7 @@ TEST(buffered_file_test, close_error_in_dtor) {
         FMT_POSIX(close(f->fileno()));
         SUPPRESS_ASSERT(f.reset(nullptr));
       },
-      format_system_error(EBADF, "cannot close file") + "\n");
+      system_error_message(EBADF, "cannot close file") + "\n");
 }
 
 TEST(buffered_file_test, close) {
@@ -265,7 +284,7 @@ TEST(buffered_file_test, fileno) {
   auto f = open_buffered_file();
   EXPECT_TRUE(f.fileno() != -1);
   file copy = file::dup(f.fileno());
-  EXPECT_READ(copy, FILE_CONTENT);
+  EXPECT_READ(copy, file_content);
 }
 
 TEST(ostream_test, move) {
@@ -334,7 +353,7 @@ TEST(file_test, default_ctor) {
 
 TEST(file_test, open_buffered_file_in_ctor) {
   FILE* fp = safe_fopen("test-file", "w");
-  std::fputs(FILE_CONTENT, fp);
+  std::fputs(file_content, fp);
   std::fclose(fp);
   file f("test-file", file::RDONLY);
   // Check if the file is open by reading one character from it.
@@ -423,7 +442,7 @@ TEST(file_test, close_error_in_dtor) {
         FMT_POSIX(close(f->descriptor()));
         SUPPRESS_ASSERT(f.reset(nullptr));
       },
-      format_system_error(EBADF, "cannot close file") + "\n");
+      system_error_message(EBADF, "cannot close file") + "\n");
 }
 
 TEST(file_test, close) {
@@ -443,7 +462,7 @@ TEST(file_test, close_error) {
 
 TEST(file_test, read) {
   file f = open_file();
-  EXPECT_READ(f, FILE_CONTENT);
+  EXPECT_READ(f, file_content);
 }
 
 TEST(file_test, read_error) {
@@ -473,7 +492,7 @@ TEST(file_test, dup) {
   file f = open_file();
   file copy = file::dup(f.descriptor());
   EXPECT_NE(f.descriptor(), copy.descriptor());
-  EXPECT_EQ(FILE_CONTENT, read(copy, std::strlen(FILE_CONTENT)));
+  EXPECT_EQ(file_content, read(copy, std::strlen(file_content)));
 }
 
 #  ifndef __COVERITY__
@@ -489,7 +508,7 @@ TEST(file_test, dup2) {
   file copy = open_file();
   f.dup2(copy.descriptor());
   EXPECT_NE(f.descriptor(), copy.descriptor());
-  EXPECT_READ(copy, FILE_CONTENT);
+  EXPECT_READ(copy, file_content);
 }
 
 TEST(file_test, dup2_error) {
@@ -502,18 +521,18 @@ TEST(file_test, dup2_error) {
 TEST(file_test, dup2_noexcept) {
   file f = open_file();
   file copy = open_file();
-  error_code ec;
+  std::error_code ec;
   f.dup2(copy.descriptor(), ec);
-  EXPECT_EQ(ec.get(), 0);
+  EXPECT_EQ(ec.value(), 0);
   EXPECT_NE(f.descriptor(), copy.descriptor());
-  EXPECT_READ(copy, FILE_CONTENT);
+  EXPECT_READ(copy, file_content);
 }
 
 TEST(file_test, dup2_noexcept_error) {
   file f = open_file();
-  error_code ec;
+  std::error_code ec;
   SUPPRESS_ASSERT(f.dup2(-1, ec));
-  EXPECT_EQ(EBADF, ec.get());
+  EXPECT_EQ(EBADF, ec.value());
 }
 
 TEST(file_test, pipe) {

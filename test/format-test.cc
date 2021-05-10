@@ -35,6 +35,8 @@ using fmt::detail::max_value;
 using testing::Return;
 using testing::StrictMock;
 
+enum { buffer_size = 256 };
+
 struct uint32_pair {
   uint32_t u[2];
 };
@@ -134,8 +136,8 @@ TEST(util_test, allocator_ref) {
 TEST(util_test, format_system_error) {
   fmt::memory_buffer message;
   fmt::format_system_error(message, EDOM, "test");
-  EXPECT_EQ(fmt::format("test: {}", get_system_error(EDOM)),
-            to_string(message));
+  auto ec = std::error_code(EDOM, std::generic_category());
+  EXPECT_EQ(to_string(message), std::system_error(ec, "test").what());
   message = fmt::memory_buffer();
 
   // Check if std::allocator throws on allocating max size_t / 2 chars.
@@ -151,25 +153,24 @@ TEST(util_test, format_system_error) {
     fmt::print("warning: std::allocator allocates {} chars", max_size);
     return;
   }
-  fmt::format_system_error(message, EDOM, fmt::string_view(nullptr, max_size));
-  EXPECT_EQ(fmt::format("error {}", EDOM), to_string(message));
 }
 
 TEST(util_test, system_error) {
   auto test_error = fmt::system_error(EDOM, "test");
-  EXPECT_EQ(fmt::format("test: {}", get_system_error(EDOM)), test_error.what());
-  EXPECT_EQ(EDOM, test_error.error_code());
+  auto ec = std::error_code(EDOM, std::generic_category());
+  EXPECT_STREQ(test_error.what(), std::system_error(ec, "test").what());
+  EXPECT_EQ(test_error.code(), ec);
 
-  auto error = fmt::system_error(0, "");
+  auto error = std::system_error(std::error_code());
   try {
     throw fmt::system_error(EDOM, "test {}", "error");
-  } catch (const fmt::system_error& e) {
+  } catch (const std::system_error& e) {
     error = e;
   }
   fmt::memory_buffer message;
   fmt::format_system_error(message, EDOM, "test error");
-  EXPECT_EQ(to_string(message), error.what());
-  EXPECT_EQ(EDOM, error.error_code());
+  EXPECT_EQ(error.what(), to_string(message));
+  EXPECT_EQ(error.code(), std::error_code(EDOM, std::generic_category()));
 }
 
 TEST(util_test, report_system_error) {
@@ -397,7 +398,7 @@ TEST(format_test, arg_errors) {
   EXPECT_THROW_MSG(fmt::format(+"{00}", 42), format_error,
                    "invalid format string");
 
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   safe_sprintf(format_str, "{%u", INT_MAX);
   EXPECT_THROW_MSG(fmt::format(+format_str), format_error,
                    "invalid format string");
@@ -698,7 +699,7 @@ TEST(format_test, zero_flag) {
 }
 
 TEST(format_test, width) {
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   safe_sprintf(format_str, "{0:%u", UINT_MAX);
   increment(format_str + 3);
   EXPECT_THROW_MSG(fmt::format(+format_str, 0), format_error,
@@ -735,7 +736,7 @@ TEST(format_test, width) {
 }
 
 TEST(format_test, runtime_width) {
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   safe_sprintf(format_str, "{0:{%u", UINT_MAX);
   increment(format_str + 4);
   EXPECT_THROW_MSG(fmt::format(+format_str, 0), format_error,
@@ -796,7 +797,7 @@ TEST(format_test, runtime_width) {
 }
 
 TEST(format_test, precision) {
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   safe_sprintf(format_str, "{0:.%u", UINT_MAX);
   increment(format_str + 4);
   EXPECT_THROW_MSG(fmt::format(+format_str, 0), format_error,
@@ -911,7 +912,7 @@ TEST(format_test, precision) {
 }
 
 TEST(format_test, runtime_precision) {
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   safe_sprintf(format_str, "{0:.{%u", UINT_MAX);
   increment(format_str + 5);
   EXPECT_THROW_MSG(fmt::format(+format_str, 0), format_error,
@@ -1018,7 +1019,7 @@ TEST(format_test, format_short) {
 
 template <typename T>
 void check_unknown_types(const T& value, const char* types, const char*) {
-  char format_str[BUFFER_SIZE];
+  char format_str[buffer_size];
   const char* special = ".0123456789L}";
   for (int i = CHAR_MIN; i <= CHAR_MAX; ++i) {
     char c = static_cast<char>(i);
@@ -1083,7 +1084,7 @@ TEST(format_test, format_dec) {
             fmt::format("{0}", uint128_max));
 #endif
 
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "%d", INT_MIN);
   EXPECT_EQ(buffer, fmt::format("{0}", INT_MIN));
   safe_sprintf(buffer, "%d", INT_MAX);
@@ -1124,7 +1125,7 @@ TEST(format_test, format_hex) {
             fmt::format("{0:x}", uint128_max));
 #endif
 
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "-%x", 0 - static_cast<unsigned>(INT_MIN));
   EXPECT_EQ(buffer, fmt::format("{0:x}", INT_MIN));
   safe_sprintf(buffer, "%x", INT_MAX);
@@ -1162,7 +1163,7 @@ TEST(format_test, format_oct) {
             fmt::format("{0:o}", uint128_max));
 #endif
 
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "-%o", 0 - static_cast<unsigned>(INT_MIN));
   EXPECT_EQ(buffer, fmt::format("{0:o}", INT_MIN));
   safe_sprintf(buffer, "%o", INT_MAX);
@@ -1199,7 +1200,7 @@ TEST(format_test, format_double) {
   EXPECT_EQ("392.650000", fmt::format("{:f}", 392.65));
   EXPECT_EQ("392.650000", fmt::format("{:F}", 392.65));
   EXPECT_EQ("42", fmt::format("{:L}", 42.0));
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "%e", 392.65);
   EXPECT_EQ(buffer, fmt::format("{0:e}", 392.65));
   safe_sprintf(buffer, "%E", 392.65);
@@ -1287,7 +1288,7 @@ TEST(format_test, format_long_double) {
   EXPECT_EQ("392.65", fmt::format("{0:G}", 392.65l));
   EXPECT_EQ("392.650000", fmt::format("{0:f}", 392.65l));
   EXPECT_EQ("392.650000", fmt::format("{0:F}", 392.65l));
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "%Le", 392.65l);
   EXPECT_EQ(buffer, fmt::format("{0:e}", 392.65l));
   EXPECT_EQ("+0000392.6", fmt::format("{0:+010.4g}", 392.64l));
@@ -1456,7 +1457,7 @@ TEST(format_test, format_foreign_strings) {
 class Answer {};
 
 FMT_BEGIN_NAMESPACE
-template <> struct formatter<Date> {
+template <> struct formatter<date> {
   template <typename ParseContext>
   FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
     auto it = ctx.begin();
@@ -1464,7 +1465,7 @@ template <> struct formatter<Date> {
     return it;
   }
 
-  auto format(const Date& d, format_context& ctx) -> decltype(ctx.out()) {
+  auto format(const date& d, format_context& ctx) -> decltype(ctx.out()) {
     format_to(ctx.out(), "{}-{}-{}", d.year(), d.month(), d.day());
     return ctx.out();
   }
@@ -1479,8 +1480,7 @@ template <> struct formatter<Answer> : formatter<int> {
 FMT_END_NAMESPACE
 
 TEST(format_test, format_custom) {
-  Date date(2012, 12, 9);
-  EXPECT_THROW_MSG(fmt::format(+"{:s}", date), format_error,
+  EXPECT_THROW_MSG(fmt::format(+"{:s}", date(2012, 12, 9)), format_error,
                    "unknown format specifier");
   EXPECT_EQ("42", fmt::format("{0}", Answer()));
   EXPECT_EQ("0042", fmt::format("{:04}", Answer()));
@@ -1538,7 +1538,7 @@ TEST(format_test, format_examples) {
   EXPECT_EQ("Bring me a shrubbery", fmt::format("Bring me a {}", "shrubbery"));
   EXPECT_EQ("From 1 to 3", fmt::format("From {} to {}", 1, 3));
 
-  char buffer[BUFFER_SIZE];
+  char buffer[buffer_size];
   safe_sprintf(buffer, "%03.2f", -1.2);
   EXPECT_EQ(buffer, fmt::format("{:03.2f}", -1.2));
 
@@ -1609,6 +1609,8 @@ TEST(format_test, bytes) {
   EXPECT_EQ(10, s.size());
 }
 
+enum test_enum { foo, bar };
+
 TEST(format_test, join) {
   using fmt::join;
   int v1[3] = {1, 2, 3};
@@ -1632,6 +1634,9 @@ TEST(format_test, join) {
 
   EXPECT_EQ("(1, 2, 3)", fmt::format("({})", join(v1, ", ")));
   EXPECT_EQ("(+01.20, +03.40)", fmt::format("({:+06.2f})", join(v2, ", ")));
+
+  auto v4 = std::vector<test_enum>{foo, bar, foo};
+  EXPECT_EQ("0 1 0", fmt::format("{}", join(v4, " ")));
 }
 
 #ifdef __cpp_lib_byte
@@ -1758,14 +1763,11 @@ TEST(format_test, udl_template) {
 }
 
 TEST(format_test, udl_pass_user_defined_object_as_lvalue) {
-  auto date = Date(2015, 10, 21);
-  EXPECT_EQ("2015-10-21", "{}"_format(date));
+  EXPECT_EQ("2015-10-21", "{}"_format(date(2015, 10, 21)));
 }
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 
-enum test_enum { A };
-
-TEST(format_test, enum) { EXPECT_EQ("0", fmt::format("{}", A)); }
+TEST(format_test, enum) { EXPECT_EQ("0", fmt::format("{}", foo)); }
 
 TEST(format_test, formatter_not_specialized) {
   static_assert(!fmt::has_formatter<fmt::formatter<test_enum>,
@@ -2304,7 +2306,7 @@ FMT_CONSTEXPR bool test_error(const char* fmt, const char* expected_error) {
 TEST(format_test, format_string_errors) {
   EXPECT_ERROR_NOARGS("foo", nullptr);
   EXPECT_ERROR_NOARGS("}", "unmatched '}' in format string");
-  EXPECT_ERROR("{0:s", "unknown format specifier", Date);
+  EXPECT_ERROR("{0:s", "unknown format specifier", date);
 #  if !FMT_MSC_VER || FMT_MSC_VER >= 1916
   // This causes an detail compiler error in MSVC2017.
   EXPECT_ERROR("{:{<}", "invalid fill character '{'", int);
