@@ -541,9 +541,9 @@ class bigint {
   }
 
   void square() {
-    basic_memory_buffer<bigit, bigits_capacity> n(std::move(bigits_));
     int num_bigits = static_cast<int>(bigits_.size());
     int num_result_bigits = 2 * num_bigits;
+    basic_memory_buffer<bigit, bigits_capacity> n(std::move(bigits_));
     bigits_.resize(to_unsigned(num_result_bigits));
     using accumulator_t = conditional_t<FMT_USE_INT128, uint128_t, accumulator>;
     auto sum = accumulator_t();
@@ -2575,14 +2575,14 @@ FMT_FUNC void report_system_error(int error_code,
   report_error(format_system_error, error_code, message);
 }
 
-FMT_FUNC std::string detail::vformat(string_view format_str, format_args args) {
-  if (format_str.size() == 2 && equal2(format_str.data(), "{}")) {
+FMT_FUNC std::string vformat(string_view fmt, format_args args) {
+  if (fmt.size() == 2 && detail::equal2(fmt.data(), "{}")) {
     auto arg = args.get(0);
-    if (!arg) error_handler().on_error("argument not found");
-    return visit_format_arg(stringifier(), arg);
+    if (!arg) detail::error_handler().on_error("argument not found");
+    return visit_format_arg(detail::stringifier(), arg);
   }
   memory_buffer buffer;
-  detail::vformat_to(buffer, format_str, args);
+  detail::vformat_to(buffer, fmt, args);
   return to_string(buffer);
 }
 
