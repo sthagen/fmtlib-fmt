@@ -29,7 +29,7 @@ static std::string make_positional(fmt::string_view format) {
   return s;
 }
 
-static std::wstring make_positional(fmt::wstring_view format) {
+static std::wstring make_positional(fmt::basic_string_view<wchar_t> format) {
   std::wstring s(format.data(), format.size());
   s.replace(s.find(L'%'), 1, L"%1$");
   return s;
@@ -42,7 +42,8 @@ std::string test_sprintf(fmt::string_view format, const Args&... args) {
   return fmt::sprintf(format, args...);
 }
 template <typename... Args>
-std::wstring test_sprintf(fmt::wstring_view format, const Args&... args) {
+std::wstring test_sprintf(fmt::basic_string_view<wchar_t> format,
+                          const Args&... args) {
   return fmt::sprintf(format, args...);
 }
 
@@ -570,20 +571,12 @@ TEST(printf_test, printf_custom) {
   EXPECT_EQ("abc", test_sprintf("%s", test_string("abc")));
 }
 
-TEST(printf_test, ostream) {
-  std::ostringstream os;
-  int ret = fmt::fprintf(os, "Don't %s!", "panic");
-  EXPECT_EQ("Don't panic!", os.str());
-  EXPECT_EQ(12, ret);
-}
-
 TEST(printf_test, vprintf) {
   fmt::format_arg_store<fmt::printf_context, int> as{42};
   fmt::basic_format_args<fmt::printf_context> args(as);
   EXPECT_EQ(fmt::vsprintf("%d", args), "42");
   EXPECT_WRITE(stdout, fmt::vprintf("%d", args), "42");
   EXPECT_WRITE(stdout, fmt::vfprintf(stdout, "%d", args), "42");
-  EXPECT_WRITE(stdout, fmt::vfprintf(std::cout, "%d", args), "42");
 }
 
 template <typename... Args>

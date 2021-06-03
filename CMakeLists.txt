@@ -24,6 +24,17 @@ function(join result_var)
   set(${result_var} "${result}" PARENT_SCOPE)
 endfunction()
 
+function(enable_module target)
+  if (MSVC)
+    set(BMI ${CMAKE_CURRENT_BINARY_DIR}/${target}.ifc)
+    target_compile_options(${target}
+      PRIVATE /interface /ifcOutput ${BMI}
+      INTERFACE /reference fmt=${BMI})
+  endif ()
+  set_target_properties(${target} PROPERTIES ADDITIONAL_CLEAN_FILES ${BMI})
+  set_source_files_properties(${BMI} PROPERTIES GENERATED ON)
+endfunction()
+
 include(CMakeParseArguments)
 
 # Sets a cache variable with a docstring joined from multiple arguments:
@@ -69,6 +80,22 @@ option(FMT_TEST "Generate the test target." ${FMT_MASTER_PROJECT})
 option(FMT_FUZZ "Generate the fuzz target." OFF)
 option(FMT_CUDA_TEST "Generate the cuda-test target." OFF)
 option(FMT_OS "Include core requiring OS (Windows/Posix) " ON)
+option(FMT_MODULE "Build a module instead of a traditional library." OFF)
+
+set(FMT_CAN_MODULE OFF)
+if (CMAKE_CXX_STANDARD GREATER 17 AND
+    # msvc 16.10-pre4
+    MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 19.29.30035)
+  set(FMT_CAN_MODULE ON)
+endif ()
+if (NOT FMT_CAN_MODULE)
+  set(FMT_MODULE OFF)
+  message(STATUS "Module support is disabled.")
+endif ()
+if (FMT_TEST AND FMT_MODULE)
+  # The tests require {fmt} to be compiled as traditional library
+  message(STATUS "Testing is incompatible with build mode 'module'.")
+endif ()
 
 # Get version from core.h
 file(READ include/fmt/core.h core_h)
@@ -103,6 +130,18 @@ if (${index} GREATER -1)
   set(FMT_REQUIRED_FEATURES cxx_variadic_templates)
 endif ()
 message(STATUS "Required features: ${FMT_REQUIRED_FEATURES}")
+
+if (FMT_MASTER_PROJECT AND NOT DEFINED CMAKE_CXX_VISIBILITY_PRESET)
+  set_verbose(CMAKE_CXX_VISIBILITY_PRESET hidden CACHE STRING
+              "Preset for the export of private symbols")
+  set_property(CACHE CMAKE_CXX_VISIBILITY_PRESET PROPERTY STRINGS
+               hidden default)
+endif ()
+
+if (FMT_MASTER_PROJECT AND NOT DEFINED CMAKE_VISIBILITY_INLINES_HIDDEN)
+  set_verbose(CMAKE_VISIBILITY_INLINES_HIDDEN ON CACHE BOOL
+              "Whether to add a compile flag to hide symbols of inline functions")
+endif ()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set(PEDANTIC_COMPILE_FLAGS -pedantic-errors -Wall -Wextra -pedantic
@@ -188,8 +227,10 @@ endfunction()
 # Define the fmt library, its includes and the needed defines.
 add_headers(FMT_HEADERS args.h chrono.h color.h compile.h core.h format.h
                         format-inl.h locale.h os.h ostream.h printf.h ranges.h
-                        wchar.h)
-if (FMT_OS)
+                        xchar.h)
+if (FMT_MODULE)
+  set(FMT_SOURCES src/fmt.cc)
+elseif (FMT_OS)
   set(FMT_SOURCES src/format.cc src/os.cc)
 else()
   set(FMT_SOURCES src/format.cc)
@@ -214,6 +255,9 @@ if (FMT_WERROR)
 endif ()
 if (FMT_PEDANTIC)
   target_compile_options(fmt PRIVATE ${PEDANTIC_COMPILE_FLAGS})
+endif ()
+if (FMT_MODULE)
+  enable_module(fmt)
 endif ()
 
 target_compile_features(fmt INTERFACE ${FMT_REQUIRED_FEATURES})

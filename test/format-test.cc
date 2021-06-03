@@ -13,7 +13,8 @@
 #include "fmt/format.h"
 // clang-format on
 
-#include <stdint.h>     // uint32_t
+#include <stdint.h>  // uint32_t
+
 #include <climits>      // INT_MAX
 #include <cmath>        // std::signbit
 #include <cstring>      // std::strlen
@@ -1215,6 +1216,8 @@ TEST(format_test, format_double) {
   EXPECT_EQ("392.650000", fmt::format("{:f}", 392.65));
   EXPECT_EQ("392.650000", fmt::format("{:F}", 392.65));
   EXPECT_EQ("42", fmt::format("{:L}", 42.0));
+  EXPECT_EQ("    0x1.0cccccccccccdp+2", fmt::format("{:24a}", 4.2));
+  EXPECT_EQ("0x1.0cccccccccccdp+2    ", fmt::format("{:<24a}", 4.2));
   char buffer[buffer_size];
   safe_sprintf(buffer, "%e", 392.65);
   EXPECT_EQ(buffer, fmt::format("{0:e}", 392.65));
@@ -1272,10 +1275,16 @@ TEST(format_test, format_nan) {
   double nan = std::numeric_limits<double>::quiet_NaN();
   EXPECT_EQ("nan", fmt::format("{}", nan));
   EXPECT_EQ("+nan", fmt::format("{:+}", nan));
-  if (std::signbit(-nan))
+  EXPECT_EQ("  +nan", fmt::format("{:+06}", nan));
+  EXPECT_EQ("+nan  ", fmt::format("{:<+06}", nan));
+  EXPECT_EQ(" +nan ", fmt::format("{:^+06}", nan));
+  EXPECT_EQ("  +nan", fmt::format("{:>+06}", nan));
+  if (std::signbit(-nan)) {
     EXPECT_EQ("-nan", fmt::format("{}", -nan));
-  else
+    EXPECT_EQ("  -nan", fmt::format("{:+06}", -nan));
+  } else {
     fmt::print("Warning: compiler doesn't handle negative NaN correctly");
+  }
   EXPECT_EQ(" nan", fmt::format("{: }", nan));
   EXPECT_EQ("NAN", fmt::format("{:F}", nan));
   EXPECT_EQ("nan    ", fmt::format("{:<7}", nan));
@@ -1288,6 +1297,11 @@ TEST(format_test, format_infinity) {
   EXPECT_EQ("inf", fmt::format("{}", inf));
   EXPECT_EQ("+inf", fmt::format("{:+}", inf));
   EXPECT_EQ("-inf", fmt::format("{}", -inf));
+  EXPECT_EQ("  +inf", fmt::format("{:+06}", inf));
+  EXPECT_EQ("  -inf", fmt::format("{:+06}", -inf));
+  EXPECT_EQ("+inf  ", fmt::format("{:<+06}", inf));
+  EXPECT_EQ(" +inf ", fmt::format("{:^+06}", inf));
+  EXPECT_EQ("  +inf", fmt::format("{:>+06}", inf));
   EXPECT_EQ(" inf", fmt::format("{: }", inf));
   EXPECT_EQ("INF", fmt::format("{:F}", inf));
   EXPECT_EQ("inf    ", fmt::format("{:<7}", inf));
@@ -1434,18 +1448,6 @@ struct fmt::formatter<explicitly_convertible_to_std_string_view>
 TEST(format_test, format_explicitly_convertible_to_std_string_view) {
   EXPECT_EQ("'foo'",
             fmt::format("{}", explicitly_convertible_to_std_string_view()));
-}
-#endif
-
-// std::is_constructible is broken in MSVC until version 2015.
-#if !FMT_MSC_VER || FMT_MSC_VER >= 1900
-struct explicitly_convertible_to_wstring_view {
-  explicit operator fmt::wstring_view() const { return L"foo"; }
-};
-
-TEST(format_test, format_explicitly_convertible_to_wstring_view) {
-  EXPECT_EQ(L"foo",
-            fmt::format(L"{}", explicitly_convertible_to_wstring_view()));
 }
 #endif
 
@@ -1640,7 +1642,6 @@ TEST(format_test, join) {
   EXPECT_EQ("(+01.20, +03.40)",
             fmt::format("({:+06.2f})", join(v2.begin(), v2.end(), ", ")));
 
-  EXPECT_EQ(L"(1, 2, 3)", fmt::format(L"({})", join(v1, v1 + 3, L", ")));
   EXPECT_EQ("1, 2, 3", fmt::format("{0:{1}}", join(v1, v1 + 3, ", "), 1));
 
   EXPECT_EQ(fmt::format("{}, {}", v3[0], v3[1]),
@@ -1663,7 +1664,7 @@ TEST(format_test, join_bytes) {
 std::string vformat_message(int id, const char* format, fmt::format_args args) {
   fmt::memory_buffer buffer;
   format_to(buffer, "[{}] ", id);
-  vformat_to(buffer, format, args);
+  vformat_to(fmt::appender(buffer), format, args);
   return to_string(buffer);
 }
 
@@ -1770,13 +1771,6 @@ TEST(format_test, named_arg_udl) {
       fmt::format("{first}{second}{first}{third}", fmt::arg("first", "abra"),
                   fmt::arg("second", "cad"), fmt::arg("third", 99)),
       udl_a);
-  auto udl_a_w =
-      fmt::format(L"{first}{second}{first}{third}", L"first"_a = L"abra",
-                  L"second"_a = L"cad", L"third"_a = 99);
-  EXPECT_EQ(
-      fmt::format(L"{first}{second}{first}{third}", fmt::arg(L"first", L"abra"),
-                  fmt::arg(L"second", L"cad"), fmt::arg(L"third", 99)),
-      udl_a_w);
 }
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 
@@ -1869,8 +1863,6 @@ TEST(format_test, to_string) {
   EXPECT_EQ("0", fmt::to_string(test_value));
 }
 
-TEST(format_test, to_wstring) { EXPECT_EQ(L"42", fmt::to_wstring(42)); }
-
 TEST(format_test, output_iterators) {
   std::list<char> out;
   fmt::format_to(std::back_inserter(out), "{}", 42);
@@ -1898,19 +1890,10 @@ TEST(format_test, format_to) {
   EXPECT_EQ("part1part2", s);
 }
 
-TEST(format_test, format_to_wide) {
-  std::vector<wchar_t> buf;
-  fmt::format_to(std::back_inserter(buf), L"{}{}", 42, L'\0');
-  EXPECT_STREQ(buf.data(), L"42");
-}
-
 TEST(format_test, format_to_memory_buffer) {
-  fmt::basic_memory_buffer<char, 100> buffer;
-  fmt::format_to(buffer, "{}", "foo");
-  EXPECT_EQ("foo", to_string(buffer));
-  fmt::wmemory_buffer wbuffer;
-  fmt::format_to(wbuffer, L"{}", L"foo");
-  EXPECT_EQ(L"foo", to_string(wbuffer));
+  auto buf = fmt::basic_memory_buffer<char, 100>();
+  fmt::format_to(buf, "{}", "foo");
+  EXPECT_EQ("foo", to_string(buf));
 }
 
 TEST(format_test, format_to_vector) {
@@ -1964,26 +1947,6 @@ TEST(format_test, format_to_n) {
   result = fmt::format_to_n(buffer, 3, "{}", std::string(1000, '*'));
   EXPECT_EQ(1000u, result.size);
   EXPECT_EQ("***x", fmt::string_view(buffer, 4));
-}
-
-TEST(format_test, wide_format_to_n) {
-  wchar_t buffer[4];
-  buffer[3] = L'x';
-  auto result = fmt::format_to_n(buffer, 3, L"{}", 12345);
-  EXPECT_EQ(5u, result.size);
-  EXPECT_EQ(buffer + 3, result.out);
-  EXPECT_EQ(L"123x", fmt::wstring_view(buffer, 4));
-  buffer[0] = L'x';
-  buffer[1] = L'x';
-  buffer[2] = L'x';
-  result = fmt::format_to_n(buffer, 3, L"{}", L'A');
-  EXPECT_EQ(1u, result.size);
-  EXPECT_EQ(buffer + 1, result.out);
-  EXPECT_EQ(L"Axxx", fmt::wstring_view(buffer, 4));
-  result = fmt::format_to_n(buffer, 3, L"{}{} ", L'B', L'C');
-  EXPECT_EQ(3u, result.size);
-  EXPECT_EQ(buffer + 3, result.out);
-  EXPECT_EQ(L"BC x", fmt::wstring_view(buffer, 4));
 }
 
 struct test_output_iterator {

@@ -8,8 +8,10 @@ module;
 #  define WIN32_LEAN_AND_MEAN
 #endif
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <clocale>
 #include <cmath>
@@ -21,9 +23,6 @@ module;
 #include <cstring>
 #include <ctime>
 #include <cwchar>
-
-#include <algorithm>
-#include <chrono>
 #include <exception>
 #include <functional>
 #include <iterator>
@@ -77,18 +76,25 @@ export module fmt;
   }                              \
   export {
 
+#if defined(_MSC_FULL_VER) && _MSC_FULL_VER > 192930036
+#define FMT_USE_NONTYPE_TEMPLATE_PARAMETERS 0
+#endif
+
 // all library-provided declarations and definitions
 // must be in the module purview to be exported
-#include "fmt/format.h"
 #include "fmt/args.h"
+#include "fmt/chrono.h"
 #include "fmt/color.h"
 #include "fmt/compile.h"
-#include "fmt/locale.h"
-#include "fmt/chrono.h"
-#include "fmt/printf.h"
+#include "fmt/format.h"
 #include "fmt/os.h"
+#include "fmt/printf.h"
+#include "fmt/xchar.h"
 
+// gcc doesn't yet implement private module fragments
+#if !FMT_GCC_VERSION
 module : private;
+#endif
 
 #include "format.cc"
 #include "os.cc"

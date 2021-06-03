@@ -19,6 +19,7 @@ The {fmt} library API consists of the following parts:
 * :ref:`fmt/os.h <os-api>`: system APIs
 * :ref:`fmt/ostream.h <ostream-api>`: ``std::ostream`` support
 * :ref:`fmt/printf.h <printf-api>`: ``printf`` formatting
+* :ref:`fmt/xchar.h <xchar-api>`: optional ``wchar_t`` support 
 
 All functions and types provided by the library reside in namespace ``fmt`` and
 macros have prefix ``FMT_``.
@@ -49,7 +50,7 @@ participate in an overload resolution if the latter is not a string.
 .. doxygenfunction:: format(format_string<T...> fmt, T&&... args) -> std::string
 .. doxygenfunction:: vformat(string_view fmt, format_args args) -> std::string
 
-.. doxygenfunction:: format_to(OutputIt out, format_string<T...> fmt, T&& args) -> OutputIt
+.. doxygenfunction:: format_to(OutputIt out, format_string<T...> fmt, T&&... args) -> OutputIt
 .. doxygenfunction:: format_to_n(OutputIt out, size_t n, format_string<T...> fmt, const T&... args) -> format_to_n_result<OutputIt>
 .. doxygenfunction:: formatted_size(format_string<T...> fmt, T&&... args) -> size_t
 
@@ -123,7 +124,6 @@ times and reduces binary code size compared to a fully parameterized version.
    :members:
 
 .. doxygentypedef:: fmt::format_context
-.. doxygentypedef:: fmt::wformat_context
 
 Compatibility
 -------------
@@ -132,7 +132,6 @@ Compatibility
    :members:
 
 .. doxygentypedef:: fmt::string_view
-.. doxygentypedef:: fmt::wstring_view
 
 Locale
 ------
@@ -297,31 +296,26 @@ Literal-based API
 
 The following user-defined literals are defined in ``fmt/format.h``.
 
-.. doxygenfunction:: operator""_format(const char *s, size_t n)
+.. doxygenfunction:: operator""_format(const char *s, size_t n) -> detail::udl_formatter<char> 
 
-.. doxygenfunction:: operator""_a(const char *s, size_t)
+.. doxygenfunction:: operator""_a(const char *s, size_t) -> detail::udl_arg<char>
 
 Utilities
 ---------
 
-.. doxygenstruct:: fmt::is_char
-
 .. doxygentypedef:: fmt::char_t
 
-.. doxygenfunction:: fmt::ptr(const T *p)
-.. doxygenfunction:: fmt::ptr(const std::unique_ptr<T> &p)
-.. doxygenfunction:: fmt::ptr(const std::shared_ptr<T> &p)
-.. doxygenfunction:: fmt::ptr(T (*fn)(Args...))
+.. doxygenfunction:: fmt::ptr(T p) -> const void*
+.. doxygenfunction:: fmt::ptr(const std::unique_ptr<T> &p) -> const void*
+.. doxygenfunction:: fmt::ptr(const std::shared_ptr<T> &p) -> const void*
 
 .. doxygenfunction:: fmt::to_string(const T &value)
 
-.. doxygenfunction:: fmt::to_wstring(const T &value)
+.. doxygenfunction:: fmt::to_string_view(const Char *s) -> basic_string_view<Char>
 
-.. doxygenfunction:: fmt::to_string_view(const Char *s)
+.. doxygenfunction:: fmt::join(Range &&range, string_view sep) -> join_view<detail::iterator_t<Range>, detail::sentinel_t<Range>>
 
-.. doxygenfunction:: fmt::join(Range &&range, string_view sep)
-
-.. doxygenfunction:: fmt::join(It begin, Sentinel end, string_view sep)
+.. doxygenfunction:: fmt::join(It begin, Sentinel end, string_view sep) -> join_view<It, Sentinel>
 
 .. doxygenclass:: fmt::detail::buffer
    :members:
@@ -333,17 +327,13 @@ Utilities
 System Errors
 -------------
 
-fmt does not use ``errno`` to communicate errors to the user, but it may call
-system functions which set ``errno``. Users should not make any assumptions about
-the value of ``errno`` being preserved by library functions.
+{fmt} does not use ``errno`` to communicate errors to the user, but it may call
+system functions which set ``errno``. Users should not make any assumptions
+about the value of ``errno`` being preserved by library functions.
 
-.. doxygenclass:: fmt::system_error
-   :members:
+.. doxygenfunction:: fmt::system_error
 
 .. doxygenfunction:: fmt::format_system_error
-
-.. doxygenclass:: fmt::windows_error
-   :members:
 
 Custom Allocators
 -----------------
@@ -478,6 +468,9 @@ System APIs
 .. doxygenclass:: fmt::ostream
    :members:
 
+.. doxygenfunction:: fmt::windows_error
+   :members:
+
 .. _ostream-api:
 
 ``std::ostream`` Support
@@ -518,13 +511,27 @@ the POSIX extension for positional arguments. Unlike their standard
 counterparts, the ``fmt`` functions are type-safe and throw an exception if an
 argument type doesn't match its format specification.
 
-.. doxygenfunction:: printf(const S &format_str, const Args&... args)
+.. doxygenfunction:: printf(const S &format_str, const T&... args)
 
-.. doxygenfunction:: fprintf(std::FILE *f, const S &format, const Args&... args)
+.. doxygenfunction:: fprintf(std::FILE *f, const S &fmt, const T&... args) -> int
 
-.. doxygenfunction:: fprintf(std::basic_ostream<Char> &os, const S &format_str, const Args&... args)
+.. doxygenfunction:: sprintf(const S&, const T&...)
 
-.. doxygenfunction:: sprintf(const S&, const Args&...)
+.. _xchar-api:
+
+``wchar_t`` Support
+===================
+
+The optional header ``fmt/wchar_t.h`` provides support for ``wchar_t`` and
+exotic character types.
+
+.. doxygenstruct:: fmt::is_char
+
+.. doxygentypedef:: fmt::wstring_view
+
+.. doxygentypedef:: fmt::wformat_context
+
+.. doxygenfunction:: fmt::to_wstring(const T &value)
 
 Compatibility with C++20 ``std::format``
 ========================================
@@ -537,5 +544,4 @@ differences:
   collisions with standard library implementations.
 * Width calculation doesn't use grapheme clusterization. The latter has been
   implemented in a separate branch but hasn't been integrated yet.
-* Chrono formatting doesn't support C++20 date types since they are not provided
-  by standard library implementations.
+* Most C++20 chrono types are not supported yet.

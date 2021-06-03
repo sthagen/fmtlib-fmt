@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>  // errno
 #include <climits>
 #include <cmath>
 #include <cstdarg>
@@ -147,8 +148,7 @@ template <> FMT_FUNC int count_digits<4>(detail::fallback_uintptr n) {
 }
 
 #if __cplusplus < 201703L
-template <typename T>
-constexpr const typename basic_data<T>::digit_pair basic_data<T>::digits[];
+template <typename T> constexpr const char basic_data<T>::digits[][2];
 template <typename T> constexpr const char basic_data<T>::hex_digits[];
 template <typename T> constexpr const char basic_data<T>::signs[];
 template <typename T> constexpr const unsigned basic_data<T>::prefixes[];
@@ -2500,19 +2500,6 @@ int snprintf_float(T value, int precision, float_specs specs,
     return exp - fraction_size;
   }
 }
-
-struct stringifier {
-  template <typename T> FMT_INLINE std::string operator()(T value) const {
-    return to_string(value);
-  }
-  std::string operator()(basic_format_arg<format_context>::handle h) const {
-    memory_buffer buf;
-    format_parse_context parse_ctx({});
-    format_context format_ctx(buffer_appender<char>(buf), {}, {});
-    h.format(parse_ctx, format_ctx);
-    return to_string(buf);
-  }
-};
 }  // namespace detail
 
 template <> struct formatter<detail::bigint> {
@@ -2576,12 +2563,9 @@ FMT_FUNC void report_system_error(int error_code,
 }
 
 FMT_FUNC std::string vformat(string_view fmt, format_args args) {
-  if (fmt.size() == 2 && detail::equal2(fmt.data(), "{}")) {
-    auto arg = args.get(0);
-    if (!arg) detail::error_handler().on_error("argument not found");
-    return visit_format_arg(detail::stringifier(), arg);
-  }
-  memory_buffer buffer;
+  // Don't optimize the "{}" case to keep the binary size small and because it
+  // can be better optimized in fmt::format anyway.
+  auto buffer = memory_buffer();
   detail::vformat_to(buffer, fmt, args);
   return to_string(buffer);
 }
@@ -2594,13 +2578,12 @@ extern "C" __declspec(dllimport) int __stdcall WriteConsoleW(  //
 }  // namespace detail
 #endif
 
-FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
-  memory_buffer buffer;
-  detail::vformat_to(buffer, format_str, args);
+namespace detail {
+FMT_FUNC void print(std::FILE* f, string_view text) {
 #ifdef _WIN32
   auto fd = _fileno(f);
   if (_isatty(fd)) {
-    detail::utf8_to_utf16 u16(string_view(buffer.data(), buffer.size()));
+    detail::utf8_to_utf16 u16(string_view(text.data(), text.size()));
     auto written = detail::dword();
     if (detail::WriteConsoleW(reinterpret_cast<void*>(_get_osfhandle(fd)),
                               u16.c_str(), static_cast<uint32_t>(u16.size()),
@@ -2611,7 +2594,14 @@ FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
     // redirected to NUL.
   }
 #endif
-  detail::fwrite_fully(buffer.data(), 1, buffer.size(), f);
+  detail::fwrite_fully(text.data(), 1, text.size(), f);
+}
+}  // namespace detail
+
+FMT_FUNC void vprint(std::FILE* f, string_view format_str, format_args args) {
+  memory_buffer buffer;
+  detail::vformat_to(buffer, format_str, args);
+  detail::print(f, {buffer.data(), buffer.size()});
 }
 
 #ifdef _WIN32

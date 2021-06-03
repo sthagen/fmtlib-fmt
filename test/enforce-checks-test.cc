@@ -11,9 +11,9 @@
 #include "fmt/chrono.h"
 #include "fmt/color.h"
 #include "fmt/format.h"
-#include "fmt/locale.h"
 #include "fmt/ostream.h"
 #include "fmt/ranges.h"
+#include "fmt/xchar.h"
 
 // Exercise the API to verify that everything we expect to can compile.
 void test_format_api() {
