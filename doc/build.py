@@ -24,6 +24,7 @@ def create_build_env(venv_dir='virtualenv'):
   # Install Sphinx and Breathe. Require the exact version of Sphinx which is
   # compatible with Breathe.
   pip = Pip(venv_dir)
+  pip.install('wheel')
   pip.install('six')
   pip.install('sphinx-doc/sphinx', 'v3.3.0')
   pip.install('michaeljones/breathe', 'v4.23.0')
@@ -69,6 +70,7 @@ def build_docs(version='dev', **kwargs):
       EXCLUDE_SYMBOLS   = fmt::formatter fmt::printf_formatter fmt::arg_join \
                           fmt::basic_format_arg::handle
     '''.format(include_dir, doxyxml_dir).encode('UTF-8'))
+  out = out.decode('utf-8')
   internal_symbols = [
     'fmt::detail::.*',
     'basic_data<>',
