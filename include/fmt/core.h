@@ -8,15 +8,15 @@
 #ifndef FMT_CORE_H_
 #define FMT_CORE_H_
 
-#include <climits>  // INT_MAX
-#include <cstdio>   // std::FILE
+#include <cstdio>  // std::FILE
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <type_traits>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 70104
+#define FMT_VERSION 80000
 
 #ifdef __clang__
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
@@ -228,12 +228,12 @@
 #    define FMT_INLINE_NAMESPACE namespace
 #    define FMT_END_NAMESPACE \
       }                       \
-      using namespace v7;     \
+      using namespace v8;     \
       }
 #  endif
 #  define FMT_BEGIN_NAMESPACE \
     namespace fmt {           \
-    FMT_INLINE_NAMESPACE v7 {
+    FMT_INLINE_NAMESPACE v8 {
 #endif
 
 #ifndef FMT_MODULE_EXPORT
@@ -284,8 +284,16 @@
 #  define FMT_UNICODE !FMT_MSC_VER
 #endif
 
-#ifndef FMT_COMPILE_TIME_CHECKS
-#  define FMT_COMPILE_TIME_CHECKS 0
+#ifndef FMT_CONSTEVAL
+#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) && \
+       __cplusplus > 201703L) ||                                 \
+      (defined(__cpp_consteval) &&                               \
+       !FMT_MSC_VER)  // consteval is broken in MSVC.
+#    define FMT_CONSTEVAL consteval
+#    define FMT_HAS_CONSTEVAL
+#  else
+#    define FMT_CONSTEVAL
+#  endif
 #endif
 
 #ifndef FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
@@ -320,7 +328,9 @@ using remove_cvref_t = typename std::remove_cv<remove_reference_t<T>>::type;
 template <typename T> struct type_identity { using type = T; };
 template <typename T> using type_identity_t = typename type_identity<T>::type;
 
-struct monostate {};
+struct monostate {
+  constexpr monostate() {}
+};
 
 // An enable_if helper to be used in template parameters which results in much
 // shorter symbols: https://godbolt.org/z/sWw4vP. Extra parentheses are needed
@@ -571,7 +581,7 @@ constexpr auto to_string_view(const S& s)
 FMT_BEGIN_DETAIL_NAMESPACE
 
 void to_string_view(...);
-using fmt::v7::to_string_view;
+using fmt::v8::to_string_view;
 
 // Specifies whether S is a string type convertible to fmt::basic_string_view.
 // It should be a constexpr function but MSVC 2017 fails to compile it in
@@ -724,6 +734,23 @@ inline auto get_container(std::back_insert_iterator<Container> it)
   return *accessor(it).container;
 }
 
+template <typename Char, typename InputIt, typename OutputIt>
+FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
+    -> OutputIt {
+  while (begin != end) *out++ = static_cast<Char>(*begin++);
+  return out;
+}
+
+template <typename Char, FMT_ENABLE_IF(std::is_same<Char, char>::value)>
+FMT_CONSTEXPR auto copy_str(const Char* begin, const Char* end, Char* out)
+    -> Char* {
+  if (is_constant_evaluated())
+    return copy_str<Char, const Char*, Char*>(begin, end, out);
+  auto size = to_unsigned(end - begin);
+  memcpy(out, begin, size);
+  return out + size;
+}
+
 /**
   \rst
   A contiguous memory buffer with an optional growing ability. It is an internal
@@ -848,7 +875,12 @@ class iterator_buffer final : public Traits, public buffer<T> {
   void grow(size_t) final FMT_OVERRIDE {
     if (this->size() == buffer_size) flush();
   }
-  void flush();
+
+  void flush() {
+    auto size = this->size();
+    this->clear();
+    out_ = copy_str<T>(data_, data_ + this->limit(size), out_);
+  }
 
  public:
   explicit iterator_buffer(OutputIt out, size_t n = buffer_size)
@@ -1101,6 +1133,7 @@ template <typename Context> class value {
   using char_type = typename Context::char_type;
 
   union {
+    monostate no_value;
     int int_value;
     unsigned uint_value;
     long long long_long_value;
@@ -1118,7 +1151,8 @@ template <typename Context> class value {
     named_arg_value<char_type> named_args;
   };
 
-  constexpr FMT_INLINE value(int val = 0) : int_value(val) {}
+  constexpr FMT_INLINE value() : no_value() {}
+  constexpr FMT_INLINE value(int val) : int_value(val) {}
   constexpr FMT_INLINE value(unsigned val) : uint_value(val) {}
   constexpr FMT_INLINE value(long long val) : long_long_value(val) {}
   constexpr FMT_INLINE value(unsigned long long val) : ulong_long_value(val) {}
@@ -1463,6 +1497,12 @@ FMT_CONSTEXPR FMT_INLINE auto visit_format_arg(
 
 FMT_BEGIN_DETAIL_NAMESPACE
 
+template <typename Char, typename InputIt>
+auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
+  get_container(out).append(begin, end);
+  return out;
+}
+
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
 // A workaround for gcc 4.8 to make void_t work in a SFINAE context.
 template <typename... Ts> struct void_t_impl { using type = void; };
@@ -1539,7 +1579,7 @@ FMT_CONSTEXPR FMT_INLINE auto make_arg(const T& val) -> value<Context> {
       !std::is_same<decltype(arg), const unformattable&>::value,
       "Cannot format an argument. To make type T formattable provide a "
       "formatter<T> specialization: https://fmt.dev/latest/api.html#udt");
-  return arg;
+  return {arg};
 }
 
 template <bool IS_PACKED, typename Context, type, typename T,
@@ -2063,25 +2103,27 @@ inline auto find<false, char>(const char* first, const char* last, char value,
 
 // Parses the range [begin, end) as an unsigned integer. This function assumes
 // that the range is non-empty and the first character is a digit.
-template <typename Char, typename ErrorHandler>
+template <typename Char>
 FMT_CONSTEXPR auto parse_nonnegative_int(const Char*& begin, const Char* end,
-                                         ErrorHandler&& eh) -> int {
+                                         int error_value) noexcept -> int {
   FMT_ASSERT(begin != end && '0' <= *begin && *begin <= '9', "");
-  unsigned value = 0;
-  // Convert to unsigned to prevent a warning.
-  const unsigned max_int = to_unsigned(INT_MAX);
-  unsigned big = max_int / 10;
+  unsigned value = 0, prev = 0;
+  auto p = begin;
   do {
-    // Check for overflow.
-    if (value > big) {
-      value = max_int + 1;
-      break;
-    }
-    value = value * 10 + unsigned(*begin - '0');
-    ++begin;
-  } while (begin != end && '0' <= *begin && *begin <= '9');
-  if (value > max_int) eh.on_error("number is too big");
-  return static_cast<int>(value);
+    prev = value;
+    value = value * 10 + unsigned(*p - '0');
+    ++p;
+  } while (p != end && '0' <= *p && *p <= '9');
+  auto num_digits = p - begin;
+  begin = p;
+  if (num_digits <= std::numeric_limits<int>::digits10)
+    return static_cast<int>(value);
+  // Check for overflow.
+  const unsigned max = to_unsigned((std::numeric_limits<int>::max)());
+  return num_digits == std::numeric_limits<int>::digits10 + 1 &&
+                 prev * 10ull + unsigned(p[-1] - '0') <= max
+             ? static_cast<int>(value)
+             : error_value;
 }
 
 // Parses fill and alignment.
@@ -2137,7 +2179,8 @@ FMT_CONSTEXPR auto do_parse_arg_id(const Char* begin, const Char* end,
   if (c >= '0' && c <= '9') {
     int index = 0;
     if (c != '0')
-      index = parse_nonnegative_int(begin, end, handler);
+      index =
+          parse_nonnegative_int(begin, end, (std::numeric_limits<int>::max)());
     else
       ++begin;
     if (begin == end || (*begin != '}' && *begin != ':'))
@@ -2186,7 +2229,11 @@ FMT_CONSTEXPR auto parse_width(const Char* begin, const Char* end,
 
   FMT_ASSERT(begin != end, "");
   if ('0' <= *begin && *begin <= '9') {
-    handler.on_width(parse_nonnegative_int(begin, end, handler));
+    int width = parse_nonnegative_int(begin, end, -1);
+    if (width != -1)
+      handler.on_width(width);
+    else
+      handler.on_error("number is too big");
   } else if (*begin == '{') {
     ++begin;
     if (begin != end) begin = parse_arg_id(begin, end, width_adapter{handler});
@@ -2217,7 +2264,11 @@ FMT_CONSTEXPR auto parse_precision(const Char* begin, const Char* end,
   ++begin;
   auto c = begin != end ? *begin : Char();
   if ('0' <= c && c <= '9') {
-    handler.on_precision(parse_nonnegative_int(begin, end, handler));
+    auto precision = parse_nonnegative_int(begin, end, -1);
+    if (precision != -1)
+      handler.on_precision(precision);
+    else
+      handler.on_error("number is too big");
   } else if (c == '{') {
     ++begin;
     if (begin != end)
@@ -2418,8 +2469,8 @@ class compile_parse_context
 
  public:
   explicit FMT_CONSTEXPR compile_parse_context(
-      basic_string_view<Char> format_str, int num_args = INT_MAX,
-      ErrorHandler eh = {})
+      basic_string_view<Char> format_str,
+      int num_args = (std::numeric_limits<int>::max)(), ErrorHandler eh = {})
       : base(format_str, eh), num_args_(num_args) {}
 
   FMT_CONSTEXPR auto next_arg_id() -> int {
@@ -2785,17 +2836,13 @@ template <typename Char, typename... Args> class basic_format_string {
   template <typename S,
             FMT_ENABLE_IF(
                 std::is_convertible<const S&, basic_string_view<Char>>::value)>
-#if FMT_COMPILE_TIME_CHECKS
-  consteval
-#endif
-      basic_format_string(const S& s)
-      : str_(s) {
+  FMT_CONSTEVAL basic_format_string(const S& s) : str_(s) {
     static_assert(
         detail::count<
             (std::is_base_of<detail::view, remove_reference_t<Args>>::value &&
              std::is_reference<Args>::value)...>() == 0,
         "passing views as lvalues is disallowed");
-#if FMT_COMPILE_TIME_CHECKS
+#ifdef FMT_HAS_CONSTEVAL
     if constexpr (detail::count_named_args<Args...>() == 0) {
       using checker = detail::format_string_checker<Char, detail::error_handler,
                                                     remove_cvref_t<Args>...>;

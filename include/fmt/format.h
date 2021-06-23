@@ -254,13 +254,6 @@ namespace detail {
 #  define FMT_CONSTEXPR20
 #endif
 
-// Workaround poor codegen in MSVC.
-#if FMT_MSC_VER
-#  define FMT_STATIC_CONSTEXPR static constexpr
-#else
-#  define FMT_STATIC_CONSTEXPR constexpr
-#endif
-
 // An equivalent of `*reinterpret_cast<Dest*>(&source)` that doesn't have
 // undefined behavior (e.g. due to type aliasing).
 // Example: uint64_t d = bit_cast<uint64_t>(2.718);
@@ -432,46 +425,6 @@ using char8_type = char8_t;
 enum char8_type : unsigned char {};
 #endif
 
-template <typename InputIt, typename OutChar>
-using needs_conversion = bool_constant<
-    std::is_same<typename std::iterator_traits<InputIt>::value_type,
-                 char>::value &&
-    std::is_same<OutChar, char8_type>::value>;
-
-template <typename OutChar, typename InputIt, typename OutputIt,
-          FMT_ENABLE_IF(!needs_conversion<InputIt, OutChar>::value)>
-FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
-    -> OutputIt {
-  while (begin != end) *out++ = *begin++;
-  return out;
-}
-
-template <typename OutChar, typename InputIt,
-          FMT_ENABLE_IF(!needs_conversion<InputIt, OutChar>::value)>
-FMT_CONSTEXPR20 auto copy_str(InputIt begin, InputIt end, OutChar* out)
-    -> OutChar* {
-  if (is_constant_evaluated()) {
-    return copy_str<OutChar, InputIt, OutChar*>(begin, end, out);
-  }
-  auto size = to_unsigned(end - begin);
-  std::uninitialized_copy(begin, end, make_checked(out, size));
-  return out + size;
-}
-
-template <typename OutChar, typename InputIt, typename OutputIt,
-          FMT_ENABLE_IF(needs_conversion<InputIt, OutChar>::value)>
-auto copy_str(InputIt begin, InputIt end, OutputIt out) -> OutputIt {
-  while (begin != end) *out++ = static_cast<char8_type>(*begin++);
-  return out;
-}
-
-template <typename OutChar, typename InputIt,
-          FMT_ENABLE_IF(!needs_conversion<InputIt, OutChar>::value)>
-auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
-  get_container(out).append(begin, end);
-  return out;
-}
-
 template <typename OutChar, typename InputIt, typename OutputIt>
 FMT_CONSTEXPR FMT_NOINLINE auto copy_str_noinline(InputIt begin, InputIt end,
                                                   OutputIt out) -> OutputIt {
@@ -633,13 +586,6 @@ void buffer<T>::append(const U* begin, const U* end) {
   }
 }
 
-template <typename OutputIt, typename T, typename Traits>
-void iterator_buffer<OutputIt, T, Traits>::flush() {
-  auto size = this->size();
-  this->clear();
-  out_ = copy_str<T>(data_, data_ + this->limit(size), out_);
-}
-
 template <typename T, typename Enable = void>
 struct is_locale : std::false_type {};
 template <typename T>
@@ -647,11 +593,6 @@ struct is_locale<T, void_t<decltype(T::classic())>> : std::true_type {};
 }  // namespace detail
 
 FMT_MODULE_EXPORT_BEGIN
-
-template <> struct is_char<wchar_t> : std::true_type {};
-template <> struct is_char<detail::char8_type> : std::true_type {};
-template <> struct is_char<char16_t> : std::true_type {};
-template <> struct is_char<char32_t> : std::true_type {};
 
 // The number of characters to store in the basic_memory_buffer object itself
 // to avoid dynamic memory allocation.
@@ -837,6 +778,33 @@ FMT_INLINE auto make_args_checked(const S& fmt,
   return {args...};
 }
 
+// compile-time support
+namespace detail_exported {
+#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+template <typename Char, size_t N> struct fixed_string {
+  constexpr fixed_string(const Char (&str)[N]) {
+    detail::copy_str<Char, const Char*, Char*>(static_cast<const Char*>(str),
+                                               str + N, data);
+  }
+  Char data[N]{};
+};
+#endif
+
+// Converts a compile-time string to basic_string_view.
+template <typename Char, size_t N>
+constexpr auto compile_string_to_view(const Char (&s)[N])
+    -> basic_string_view<Char> {
+  // Remove trailing NUL character if needed. Won't be present if this is used
+  // with a raw character array (i.e. not defined as a string).
+  return {s, N - (std::char_traits<Char>::to_int_type(s[N - 1]) == 0 ? 1 : 0)};
+}
+template <typename Char>
+constexpr auto compile_string_to_view(detail::std_string_view<Char> s)
+    -> basic_string_view<Char> {
+  return {s.data(), s.size()};
+}
+}  // namespace detail_exported
+
 FMT_BEGIN_DETAIL_NAMESPACE
 
 inline void throw_format_error(const char* message) {
@@ -949,25 +917,23 @@ FMT_CONSTEXPR inline auto count_digits(uint128_t n) -> int {
 // Returns the number of decimal digits in n. Leading zeros are not counted
 // except for n == 0 in which case count_digits returns 1.
 FMT_CONSTEXPR20 inline auto count_digits(uint64_t n) -> int {
-  if (is_constant_evaluated()) {
-    return count_digits_fallback(n);
-  }
 #ifdef FMT_BUILTIN_CLZLL
-  // https://github.com/fmtlib/format-benchmark/blob/master/digits10
-  // Maps bsr(n) to ceil(log10(pow(2, bsr(n) + 1) - 1)).
-  FMT_STATIC_CONSTEXPR uint16_t bsr2log10[] = {
-      1,  1,  1,  2,  2,  2,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,
-      6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  10, 10, 10,
-      10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 15,
-      15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
-  auto t = bsr2log10[FMT_BUILTIN_CLZLL(n | 1) ^ 63];
-  constexpr const uint64_t zero_or_powers_of_10[] = {
-      0, 0, FMT_POWERS_OF_10(1U), FMT_POWERS_OF_10(1000000000ULL),
-      10000000000000000000ULL};
-  return t - (n < zero_or_powers_of_10[t]);
-#else
-  return count_digits_fallback(n);
+  if (!is_constant_evaluated()) {
+    // https://github.com/fmtlib/format-benchmark/blob/master/digits10
+    // Maps bsr(n) to ceil(log10(pow(2, bsr(n) + 1) - 1)).
+    constexpr uint16_t bsr2log10[] = {
+        1,  1,  1,  2,  2,  2,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,
+        6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  10, 10, 10,
+        10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 15,
+        15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 19, 20};
+    auto t = bsr2log10[FMT_BUILTIN_CLZLL(n | 1) ^ 63];
+    constexpr const uint64_t zero_or_powers_of_10[] = {
+        0, 0, FMT_POWERS_OF_10(1U), FMT_POWERS_OF_10(1000000000ULL),
+        10000000000000000000ULL};
+    return t - (n < zero_or_powers_of_10[t]);
+  }
 #endif
+  return count_digits_fallback(n);
 }
 
 // Counts the number of digits in n. BITS = log2(radix).
@@ -986,16 +952,13 @@ FMT_CONSTEXPR auto count_digits(UInt n) -> int {
 
 template <> auto count_digits<4>(detail::fallback_uintptr n) -> int;
 
-#ifdef FMT_BUILTIN_CLZ
-// Optional version of count_digits for better performance on 32-bit platforms.
-FMT_CONSTEXPR20 inline auto count_digits(uint32_t n) -> int {
-  if (is_constant_evaluated()) {
-    return count_digits_fallback(n);
-  }
+// It is a separate function rather than a part of count_digits to workaround
+// the lack of static constexpr in constexpr functions.
+FMT_INLINE uint64_t count_digits_inc(int n) {
   // An optimization by Kendall Willets from https://bit.ly/3uOIQrB.
   // This increments the upper 32 bits (log10(T) - 1) when >= T is added.
-#  define FMT_INC(T) (((sizeof(#  T) - 1ull) << 32) - T)
-  FMT_STATIC_CONSTEXPR uint64_t table[] = {
+#define FMT_INC(T) (((sizeof(#T) - 1ull) << 32) - T)
+  static constexpr uint64_t table[] = {
       FMT_INC(0),          FMT_INC(0),          FMT_INC(0),           // 8
       FMT_INC(10),         FMT_INC(10),         FMT_INC(10),          // 64
       FMT_INC(100),        FMT_INC(100),        FMT_INC(100),         // 512
@@ -1008,9 +971,19 @@ FMT_CONSTEXPR20 inline auto count_digits(uint32_t n) -> int {
       FMT_INC(1000000000), FMT_INC(1000000000), FMT_INC(1000000000),  // 1024M
       FMT_INC(1000000000), FMT_INC(1000000000)                        // 4B
   };
-  return static_cast<int>((n + table[FMT_BUILTIN_CLZ(n | 1) ^ 31]) >> 32);
+  return table[n];
 }
+
+// Optional version of count_digits for better performance on 32-bit platforms.
+FMT_CONSTEXPR20 inline auto count_digits(uint32_t n) -> int {
+#ifdef FMT_BUILTIN_CLZ
+  if (!is_constant_evaluated()) {
+    auto inc = count_digits_inc(FMT_BUILTIN_CLZ(n | 1) ^ 31);
+    return static_cast<int>((n + inc) >> 32);
+  }
 #endif
+  return count_digits_fallback(n);
+}
 
 template <typename Int> constexpr auto digits10() FMT_NOEXCEPT -> int {
   return std::numeric_limits<Int>::digits10;
@@ -2152,20 +2125,6 @@ FMT_CONSTEXPR void handle_dynamic_spec(int& value,
   }
 }
 
-// Converts a compile-time string to basic_string_view.
-template <typename Char, size_t N>
-constexpr auto compile_string_to_view(const Char (&s)[N])
-    -> basic_string_view<Char> {
-  // Remove trailing NUL character if needed. Won't be present if this is used
-  // with a raw character array (i.e. not defined as a string).
-  return {s, N - (std::char_traits<Char>::to_int_type(s[N - 1]) == 0 ? 1 : 0)};
-}
-template <typename Char>
-constexpr auto compile_string_to_view(std_string_view<Char> s)
-    -> basic_string_view<Char> {
-  return {s.data(), s.size()};
-}
-
 #define FMT_STRING_IMPL(s, base, explicit)                                 \
   [] {                                                                     \
     /* Use the hidden visibility as a workaround for a GCC bug (#1973). */ \
@@ -2174,7 +2133,7 @@ constexpr auto compile_string_to_view(std_string_view<Char> s)
       using char_type = fmt::remove_cvref_t<decltype(s[0])>;               \
       FMT_MAYBE_UNUSED FMT_CONSTEXPR explicit                              \
       operator fmt::basic_string_view<char_type>() const {                 \
-        return fmt::detail::compile_string_to_view<char_type>(s);          \
+        return fmt::detail_exported::compile_string_to_view<char_type>(s); \
       }                                                                    \
     };                                                                     \
     return FMT_COMPILE_STRING();                                           \
@@ -2192,16 +2151,6 @@ constexpr auto compile_string_to_view(std_string_view<Char> s)
  */
 #define FMT_STRING(s) FMT_STRING_IMPL(s, fmt::compile_string, )
 
-#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
-template <typename Char, size_t N> struct fixed_string {
-  constexpr fixed_string(const Char (&str)[N]) {
-    copy_str<Char, const Char*, Char*>(static_cast<const Char*>(str), str + N,
-                                       data);
-  }
-  Char data[N]{};
-};
-#endif
-
 #if FMT_USE_USER_DEFINED_LITERALS
 template <typename Char> struct udl_formatter {
   basic_string_view<Char> str;
@@ -2213,7 +2162,8 @@ template <typename Char> struct udl_formatter {
 };
 
 #  if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
-template <typename T, typename Char, size_t N, fixed_string<Char, N> Str>
+template <typename T, typename Char, size_t N,
+          fmt::detail_exported::fixed_string<Char, N> Str>
 struct statically_named_arg : view {
   static constexpr auto name = Str.data;
 
@@ -2221,14 +2171,18 @@ struct statically_named_arg : view {
   statically_named_arg(const T& v) : value(v) {}
 };
 
-template <typename T, typename Char, size_t N, fixed_string<Char, N> Str>
+template <typename T, typename Char, size_t N,
+          fmt::detail_exported::fixed_string<Char, N> Str>
 struct is_named_arg<statically_named_arg<T, Char, N, Str>> : std::true_type {};
 
-template <typename T, typename Char, size_t N, fixed_string<Char, N> Str>
+template <typename T, typename Char, size_t N,
+          fmt::detail_exported::fixed_string<Char, N> Str>
 struct is_statically_named_arg<statically_named_arg<T, Char, N, Str>>
     : std::true_type {};
 
-template <typename Char, size_t N, fixed_string<Char, N> Str> struct udl_arg {
+template <typename Char, size_t N,
+          fmt::detail_exported::fixed_string<Char, N> Str>
+struct udl_arg {
   template <typename T> auto operator=(T&& value) const {
     return statically_named_arg<T, Char, N, Str>(std::forward<T>(value));
   }
@@ -2670,6 +2624,20 @@ template <typename Char>
 void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
                 basic_format_args<buffer_context<type_identity_t<Char>>> args,
                 locale_ref loc) {
+  // workaround for msvc bug regarding name-lookup in module
+  // link names into function scope
+  using detail::arg_formatter;
+  using detail::buffer_appender;
+  using detail::custom_formatter;
+  using detail::default_arg_formatter;
+  using detail::get_arg;
+  using detail::locale_ref;
+  using detail::parse_format_specs;
+  using detail::specs_checker;
+  using detail::specs_handler;
+  using detail::to_unsigned;
+  using detail::type;
+  using detail::write;
   auto out = buffer_appender<Char>(buf);
   if (fmt.size() == 2 && equal2(fmt.data(), "{}")) {
     auto arg = args.get(0);
@@ -2726,13 +2694,12 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
       begin = parse_format_specs(begin, end, handler);
       if (begin == end || *begin != '}')
         on_error("missing '}' in format string");
-      auto f =
-          detail::arg_formatter<Char>{context.out(), specs, context.locale()};
+      auto f = arg_formatter<Char>{context.out(), specs, context.locale()};
       context.advance_to(visit_format_arg(f, arg));
       return begin;
     }
   };
-  parse_format_string<false>(fmt, format_handler(out, fmt, args, loc));
+  detail::parse_format_string<false>(fmt, format_handler(out, fmt, args, loc));
 }
 
 #ifndef FMT_HEADER_ONLY
@@ -2775,7 +2742,7 @@ inline namespace literals {
   \endrst
  */
 #if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
-template <detail::fixed_string Str>
+template <detail_exported::fixed_string Str>
 constexpr auto operator""_a()
     -> detail::udl_arg<remove_cvref_t<decltype(Str.data[0])>,
                        sizeof(Str.data) / sizeof(decltype(Str.data[0])), Str> {
@@ -2803,24 +2770,6 @@ constexpr auto operator"" _format(const char* s, size_t n)
 }
 }  // namespace literals
 
-template <typename Char, FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
-auto vformat(basic_string_view<Char> format_str,
-             basic_format_args<buffer_context<type_identity_t<Char>>> args)
-    -> std::basic_string<Char> {
-  basic_memory_buffer<Char> buffer;
-  detail::vformat_to(buffer, format_str, args);
-  return to_string(buffer);
-}
-
-// Pass char_t as a default template parameter instead of using
-// std::basic_string<char_t<S>> to reduce the symbol size.
-template <typename S, typename... Args, typename Char = char_t<S>,
-          FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
-auto format(const S& format_str, Args&&... args) -> std::basic_string<Char> {
-  const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
-  return vformat(to_string_view(format_str), vargs);
-}
-
 template <typename Locale, FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
 inline auto vformat(const Locale& loc, string_view fmt, format_args args)
     -> std::string {
@@ -2835,8 +2784,9 @@ inline auto format(const Locale& loc, format_string<T...> fmt, T&&... args)
 }
 
 template <typename... T, size_t SIZE, typename Allocator>
-inline auto format_to(basic_memory_buffer<char, SIZE, Allocator>& buf,
-                      format_string<T...> fmt, T&&... args) -> appender {
+FMT_DEPRECATED auto format_to(basic_memory_buffer<char, SIZE, Allocator>& buf,
+                              format_string<T...> fmt, T&&... args)
+    -> appender {
   detail::vformat_to(buf, string_view(fmt), fmt::make_format_args(args...));
   return appender(buf);
 }

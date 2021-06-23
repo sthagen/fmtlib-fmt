@@ -48,8 +48,6 @@ TEST(chrono_test, format_tm) {
   tm.tm_sec = 33;
   EXPECT_EQ(fmt::format("The date is {:%Y-%m-%d %H:%M:%S}.", tm),
             "The date is 2016-04-25 11:22:33.");
-  EXPECT_EQ(fmt::format(L"The date is {:%Y-%m-%d %H:%M:%S}.", tm),
-            L"The date is 2016-04-25 11:22:33.");
 }
 
 TEST(chrono_test, grow_buffer) {
@@ -101,6 +99,7 @@ template <typename TimePoint> auto strftime(TimePoint tp) -> std::string {
 TEST(chrono_test, time_point) {
   auto t1 = std::chrono::system_clock::now();
   EXPECT_EQ(strftime(t1), fmt::format("{:%Y-%m-%d %H:%M:%S}", t1));
+  EXPECT_EQ(strftime(t1), fmt::format("{}", t1));
   using time_point =
       std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>;
   auto t2 = time_point(std::chrono::seconds(42));
@@ -149,10 +148,6 @@ TEST(chrono_test, format_default) {
   EXPECT_EQ(
       "42[15/4]s",
       fmt::format("{}", std::chrono::duration<int, std::ratio<15, 4>>(42)));
-}
-
-TEST(chrono_test, format_wide) {
-  EXPECT_EQ(L"42s", fmt::format(L"{}", std::chrono::seconds(42)));
 }
 
 TEST(chrono_test, align) {
@@ -382,7 +377,7 @@ TEST(chrono_test, weekday) {
   auto mon = fmt::weekday(1);
   EXPECT_EQ(fmt::format("{}", mon), "Mon");
   if (loc != std::locale::classic()) {
-    EXPECT_THAT((std::vector<std::string>{"пн", "Пн"}),
+    EXPECT_THAT((std::vector<std::string>{"пн", "Пн", "пнд", "Пнд"}),
                 Contains(fmt::format(loc, "{:L}", mon)));
   }
 }

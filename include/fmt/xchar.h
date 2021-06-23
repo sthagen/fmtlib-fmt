@@ -35,6 +35,11 @@ template <typename... Args>
 using wformat_string = basic_format_string<wchar_t, type_identity_t<Args>...>;
 #endif
 
+template <> struct is_char<wchar_t> : std::true_type {};
+template <> struct is_char<detail::char8_type> : std::true_type {};
+template <> struct is_char<char16_t> : std::true_type {};
+template <> struct is_char<char32_t> : std::true_type {};
+
 template <typename... Args>
 constexpr format_arg_store<wformat_context, Args...> make_wformat_args(
     const Args&... args) {
@@ -71,6 +76,24 @@ template <typename T>
 auto join(std::initializer_list<T> list, wstring_view sep)
     -> join_view<const T*, const T*, wchar_t> {
   return join(std::begin(list), std::end(list), sep);
+}
+
+template <typename Char, FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
+auto vformat(basic_string_view<Char> format_str,
+             basic_format_args<buffer_context<type_identity_t<Char>>> args)
+    -> std::basic_string<Char> {
+  basic_memory_buffer<Char> buffer;
+  detail::vformat_to(buffer, format_str, args);
+  return to_string(buffer);
+}
+
+// Pass char_t as a default template parameter instead of using
+// std::basic_string<char_t<S>> to reduce the symbol size.
+template <typename S, typename... Args, typename Char = char_t<S>,
+          FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
+auto format(const S& format_str, Args&&... args) -> std::basic_string<Char> {
+  const auto& vargs = fmt::make_args_checked<Args...>(format_str, args...);
+  return vformat(to_string_view(format_str), vargs);
 }
 
 template <typename Locale, typename S, typename Char = char_t<S>,
