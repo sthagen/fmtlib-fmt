@@ -37,10 +37,12 @@ similar to that of Python's `str.format
 <https://docs.python.org/3/library/stdtypes.html#str.format>`_.
 They take *fmt* and *args* as arguments.
 
-*fmt* is a format string that contains literal text and replacement
-fields surrounded by braces ``{}``. The fields are replaced with formatted
-arguments in the resulting string. A function taking *fmt* doesn't
-participate in an overload resolution if the latter is not a string.
+*fmt* is a format string that contains literal text and replacement fields
+surrounded by braces ``{}``. The fields are replaced with formatted arguments
+in the resulting string. `~fmt::format_string` is a format string which can be
+implicitly constructed from a string literal or a ``constexpr`` string and is
+checked at compile time in C++20. To pass a runtime format string wrap it in
+`fmt::runtime`.
 
 *args* is an argument list representing objects to be formatted.
 
@@ -50,7 +52,7 @@ participate in an overload resolution if the latter is not a string.
 .. doxygenfunction:: vformat(string_view fmt, format_args args) -> std::string
 
 .. doxygenfunction:: format_to(OutputIt out, format_string<T...> fmt, T&&... args) -> OutputIt
-.. doxygenfunction:: format_to_n(OutputIt out, size_t n, format_string<T...> fmt, const T&... args) -> format_to_n_result<OutputIt>
+.. doxygenfunction:: format_to_n(OutputIt out, size_t n, format_string<T...> fmt, T&&... args) -> format_to_n_result<OutputIt>
 .. doxygenfunction:: formatted_size(format_string<T...> fmt, T&&... args) -> size_t
 
 .. doxygenstruct:: fmt::format_to_n_result
@@ -59,7 +61,7 @@ participate in an overload resolution if the latter is not a string.
 .. _print:
 
 .. doxygenfunction:: fmt::print(format_string<T...> fmt, T&&... args)
-.. doxygenfunction:: vprint(string_view fmt, format_args args)
+.. doxygenfunction:: fmt::vprint(string_view fmt, format_args args)
 
 .. doxygenfunction:: print(std::FILE *f, format_string<T...> fmt, T&&... args)
 .. doxygenfunction:: vprint(std::FILE *f, string_view fmt, format_args args)
@@ -77,6 +79,13 @@ To force the use of compile-time checks, define the preprocessor variable
 ``FMT_ENFORCE_COMPILE_STRING``. When set, functions accepting ``FMT_STRING``
 will fail to compile with regular strings. Runtime-checked
 formatting is still possible using ``fmt::vformat``, ``fmt::vprint``, etc.
+
+.. doxygenclass:: fmt::basic_format_string
+   :members:
+
+.. doxygentypedef:: fmt::format_string
+
+.. doxygenfunction:: fmt::runtime(const S&)
 
 Named Arguments
 ---------------
@@ -519,8 +528,8 @@ argument type doesn't match its format specification.
 ``wchar_t`` Support
 ===================
 
-The optional header ``fmt/wchar_t.h`` provides support for ``wchar_t`` and
-exotic character types.
+The optional header ``fmt/xchar.h`` provides support for ``wchar_t`` and exotic
+character types.
 
 .. doxygenstruct:: fmt::is_char
 
