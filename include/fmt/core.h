@@ -88,7 +88,7 @@
 // GCC doesn't allow throw in constexpr until version 6 (bug 67371).
 #ifndef FMT_USE_CONSTEXPR
 #  define FMT_USE_CONSTEXPR                                           \
-    (FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VER >= 1910 || \
+    (FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VER >= 1912 || \
      (FMT_GCC_VERSION >= 600 && __cplusplus >= 201402L)) &&           \
         !FMT_NVCC && !FMT_ICC_VERSION
 #endif
@@ -331,6 +331,8 @@ using conditional_t = typename std::conditional<B, T, F>::type;
 template <bool B> using bool_constant = std::integral_constant<bool, B>;
 template <typename T>
 using remove_reference_t = typename std::remove_reference<T>::type;
+template <typename T>
+using remove_const_t = typename std::remove_const<T>::type;
 template <typename T>
 using remove_cvref_t = typename std::remove_cv<remove_reference_t<T>>::type;
 template <typename T> struct type_identity { using type = T; };
@@ -755,13 +757,14 @@ FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
   return out;
 }
 
-template <typename Char, FMT_ENABLE_IF(std::is_same<Char, char>::value)>
-FMT_CONSTEXPR auto copy_str(const Char* begin, const Char* end, Char* out)
-    -> Char* {
+template <typename Char, typename T, typename U,
+FMT_ENABLE_IF(std::is_same<remove_const_t<T>, U>::value && is_char<U>::value)>
+FMT_CONSTEXPR auto copy_str(T* begin, T* end, U* out)
+    -> U* {
   if (is_constant_evaluated())
-    return copy_str<Char, const Char*, Char*>(begin, end, out);
+    return copy_str<Char, T*, U*>(begin, end, out);
   auto size = to_unsigned(end - begin);
-  memcpy(out, begin, size);
+  memcpy(out, begin, size * sizeof(U));
   return out + size;
 }
 
