@@ -190,7 +190,14 @@ TEST(ranges_test, range) {
   EXPECT_EQ(fmt::format("{}", z), "[0, 0, 0]");
 }
 
-#if !FMT_MSC_VER || FMT_MSC_VER >= 1927
+enum class test_enum { foo };
+
+TEST(ranges_test, enum_range) {
+  auto v = std::vector<test_enum>{test_enum::foo};
+  EXPECT_EQ(fmt::format("{}", v), "[0]");
+}
+
+#if !FMT_MSC_VER
 struct unformattable {};
 
 TEST(ranges_test, unformattable_range) {
@@ -218,6 +225,7 @@ TEST(ranges_test, join_tuple) {
   auto t4 = std::tuple<float>(4.0f);
   EXPECT_EQ(fmt::format("{}", fmt::join(t4, "/")), "4");
 
+#  if FMT_TUPLE_JOIN_SPECIFIERS
   // Specs applied to each element.
   auto t5 = std::tuple<int, int, long>(-3, 100, 1);
   EXPECT_EQ(fmt::format("{:+03}", fmt::join(t5, ", ")), "-03, +100, +01");
@@ -230,6 +238,7 @@ TEST(ranges_test, join_tuple) {
   int y = -1;
   auto t7 = std::tuple<int, int&, const int&>(3, y, y);
   EXPECT_EQ(fmt::format("{:03}", fmt::join(t7, ", ")), "003, -01, -01");
+#  endif
 }
 
 TEST(ranges_test, join_initializer_list) {
