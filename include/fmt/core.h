@@ -159,14 +159,6 @@
 #  define FMT_NORETURN
 #endif
 
-#ifndef FMT_MAYBE_UNUSED
-#  if FMT_HAS_CPP17_ATTRIBUTE(maybe_unused)
-#    define FMT_MAYBE_UNUSED [[maybe_unused]]
-#  else
-#    define FMT_MAYBE_UNUSED
-#  endif
-#endif
-
 #if __cplusplus == 201103L || __cplusplus == 201402L
 #  if defined(__INTEL_COMPILER) || defined(__PGI)
 #    define FMT_FALLTHROUGH
@@ -1186,8 +1178,8 @@ template <typename Context> class value {
   constexpr FMT_INLINE value(unsigned long long val) : ulong_long_value(val) {}
   FMT_INLINE value(int128_t val) : int128_value(val) {}
   FMT_INLINE value(uint128_t val) : uint128_value(val) {}
-  FMT_INLINE value(float val) : float_value(val) {}
-  FMT_INLINE value(double val) : double_value(val) {}
+  constexpr FMT_INLINE value(float val) : float_value(val) {}
+  constexpr FMT_INLINE value(double val) : double_value(val) {}
   FMT_INLINE value(long double val) : long_double_value(val) {}
   constexpr FMT_INLINE value(bool val) : bool_value(val) {}
   constexpr FMT_INLINE value(char_type val) : char_value(val) {}
