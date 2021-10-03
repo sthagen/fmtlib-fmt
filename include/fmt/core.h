@@ -26,10 +26,17 @@
 
 #if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_COMPILER)
 #  define FMT_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
-#  define FMT_GCC_PRAGMA(arg) _Pragma(arg)
 #else
 #  define FMT_GCC_VERSION 0
-#  define FMT_GCC_PRAGMA(arg)
+#endif
+
+#ifndef FMT_GCC_PRAGMA
+// Workaround _Pragma bug https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59884.
+#  if FMT_GCC_VERSION >= 504
+#    define FMT_GCC_PRAGMA(arg) _Pragma(arg)
+#  else
+#    define FMT_GCC_PRAGMA(arg)
+#  endif
 #endif
 
 #ifdef __ICL
@@ -426,13 +433,12 @@ template <typename Char> class basic_string_view {
    */
   FMT_CONSTEXPR_CHAR_TRAITS
   FMT_INLINE
-  basic_string_view(const Char* s) : data_(s) {
-    if (detail::const_check(std::is_same<Char, char>::value &&
-                            !detail::is_constant_evaluated(true)))
-      size_ = std::strlen(reinterpret_cast<const char*>(s));
-    else
-      size_ = std::char_traits<Char>::length(s);
-  }
+  basic_string_view(const Char* s)
+      : data_(s),
+        size_(detail::const_check(std::is_same<Char, char>::value &&
+                                  !detail::is_constant_evaluated(true))
+                  ? std::strlen(reinterpret_cast<const char*>(s))
+                  : std::char_traits<Char>::length(s)) {}
 
   /** Constructs a string reference from a ``std::basic_string`` object. */
   template <typename Traits, typename Alloc>
