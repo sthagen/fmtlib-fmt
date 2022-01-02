@@ -55,7 +55,12 @@ TEST(ranges_test, format_vector2) {
 
 TEST(ranges_test, format_map) {
   auto m = std::map<std::string, int>{{"one", 1}, {"two", 2}};
-  EXPECT_EQ(fmt::format("{}", m), "[(\"one\", 1), (\"two\", 2)]");
+  EXPECT_EQ(fmt::format("{}", m), "{\"one\": 1, \"two\": 2}");
+}
+
+TEST(ranges_test, format_set) {
+  EXPECT_EQ(fmt::format("{}", std::set<std::string>{"one", "two"}),
+            "{\"one\", \"two\"}");
 }
 
 TEST(ranges_test, format_pair) {
@@ -190,7 +195,7 @@ TEST(ranges_test, range) {
   EXPECT_EQ(fmt::format("{}", z), "[0, 0, 0]");
 }
 
-enum class test_enum { foo };
+enum test_enum { foo };
 
 TEST(ranges_test, enum_range) {
   auto v = std::vector<test_enum>{test_enum::foo};
@@ -258,6 +263,36 @@ struct zstring {
   zstring_sentinel end() const { return {}; }
 };
 
+#  ifdef __cpp_lib_ranges
+struct cpp20_only_range {
+  struct iterator {
+    int val = 0;
+
+    using value_type = int;
+    using difference_type = std::ptrdiff_t;
+    using iterator_concept = std::input_iterator_tag;
+
+    iterator() = default;
+    iterator(int i) : val(i) {}
+    int operator*() const { return val; }
+    iterator& operator++() {
+      ++val;
+      return *this;
+    }
+    void operator++(int) { ++*this; }
+    bool operator==(const iterator& rhs) const { return val == rhs.val; }
+  };
+
+  int lo;
+  int hi;
+
+  iterator begin() const { return iterator(lo); }
+  iterator end() const { return iterator(hi); }
+};
+
+static_assert(std::input_iterator<cpp20_only_range::iterator>);
+#  endif
+
 TEST(ranges_test, join_sentinel) {
   auto hello = zstring{"hello"};
   EXPECT_EQ(fmt::format("{}", hello), "['h', 'e', 'l', 'l', 'o']");
@@ -282,6 +317,14 @@ TEST(ranges_test, join_range) {
 
   const auto z = std::vector<int>(3u, 0);
   EXPECT_EQ(fmt::format("{}", fmt::join(z, ",")), "0,0,0");
+
+#  ifdef __cpp_lib_ranges
+  EXPECT_EQ(fmt::format("{}", cpp20_only_range{.lo = 0, .hi = 5}),
+            "[0, 1, 2, 3, 4]");
+  EXPECT_EQ(
+      fmt::format("{}", fmt::join(cpp20_only_range{.lo = 0, .hi = 5}, ",")),
+      "0,1,2,3,4");
+#  endif
 }
 #endif  // FMT_RANGES_TEST_ENABLE_JOIN
 
@@ -307,3 +350,14 @@ TEST(ranges_test, escape_string) {
               "[\"\\xf4\\x8f\\xbf\\xc0\"]");
   }
 }
+
+#ifdef FMT_USE_STRING_VIEW
+struct convertible_to_string_view {
+  operator std::string_view() const { return "foo"; }
+};
+
+TEST(ranges_test, escape_convertible_to_string_view) {
+  EXPECT_EQ(fmt::format("{}", std::vector<convertible_to_string_view>(1)),
+            "[\"foo\"]");
+}
+#endif  // FMT_USE_STRING_VIEW

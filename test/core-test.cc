@@ -733,12 +733,23 @@ template <> struct formatter<nonconst_formattable> {
 };
 FMT_END_NAMESPACE
 
+struct convertible_to_pointer {
+  operator const int*() const { return nullptr; }
+};
+
+enum class test_scoped_enum {};
+
 TEST(core_test, is_formattable) {
   static_assert(fmt::is_formattable<signed char*>::value, "");
   static_assert(fmt::is_formattable<unsigned char*>::value, "");
   static_assert(fmt::is_formattable<const signed char*>::value, "");
   static_assert(fmt::is_formattable<const unsigned char*>::value, "");
   static_assert(!fmt::is_formattable<wchar_t>::value, "");
+#ifdef __cpp_char8_t
+  static_assert(!fmt::is_formattable<char8_t>::value, "");
+#endif
+  static_assert(!fmt::is_formattable<char16_t>::value, "");
+  static_assert(!fmt::is_formattable<char32_t>::value, "");
   static_assert(!fmt::is_formattable<const wchar_t*>::value, "");
   static_assert(!fmt::is_formattable<const wchar_t[3]>::value, "");
   static_assert(!fmt::is_formattable<fmt::basic_string_view<wchar_t>>::value,
@@ -755,10 +766,20 @@ TEST(core_test, is_formattable) {
   static_assert(!fmt::is_formattable<const nonconst_formattable&>::value, "");
 #endif
 
+  static_assert(!fmt::is_formattable<convertible_to_pointer>::value, "");
+
   static_assert(!fmt::is_formattable<signed char*, wchar_t>::value, "");
   static_assert(!fmt::is_formattable<unsigned char*, wchar_t>::value, "");
   static_assert(!fmt::is_formattable<const signed char*, wchar_t>::value, "");
   static_assert(!fmt::is_formattable<const unsigned char*, wchar_t>::value, "");
+
+  static_assert(!fmt::is_formattable<void (*)()>::value, "");
+
+  struct s;
+
+  static_assert(!fmt::is_formattable<int(s::*)>::value, "");
+  static_assert(!fmt::is_formattable<int (s::*)()>::value, "");
+  static_assert(!fmt::is_formattable<test_scoped_enum>::value, "");
 }
 
 TEST(core_test, format) { EXPECT_EQ(fmt::format("{}", 42), "42"); }
@@ -884,10 +905,10 @@ TEST(core_test, adl) {
   if (fmt::detail::const_check(true)) return;
   auto s = adl_test::string();
   char buf[10];
-  fmt::format("{}", s);
+  (void)fmt::format("{}", s);
   fmt::format_to(buf, "{}", s);
   fmt::format_to_n(buf, 10, "{}", s);
-  fmt::formatted_size("{}", s);
+  (void)fmt::formatted_size("{}", s);
   fmt::print("{}", s);
   fmt::print(stdout, "{}", s);
 }

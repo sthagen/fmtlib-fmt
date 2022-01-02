@@ -70,16 +70,16 @@ TEST(ostream_test, format_specs) {
   EXPECT_EQ("  def", fmt::format("{0:>5}", test_string("def")));
   EXPECT_EQ(" def ", fmt::format("{0:^5}", test_string("def")));
   EXPECT_EQ("def**", fmt::format("{0:*<5}", test_string("def")));
-  EXPECT_THROW_MSG(fmt::format(runtime("{0:+}"), test_string()), format_error,
-                   "format specifier requires numeric argument");
-  EXPECT_THROW_MSG(fmt::format(runtime("{0:-}"), test_string()), format_error,
-                   "format specifier requires numeric argument");
-  EXPECT_THROW_MSG(fmt::format(runtime("{0: }"), test_string()), format_error,
-                   "format specifier requires numeric argument");
-  EXPECT_THROW_MSG(fmt::format(runtime("{0:#}"), test_string()), format_error,
-                   "format specifier requires numeric argument");
-  EXPECT_THROW_MSG(fmt::format(runtime("{0:05}"), test_string()), format_error,
-                   "format specifier requires numeric argument");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{0:+}"), test_string()),
+                   format_error, "format specifier requires numeric argument");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{0:-}"), test_string()),
+                   format_error, "format specifier requires numeric argument");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{0: }"), test_string()),
+                   format_error, "format specifier requires numeric argument");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{0:#}"), test_string()),
+                   format_error, "format specifier requires numeric argument");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{0:05}"), test_string()),
+                   format_error, "format specifier requires numeric argument");
   EXPECT_EQ("test         ", fmt::format("{0:13}", test_string("test")));
   EXPECT_EQ("test         ", fmt::format("{0:{1}}", test_string("test"), 13));
   EXPECT_EQ("te", fmt::format("{0:.2}", test_string("test")));
@@ -293,4 +293,9 @@ struct abstract {
 
 void format_abstract_compiles(const abstract& a) {
   fmt::format(FMT_COMPILE("{}"), a);
+}
+
+TEST(ostream_test, is_formattable) {
+  EXPECT_TRUE(fmt::is_formattable<std::string>());
+  EXPECT_TRUE(fmt::is_formattable<fmt::detail::std_string_view<char>>());
 }
