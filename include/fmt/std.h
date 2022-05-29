@@ -19,18 +19,43 @@
 #ifdef __cpp_lib_filesystem
 #  include <filesystem>
 
+FMT_BEGIN_NAMESPACE
+
+namespace detail {
+
+template <typename Char>
+void write_escaped_path(basic_memory_buffer<Char>& quoted,
+                        const std::filesystem::path& p) {
+  write_escaped_string<Char>(std::back_inserter(quoted), p.string<Char>());
+}
 template <>
-struct fmt::formatter<std::filesystem::path> : formatter<string_view> {
+void write_escaped_path<std::filesystem::path::value_type>(
+    basic_memory_buffer<std::filesystem::path::value_type>& quoted,
+    const std::filesystem::path& p) {
+  write_escaped_string<std::filesystem::path::value_type>(
+      std::back_inserter(quoted), p.native());
+}
+
+}  // namespace detail
+
+template <typename Char>
+struct formatter<std::filesystem::path, Char>
+    : formatter<basic_string_view<Char>> {
   template <typename FormatContext>
   auto format(const std::filesystem::path& p, FormatContext& ctx) const ->
       typename FormatContext::iterator {
-    return formatter<string_view>::format(p.string(), ctx);
+    basic_memory_buffer<Char> quoted;
+    detail::write_escaped_path(quoted, p);
+    return formatter<basic_string_view<Char>>::format(
+        basic_string_view<Char>(quoted.data(), quoted.size()), ctx);
   }
 };
+FMT_END_NAMESPACE
 #endif
 
 FMT_BEGIN_NAMESPACE
-template <> struct formatter<std::thread::id> : ostream_formatter {};
+template <typename Char>
+struct formatter<std::thread::id, Char> : basic_ostream_formatter<Char> {};
 FMT_END_NAMESPACE
 
 #endif  // FMT_STD_H_
