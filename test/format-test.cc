@@ -1829,15 +1829,15 @@ fmt::string_view to_string_view(string_like) { return "foo"; }
 
 constexpr char with_null[3] = {'{', '}', '\0'};
 constexpr char no_null[2] = {'{', '}'};
-static FMT_CONSTEXPR_DECL const char static_with_null[3] = {'{', '}', '\0'};
-static FMT_CONSTEXPR_DECL const char static_no_null[2] = {'{', '}'};
+static constexpr const char static_with_null[3] = {'{', '}', '\0'};
+static constexpr const char static_no_null[2] = {'{', '}'};
 
 TEST(format_test, compile_time_string) {
   EXPECT_EQ("foo", fmt::format(FMT_STRING("foo")));
   EXPECT_EQ("42", fmt::format(FMT_STRING("{}"), 42));
   EXPECT_EQ("foo", fmt::format(FMT_STRING("{}"), string_like()));
 
-#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#if FMT_USE_NONTYPE_TEMPLATE_ARGS
   using namespace fmt::literals;
   EXPECT_EQ("foobar", fmt::format(FMT_STRING("{foo}{bar}"), "bar"_a = "bar",
                                   "foo"_a = "foo"));
@@ -1982,6 +1982,10 @@ TEST(format_test, to_string) {
 
   enum foo : unsigned char { zero };
   EXPECT_EQ(fmt::to_string(zero), "0");
+
+#if FMT_USE_FLOAT128
+  EXPECT_EQ(fmt::to_string(__float128(0.42)), "0.42");
+#endif
 }
 
 TEST(format_test, output_iterators) {
@@ -2146,7 +2150,7 @@ TEST(format_test, format_string_errors) {
   EXPECT_ERROR_NOARGS("foo", nullptr);
   EXPECT_ERROR_NOARGS("}", "unmatched '}' in format string");
   EXPECT_ERROR("{0:s", "unknown format specifier", date);
-#  if !FMT_MSC_VER || FMT_MSC_VER >= 1916
+#  if !FMT_MSC_VERSION || FMT_MSC_VERSION >= 1916
   // This causes an detail compiler error in MSVC2017.
   EXPECT_ERROR("{:{<}", "invalid fill character '{'", int);
   EXPECT_ERROR("{:10000000000}", "number is too big", int);
@@ -2178,7 +2182,7 @@ TEST(format_test, format_string_errors) {
 #  else
   fmt::print("warning: constexpr is broken in this version of MSVC\n");
 #  endif
-#  if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#  if FMT_USE_NONTYPE_TEMPLATE_ARGS
   using namespace fmt::literals;
   EXPECT_ERROR("{foo}", "named argument is not found", decltype("bar"_a = 42));
   EXPECT_ERROR("{foo}", "named argument is not found",

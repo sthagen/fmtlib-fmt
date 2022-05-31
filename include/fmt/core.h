@@ -49,25 +49,18 @@
 #  define FMT_ICC_VERSION 0
 #endif
 
-#ifdef __NVCOMPILER
-#  define FMT_NVCOMPILER_VERSION \
-    (__NVCOMPILER_MAJOR__ * 100 + __NVCOMPILER_MINOR__)
-#else
-#  define FMT_NVCOMPILER_VERSION 0
-#endif
-
-#ifdef __NVCC__
-#  define FMT_NVCC __NVCC__
-#else
-#  define FMT_NVCC 0
-#endif
-
 #ifdef _MSC_VER
-#  define FMT_MSC_VER _MSC_VER
+#  define FMT_MSC_VERSION _MSC_VER
 #  define FMT_MSC_WARNING(...) __pragma(warning(__VA_ARGS__))
 #else
-#  define FMT_MSC_VER 0
+#  define FMT_MSC_VERSION 0
 #  define FMT_MSC_WARNING(...)
+#endif
+
+#ifdef _MSVC_LANG
+#  define FMT_CPLUSPLUS _MSVC_LANG
+#else
+#  define FMT_CPLUSPLUS __cplusplus
 #endif
 
 #ifdef __has_feature
@@ -76,9 +69,9 @@
 #  define FMT_HAS_FEATURE(x) 0
 #endif
 
-#if defined(__has_include) &&                             \
-    (!defined(__INTELLISENSE__) || FMT_MSC_VER > 1900) && \
-    (!FMT_ICC_VERSION || FMT_ICC_VERSION >= 1600)
+#if (defined(__has_include) || FMT_ICC_VERSION >= 1600 || \
+     FMT_MSC_VERSION > 1900) &&                           \
+    !defined(__INTELLISENSE__)
 #  define FMT_HAS_INCLUDE(x) __has_include(x)
 #else
 #  define FMT_HAS_INCLUDE(x) 0
@@ -90,12 +83,6 @@
 #  define FMT_HAS_CPP_ATTRIBUTE(x) 0
 #endif
 
-#ifdef _MSVC_LANG
-#  define FMT_CPLUSPLUS _MSVC_LANG
-#else
-#  define FMT_CPLUSPLUS __cplusplus
-#endif
-
 #define FMT_HAS_CPP14_ATTRIBUTE(attribute) \
   (FMT_CPLUSPLUS >= 201402L && FMT_HAS_CPP_ATTRIBUTE(attribute))
 
@@ -105,17 +92,18 @@
 // Check if relaxed C++14 constexpr is supported.
 // GCC doesn't allow throw in constexpr until version 6 (bug 67371).
 #ifndef FMT_USE_CONSTEXPR
-#  define FMT_USE_CONSTEXPR                                           \
-    (FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VER >= 1912 || \
-     (FMT_GCC_VERSION >= 600 && __cplusplus >= 201402L)) &&           \
-        !FMT_NVCC && !FMT_ICC_VERSION
+#  if (FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VERSION >= 1912 || \
+       (FMT_GCC_VERSION >= 600 && __cplusplus >= 201402L)) &&               \
+      !FMT_ICC_VERSION && !defined(__NVCC__)
+#    define FMT_USE_CONSTEXPR 1
+#  else
+#    define FMT_USE_CONSTEXPR 0
+#  endif
 #endif
 #if FMT_USE_CONSTEXPR
 #  define FMT_CONSTEXPR constexpr
-#  define FMT_CONSTEXPR_DECL constexpr
 #else
 #  define FMT_CONSTEXPR
-#  define FMT_CONSTEXPR_DECL
 #endif
 
 #if ((__cplusplus >= 202002L) &&                              \
@@ -126,7 +114,7 @@
 #  define FMT_CONSTEXPR20
 #endif
 
-// Check if constexpr std::char_traits<>::compare,length is supported.
+// Check if constexpr std::char_traits<>::{compare,length} are supported.
 #if defined(__GLIBCXX__)
 #  if __cplusplus >= 201703L && defined(_GLIBCXX_RELEASE) && \
       _GLIBCXX_RELEASE >= 7  // GCC 7+ libstdc++ has _GLIBCXX_RELEASE.
@@ -135,7 +123,7 @@
 #elif defined(_LIBCPP_VERSION) && __cplusplus >= 201703L && \
     _LIBCPP_VERSION >= 4000
 #  define FMT_CONSTEXPR_CHAR_TRAITS constexpr
-#elif FMT_MSC_VER >= 1914 && _MSVC_LANG >= 201703L
+#elif FMT_MSC_VERSION >= 1914 && FMT_CPLUSPLUS >= 201703L
 #  define FMT_CONSTEXPR_CHAR_TRAITS constexpr
 #endif
 #ifndef FMT_CONSTEXPR_CHAR_TRAITS
@@ -145,7 +133,7 @@
 // Check if exceptions are disabled.
 #ifndef FMT_EXCEPTIONS
 #  if (defined(__GNUC__) && !defined(__EXCEPTIONS)) || \
-      FMT_MSC_VER && !_HAS_EXCEPTIONS
+      (FMT_MSC_VERSION && !_HAS_EXCEPTIONS)
 #    define FMT_EXCEPTIONS 0
 #  else
 #    define FMT_EXCEPTIONS 1
@@ -154,26 +142,20 @@
 
 // [[noreturn]] is disabled on MSVC and NVCC because of bogus unreachable code
 // warnings.
-#if FMT_EXCEPTIONS && FMT_HAS_CPP_ATTRIBUTE(noreturn) && !FMT_MSC_VER && \
-    !FMT_NVCC
+#if FMT_EXCEPTIONS && FMT_HAS_CPP_ATTRIBUTE(noreturn) && !FMT_MSC_VERSION && \
+    !defined(__NVCC__)
 #  define FMT_NORETURN [[noreturn]]
 #else
 #  define FMT_NORETURN
 #endif
 
-#if __cplusplus == 201103L || __cplusplus == 201402L
-#  if defined(__INTEL_COMPILER) || defined(__PGI)
-#    define FMT_FALLTHROUGH
-#  elif defined(__clang__)
-#    define FMT_FALLTHROUGH [[clang::fallthrough]]
-#  elif FMT_GCC_VERSION >= 700 && \
-      (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 520)
-#    define FMT_FALLTHROUGH [[gnu::fallthrough]]
-#  else
-#    define FMT_FALLTHROUGH
-#  endif
-#elif FMT_HAS_CPP17_ATTRIBUTE(fallthrough)
+#if FMT_HAS_CPP17_ATTRIBUTE(fallthrough)
 #  define FMT_FALLTHROUGH [[fallthrough]]
+#elif defined(__clang__)
+#  define FMT_FALLTHROUGH [[clang::fallthrough]]
+#elif FMT_GCC_VERSION >= 700 && \
+    (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 520)
+#  define FMT_FALLTHROUGH [[gnu::fallthrough]]
 #else
 #  define FMT_FALLTHROUGH
 #endif
@@ -208,7 +190,7 @@
 #  define FMT_UNCHECKED_ITERATOR(It) \
     using _Unchecked_type = It  // Mark iterator as checked.
 #else
-#  define FMT_UNCHECKED_ITERATOR(It) using DummyTypeName = It
+#  define FMT_UNCHECKED_ITERATOR(It) using unchecked_type = It
 #endif
 
 #ifndef FMT_BEGIN_NAMESPACE
@@ -248,9 +230,8 @@
 #endif
 
 // libc++ supports string_view in pre-c++17.
-#if (FMT_HAS_INCLUDE(<string_view>) &&                       \
-     (__cplusplus > 201402L || defined(_LIBCPP_VERSION))) || \
-    (defined(_MSVC_LANG) && _MSVC_LANG > 201402L && _MSC_VER >= 1910)
+#if FMT_HAS_INCLUDE(<string_view>) && \
+    (FMT_CPLUSPLUS >= 201703L || defined(_LIBCPP_VERSION))
 #  include <string_view>
 #  define FMT_USE_STRING_VIEW
 #elif FMT_HAS_INCLUDE("experimental/string_view") && __cplusplus >= 201402L
@@ -259,14 +240,14 @@
 #endif
 
 #ifndef FMT_UNICODE
-#  define FMT_UNICODE !FMT_MSC_VER
+#  define FMT_UNICODE !FMT_MSC_VERSION
 #endif
 
 #ifndef FMT_CONSTEVAL
-#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) &&      \
-       __cplusplus > 201703L && !defined(__apple_build_version__)) || \
-      (defined(__cpp_consteval) &&                                    \
-       (!FMT_MSC_VER || _MSC_FULL_VER >= 193030704))
+#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) &&       \
+       __cplusplus >= 202002L && !defined(__apple_build_version__)) || \
+      (defined(__cpp_consteval) &&                                     \
+       (!FMT_MSC_VERSION || _MSC_FULL_VER >= 193030704))
 // consteval is broken in MSVC before VS2022 and Apple clang 13.
 #    define FMT_CONSTEVAL consteval
 #    define FMT_HAS_CONSTEVAL
@@ -275,19 +256,19 @@
 #  endif
 #endif
 
-#ifndef FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#ifndef FMT_USE_NONTYPE_TEMPLATE_ARGS
 #  if defined(__cpp_nontype_template_args) &&                \
       ((FMT_GCC_VERSION >= 903 && __cplusplus >= 201709L) || \
        __cpp_nontype_template_args >= 201911L)
-#    define FMT_USE_NONTYPE_TEMPLATE_PARAMETERS 1
+#    define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
 #  else
-#    define FMT_USE_NONTYPE_TEMPLATE_PARAMETERS 0
+#    define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
 #  endif
 #endif
 
 // Enable minimal optimizations for more compact code in debug mode.
 FMT_GCC_PRAGMA("GCC push_options")
-#if !defined(__OPTIMIZE__) && !FMT_NVCOMPILER_VERSION
+#if !defined(__OPTIMIZE__) && !defined(__NVCOMPILER)
 FMT_GCC_PRAGMA("GCC optimize(\"Og\")")
 #endif
 
@@ -326,7 +307,7 @@ struct monostate {
 
 FMT_BEGIN_DETAIL_NAMESPACE
 
-// Suppress "unused variable" warnings with the method described in
+// Suppresses "unused variable" warnings with the method described in
 // https://herbsutter.com/2009/10/18/mailbag-shutting-up-compiler-warnings/.
 // (void)var does not work on many Intel compilers.
 template <typename... T> FMT_CONSTEXPR void ignore_unused(const T&...) {}
@@ -341,7 +322,7 @@ constexpr FMT_INLINE auto is_constant_evaluated(
 #endif
 }
 
-// A function to suppress "conditional expression is constant" warnings.
+// Suppresses "conditional expression is constant" warnings.
 template <typename T> constexpr FMT_INLINE auto const_check(T value) -> T {
   return value;
 }
@@ -351,7 +332,7 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 
 #ifndef FMT_ASSERT
 #  ifdef NDEBUG
-// FMT_ASSERT is not empty to avoid -Werror=empty-body.
+// FMT_ASSERT is not empty to avoid -Wempty-body.
 #    define FMT_ASSERT(condition, message) \
       ::fmt::detail::ignore_unused((condition), (message))
 #  else
@@ -373,8 +354,8 @@ template <typename T> struct std_string_view {};
 
 #ifdef FMT_USE_INT128
 // Do nothing.
-#elif defined(__SIZEOF_INT128__) && !FMT_NVCC && \
-    !(FMT_CLANG_VERSION && FMT_MSC_VER)
+#elif defined(__SIZEOF_INT128__) && !defined(__NVCC__) && \
+    !(FMT_CLANG_VERSION && FMT_MSC_VERSION)
 #  define FMT_USE_INT128 1
 using int128_opt = __int128_t;  // An optional native 128-bit integer.
 using uint128_opt = __uint128_t;
@@ -402,8 +383,7 @@ FMT_CONSTEXPR auto to_unsigned(Int value) ->
 FMT_MSC_WARNING(suppress : 4566) constexpr unsigned char micro[] = "\u00B5";
 
 constexpr auto is_utf8() -> bool {
-  // Avoid buggy sign extensions in MSVC's constant evaluation mode.
-  // https://developercommunity.visualstudio.com/t/C-difference-in-behavior-for-unsigned/1233612
+  // Avoid buggy sign extensions in MSVC's constant evaluation mode (#2297).
   using uchar = unsigned char;
   return FMT_UNICODE || (sizeof(micro) == 3 && uchar(micro[0]) == 0xC2 &&
                          uchar(micro[1]) == 0xB5);
@@ -513,6 +493,14 @@ using string_view = basic_string_view<char>;
 template <typename T> struct is_char : std::false_type {};
 template <> struct is_char<char> : std::true_type {};
 
+FMT_BEGIN_DETAIL_NAMESPACE
+
+// A base class for compile-time strings.
+struct compile_string {};
+
+template <typename S>
+struct is_compile_string : std::is_base_of<compile_string, S> {};
+
 // Returns a string view of `s`.
 template <typename Char, FMT_ENABLE_IF(is_char<Char>::value)>
 FMT_INLINE auto to_string_view(const Char* s) -> basic_string_view<Char> {
@@ -529,33 +517,21 @@ constexpr auto to_string_view(basic_string_view<Char> s)
   return s;
 }
 template <typename Char,
-          FMT_ENABLE_IF(!std::is_empty<detail::std_string_view<Char>>::value)>
-inline auto to_string_view(detail::std_string_view<Char> s)
-    -> basic_string_view<Char> {
+          FMT_ENABLE_IF(!std::is_empty<std_string_view<Char>>::value)>
+inline auto to_string_view(std_string_view<Char> s) -> basic_string_view<Char> {
   return s;
 }
-
-// A base class for compile-time strings. It is defined in the fmt namespace to
-// make formatting functions visible via ADL, e.g. format(FMT_STRING("{}"), 42).
-struct compile_string {};
-
-template <typename S>
-struct is_compile_string : std::is_base_of<compile_string, S> {};
-
 template <typename S, FMT_ENABLE_IF(is_compile_string<S>::value)>
 constexpr auto to_string_view(const S& s)
     -> basic_string_view<typename S::char_type> {
   return basic_string_view<typename S::char_type>(s);
 }
-
-FMT_BEGIN_DETAIL_NAMESPACE
-
 void to_string_view(...);
-using fmt::to_string_view;
 
 // Specifies whether S is a string type convertible to fmt::basic_string_view.
 // It should be a constexpr function but MSVC 2017 fails to compile it in
 // enable_if and MSVC 2015 fails to compile it as an alias template.
+// ADL invocation of to_string_view is DEPRECATED!
 template <typename S>
 struct is_string : std::is_class<decltype(to_string_view(std::declval<S>()))> {
 };
@@ -565,18 +541,6 @@ template <typename S> struct char_t_impl<S, enable_if_t<is_string<S>::value>> {
   using result = decltype(to_string_view(std::declval<S>()));
   using type = typename result::value_type;
 };
-
-// Reports a compile-time error if S is not a valid format string.
-template <typename..., typename S, FMT_ENABLE_IF(!is_compile_string<S>::value)>
-FMT_INLINE void check_format_string(const S&) {
-#ifdef FMT_ENFORCE_COMPILE_STRING
-  static_assert(is_compile_string<S>::value,
-                "FMT_ENFORCE_COMPILE_STRING requires all format strings to use "
-                "FMT_STRING.");
-#endif
-}
-template <typename..., typename S, FMT_ENABLE_IF(is_compile_string<S>::value)>
-void check_format_string(S);
 
 FMT_NORETURN FMT_API void throw_format_error(const char* message);
 
@@ -714,10 +678,10 @@ constexpr auto has_const_formatter() -> bool {
 template <typename Container>
 inline auto get_container(std::back_insert_iterator<Container> it)
     -> Container& {
-  using bi_iterator = std::back_insert_iterator<Container>;
-  struct accessor : bi_iterator {
-    accessor(bi_iterator iter) : bi_iterator(iter) {}
-    using bi_iterator::container;
+  using base = std::back_insert_iterator<Container>;
+  struct accessor : base {
+    accessor(base b) : base(b) {}
+    using base::container;
   };
   return *accessor(it).container;
 }
@@ -961,6 +925,7 @@ class iterator_buffer<std::back_insert_iterator<Container>,
       : buffer<typename Container::value_type>(c.size()), container_(c) {}
   explicit iterator_buffer(std::back_insert_iterator<Container> out, size_t = 0)
       : iterator_buffer(get_container(out)) {}
+
   auto out() -> std::back_insert_iterator<Container> {
     return std::back_inserter(container_);
   }
@@ -1426,8 +1391,8 @@ template <typename Context> struct arg_mapper {
                       !std::is_const<remove_reference_t<T>>::value ||
                       has_fallback_formatter<U, char_type>::value> {};
 
-#if (FMT_MSC_VER != 0 && FMT_MSC_VER < 1910) || FMT_ICC_VERSION != 0 || \
-    FMT_NVCC != 0
+#if (FMT_MSC_VERSION != 0 && FMT_MSC_VERSION < 1910) || \
+    FMT_ICC_VERSION != 0 || defined(__NVCC__)
   // Workaround a bug in MSVC and Intel (Issue 2746).
   template <typename T> FMT_CONSTEXPR FMT_INLINE auto do_map(T&& val) -> T& {
     return val;
@@ -1494,7 +1459,6 @@ class appender : public std::back_insert_iterator<detail::buffer<char>> {
   FMT_UNCHECKED_ITERATOR(appender);
 
   auto operator++() noexcept -> appender& { return *this; }
-
   auto operator++(int) noexcept -> appender { return *this; }
 };
 
@@ -1642,7 +1606,7 @@ struct is_contiguous_back_insert_iterator<std::back_insert_iterator<Container>>
 template <>
 struct is_contiguous_back_insert_iterator<appender> : std::true_type {};
 
-// A type-erased reference to an std::locale to avoid heavy <locale> include.
+// A type-erased reference to an std::locale to avoid a heavy <locale> include.
 class locale_ref {
  private:
   const void* locale_;  // A type-erased pointer to std::locale.
@@ -2627,21 +2591,21 @@ FMT_CONSTEXPR FMT_INLINE void parse_format_string(
     return;
   }
   struct writer {
-    FMT_CONSTEXPR void operator()(const Char* pbegin, const Char* pend) {
-      if (pbegin == pend) return;
+    FMT_CONSTEXPR void operator()(const Char* from, const Char* to) {
+      if (from == to) return;
       for (;;) {
         const Char* p = nullptr;
-        if (!find<IS_CONSTEXPR>(pbegin, pend, Char('}'), p))
-          return handler_.on_text(pbegin, pend);
+        if (!find<IS_CONSTEXPR>(from, to, Char('}'), p))
+          return handler_.on_text(from, to);
         ++p;
-        if (p == pend || *p != '}')
+        if (p == to || *p != '}')
           return handler_.on_error("unmatched '}' in format string");
-        handler_.on_text(pbegin, p);
-        pbegin = p + 1;
+        handler_.on_text(from, p);
+        from = p + 1;
       }
     }
     Handler& handler_;
-  } write{handler};
+  } write = {handler};
   while (begin != end) {
     // Doing two passes with memchr (one for '{' and another for '}') is up to
     // 2.5x faster than the naive one-pass implementation on big format strings.
@@ -2656,7 +2620,6 @@ FMT_CONSTEXPR FMT_INLINE void parse_format_string(
 template <typename T, bool = is_named_arg<T>::value> struct strip_named_arg {
   using type = T;
 };
-
 template <typename T> struct strip_named_arg<T, true> {
   using type = remove_cvref_t<decltype(T::value)>;
 };
@@ -2868,7 +2831,7 @@ template <typename Handler> class specs_checker : public Handler {
 
 constexpr int invalid_arg_index = -1;
 
-#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#if FMT_USE_NONTYPE_TEMPLATE_ARGS
 template <int N, typename T, typename... Args, typename Char>
 constexpr auto get_arg_index_by_name(basic_string_view<Char> name) -> int {
   if constexpr (detail::is_statically_named_arg<T>()) {
@@ -2883,7 +2846,7 @@ constexpr auto get_arg_index_by_name(basic_string_view<Char> name) -> int {
 
 template <typename... Args, typename Char>
 FMT_CONSTEXPR auto get_arg_index_by_name(basic_string_view<Char> name) -> int {
-#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#if FMT_USE_NONTYPE_TEMPLATE_ARGS
   if constexpr (sizeof...(Args) > 0)
     return get_arg_index_by_name<0, Args...>(name);
 #endif
@@ -2916,7 +2879,7 @@ class format_string_checker {
     return context_.check_arg_id(id), id;
   }
   FMT_CONSTEXPR auto on_arg_id(basic_string_view<Char> id) -> int {
-#if FMT_USE_NONTYPE_TEMPLATE_PARAMETERS
+#if FMT_USE_NONTYPE_TEMPLATE_ARGS
     auto index = get_arg_index_by_name<Args...>(id);
     if (index == invalid_arg_index) on_error("named argument is not found");
     return context_.check_arg_id(index), index;
@@ -2941,10 +2904,19 @@ class format_string_checker {
   }
 };
 
+// Reports a compile-time error if S is not a valid format string.
+template <typename..., typename S, FMT_ENABLE_IF(!is_compile_string<S>::value)>
+FMT_INLINE void check_format_string(const S&) {
+#ifdef FMT_ENFORCE_COMPILE_STRING
+  static_assert(is_compile_string<S>::value,
+                "FMT_ENFORCE_COMPILE_STRING requires all format strings to use "
+                "FMT_STRING.");
+#endif
+}
 template <typename... Args, typename S,
-          enable_if_t<(is_compile_string<S>::value), int>>
+          FMT_ENABLE_IF(is_compile_string<S>::value)>
 void check_format_string(S format_str) {
-  FMT_CONSTEXPR auto s = to_string_view(format_str);
+  FMT_CONSTEXPR auto s = basic_string_view<typename S::char_type>(format_str);
   using checker = format_string_checker<typename S::char_type, error_handler,
                                         remove_cvref_t<Args>...>;
   FMT_CONSTEXPR bool invalid_format =
@@ -3103,10 +3075,8 @@ template <typename Char, typename... Args> class basic_format_string {
 
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 409
 // Workaround broken conversion on older gcc.
-template <typename... Args> using format_string = string_view;
-template <typename S> auto runtime(const S& s) -> basic_string_view<char_t<S>> {
-  return s;
-}
+template <typename...> using format_string = string_view;
+inline auto runtime(string_view s) -> basic_string_view<char> { return s; }
 #else
 template <typename... Args>
 using format_string = basic_format_string<char, type_identity_t<Args>...>;
@@ -3120,9 +3090,7 @@ using format_string = basic_format_string<char, type_identity_t<Args>...>;
     fmt::print(fmt::runtime("{:d}"), "I am not a number");
   \endrst
  */
-template <typename S> auto runtime(const S& s) -> basic_runtime<char_t<S>> {
-  return {{s}};
-}
+inline auto runtime(string_view s) -> basic_runtime<char> { return {{s}}; }
 #endif
 
 FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
