@@ -140,6 +140,9 @@ times and reduces binary code size compared to a fully parameterized version.
 .. doxygenclass:: fmt::basic_format_arg
    :members:
 
+.. doxygenclass:: fmt::basic_format_parse_context
+   :members:
+
 .. doxygenclass:: fmt::basic_format_context
    :members:
 
@@ -303,15 +306,10 @@ If a type provides both a ``formatter`` specialization and an implicit
 conversion to a formattable type, the specialization takes precedence over the
 conversion.
 
-.. doxygenclass:: fmt::basic_format_parse_context
-   :members:
-
 Literal-based API
 -----------------
 
 The following user-defined literals are defined in ``fmt/format.h``.
-
-.. doxygenfunction:: operator""_format(const char *s, size_t n) -> detail::udl_formatter<char> 
 
 .. doxygenfunction:: operator""_a()
 
@@ -503,20 +501,20 @@ In order to make a type formattable via ``std::ostream`` you should provide a
 
   #include <fmt/ostream.h>
 
-  class date {
-    int year_, month_, day_;
-  public:
-    date(int year, int month, int day): year_(year), month_(month), day_(day) {}
+  struct date {
+    int year, month, day;
 
     friend std::ostream& operator<<(std::ostream& os, const date& d) {
-      return os << d.year_ << '-' << d.month_ << '-' << d.day_;
+      return os << d.year << '-' << d.month << '-' << d.day;
     }
   };
 
   template <> struct fmt::formatter<date> : ostream_formatter {};
 
-  std::string s = fmt::format("The date is {}", date(2012, 12, 9));
+  std::string s = fmt::format("The date is {}", date{2012, 12, 9});
   // s == "The date is 2012-12-9"
+
+.. doxygenfunction:: streamed(const T &)
 
 .. doxygenfunction:: print(std::ostream &os, format_string<T...> fmt, T&&... args)
 
