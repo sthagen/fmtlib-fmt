@@ -5,12 +5,32 @@
   In particular this results in consistent rounding on all platforms and
   removing the ``s[n]printf`` fallback for decimal FP formatting.
 
+* Compile-time floating point formatting now works without header-only mode.
+  For example (`godbolt <https://godbolt.org/z/G37PTeG3b>`__):
+
+  .. code:: c++
+
+     #include <array>
+     #include <fmt/compile.h>
+
+     consteval auto compile_time_dtoa(double value) -> std::array<char, 10> {
+       auto result = std::array<char, 10>();
+       fmt::format_to(result.data(), FMT_COMPILE("{}"), value);
+       return result;
+     }
+
+     constexpr auto answer = compile_time_itoa(0.42);
+
 * Improved the implementation of
   `Dragonbox <https://github.com/jk-jeon/dragonbox>`_, the algorithm used for
   the default floating-point formatting
   (`#2713 <https://github.com/fmtlib/fmt/pull/2713>`_,
   `#2750 <https://github.com/fmtlib/fmt/pull/2750>`_).
   Thanks `@jk-jeon (Junekey Jeon) <https://github.com/jk-jeon>`_.
+
+* Made ``fmt::to_string`` work with ``__float128``. This uses the internal
+  FP formatter and works even on system without ``__float128`` support in
+  ``[s]printf``.
 
 * Disabled automatic ``std::ostream`` insertion operator (``operator<<``)
   discovery when ``fmt/ostream.h`` is included to prevent ODR violations.
@@ -55,6 +75,26 @@
 
   Note that ``fmt/std.h`` provides a ``formatter`` specialization for
   ``std::thread::id`` so you don't need to format it via ``std::ostream``.
+
+* Added experimental ``std::variant`` formatting support
+  (`#2941 <https://github.com/fmtlib/fmt/pull/2941>`_).
+  For example (`godbolt <https://godbolt.org/z/KG9z6cq68>`__):
+
+  .. code:: c++
+
+     #include <variant>
+     #include <fmt/std.h>
+
+     int main() {
+       auto v = std::variant<int, std::string>(42);
+       fmt::print("{}\n", v);
+     }
+
+  prints::
+
+     variant(42)
+
+  Thanks `@jehelset <https://github.com/jehelset>`_.
 
 * Added experimental ``std::filesystem::path`` formatting support
   (`#2865 <https://github.com/fmtlib/fmt/issues/2865>`_,
@@ -120,6 +160,8 @@
   `#2701 <https://github.com/fmtlib/fmt/pull/2701>`_).
   Thanks `@AlexGuteniev (Alex Guteniev) <https://github.com/AlexGuteniev>`_.
 
+* Fixed Unicode handling when writing to an ostream.
+
 * Implemented escaping of wide strings in ranges
   (`#2904 <https://github.com/fmtlib/fmt/pull/2904>`_).
   Thanks `@phprus (Vladislav Shchapov) <https://github.com/phprus>`_.
@@ -157,6 +199,21 @@
 * Removed ``make_args_checked`` because it is no longer needed for compile-time
   checks (`#2760 <https://github.com/fmtlib/fmt/pull/2760>`_).
   Thanks `@phprus (Vladislav Shchapov) <https://github.com/phprus>`_.
+
+* Removed the following deprecated APIs: ``_format``, ``arg_join``,
+  the ``format_to`` overload that takes a memory buffer,
+  ``[v]fprintf`` that takes an ``ostream``.
+
+* Removed the deprecated implicit conversion of ``[const] signed char*`` and 
+  ``[const] unsigned char*`` to C strings.
+
+* Removed the deprecated ``fmt/locale.h``.
+
+* Replaced the deprecated ``fileno()`` with ``descriptor()`` in
+  ``buffered_file``.
+
+* Moved ``to_string_view`` to the ``detail`` namespace since it's an
+  implementation detail.
 
 * Made access mode of a created file consistent with ``fopen`` by setting
   ``S_IWGRP`` and ``S_IWOTH``
