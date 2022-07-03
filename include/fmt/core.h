@@ -140,6 +140,20 @@
 #  endif
 #endif
 
+#ifndef FMT_DEPRECATED
+#  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VERSION >= 1900
+#    define FMT_DEPRECATED [[deprecated]]
+#  else
+#    if (defined(__GNUC__) && !defined(__LCC__)) || defined(__clang__)
+#      define FMT_DEPRECATED __attribute__((deprecated))
+#    elif FMT_MSC_VERSION
+#      define FMT_DEPRECATED __declspec(deprecated)
+#    else
+#      define FMT_DEPRECATED /* deprecated */
+#    endif
+#  endif
+#endif
+
 // [[noreturn]] is disabled on MSVC and NVCC because of bogus unreachable code
 // warnings.
 #if FMT_EXCEPTIONS && FMT_HAS_CPP_ATTRIBUTE(noreturn) && !FMT_MSC_VERSION && \
@@ -291,6 +305,24 @@ template <typename T> struct type_identity { using type = T; };
 template <typename T> using type_identity_t = typename type_identity<T>::type;
 template <typename T>
 using underlying_t = typename std::underlying_type<T>::type;
+
+template <typename...>
+struct disjunction : std::false_type {};
+template <typename P>
+struct disjunction<P> : P {};
+template <typename P1, typename... Pn>
+struct disjunction<P1, Pn...> 
+  : conditional_t<bool(P1::value), P1, disjunction<Pn...>> {
+};
+
+template <typename...>
+struct conjunction : std::true_type {};
+template <typename P>
+struct conjunction<P> : P {};
+template <typename P1, typename... Pn>
+struct conjunction<P1, Pn...>
+  : conditional_t<bool(P1::value), conjunction<Pn...>, P1> {
+};
 
 struct monostate {
   constexpr monostate() {}
@@ -1420,9 +1452,9 @@ template <typename Context> struct arg_mapper {
   template <typename T,
             FMT_ENABLE_IF(
                 std::is_enum<T>::value&& std::is_convertible<T, int>::value &&
-                !has_formatter<T, Context>::value &&
+                !has_format_as<T>::value && !has_formatter<T, Context>::value &&
                 !has_fallback_formatter<T, char_type>::value)>
-  FMT_CONSTEXPR FMT_INLINE auto map(const T& val)
+  FMT_DEPRECATED FMT_CONSTEXPR FMT_INLINE auto map(const T& val)
       -> decltype(std::declval<arg_mapper>().map(
           static_cast<underlying_t<T>>(val))) {
     return map(static_cast<underlying_t<T>>(val));
