@@ -59,6 +59,8 @@ TEST(uint128_test, shift) {
   EXPECT_EQ(static_cast<uint64_t>(n), 0x8000000000000000);
   n = n >> 62;
   EXPECT_EQ(static_cast<uint64_t>(n), 42);
+  EXPECT_EQ(uint128_fallback(1) << 112, uint128_fallback(0x1000000000000, 0));
+  EXPECT_EQ(uint128_fallback(0x1000000000000, 0) >> 112, uint128_fallback(1));
 }
 
 TEST(uint128_test, minus) {
@@ -99,7 +101,7 @@ template <typename Float> void check_isfinite() {
 
 TEST(float_test, isfinite) {
   check_isfinite<double>();
-#ifdef __SIZEOF_FLOAT128__
+#if FMT_USE_FLOAT128
   check_isfinite<fmt::detail::float128>();
 #endif
 }
@@ -120,7 +122,7 @@ template <typename Float> void check_isnan() {
 
 TEST(float_test, isnan) {
   check_isnan<double>();
-#ifdef __SIZEOF_FLOAT128__
+#if FMT_USE_FLOAT128
   check_isnan<fmt::detail::float128>();
 #endif
 }
@@ -234,7 +236,7 @@ TEST(util_test, format_system_error) {
     throws_on_alloc = true;
   }
   if (!throws_on_alloc) {
-    fmt::print("warning: std::allocator allocates {} chars", max_size);
+    fmt::print("warning: std::allocator allocates {} chars\n", max_size);
     return;
   }
 }
