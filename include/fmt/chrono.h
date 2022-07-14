@@ -1777,7 +1777,7 @@ struct chrono_formatter {
         format_to(std::back_inserter(buf), runtime("{:.{}f}"),
                   std::fmod(val * static_cast<rep>(Period::num) /
                                 static_cast<rep>(Period::den),
-                            60),
+                            static_cast<rep>(60)),
                   num_fractional_digits);
         if (negative) *out++ = '-';
         if (buf.size() < 2 || buf[1] == '.') *out++ = '0';
@@ -2017,13 +2017,16 @@ struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
     return formatter<std::tm, Char>::format(localtime(val), ctx);
   }
 
-  static constexpr const Char default_specs[] = {'%', 'F', ' ', '%', 'T'};
+  // EDG frontend (Intel, NVHPC compilers) can't determine array length.
+  static constexpr const Char default_specs[5] = {'%', 'F', ' ', '%', 'T'};
 };
 
+#if FMT_CPLUSPLUS < 201703L
 template <typename Char, typename Duration>
 constexpr const Char
     formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
               Char>::default_specs[];
+#endif
 
 template <typename Char> struct formatter<std::tm, Char> {
  private:
