@@ -1276,8 +1276,6 @@ template <> struct float_info<float> {
   static const int small_divisor = 10;
   static const int min_k = -31;
   static const int max_k = 46;
-  static const int divisibility_check_by_5_threshold = 39;
-  static const int case_fc_pm_half_lower_threshold = -1;
   static const int shorter_interval_tie_lower_threshold = -35;
   static const int shorter_interval_tie_upper_threshold = -35;
 };
@@ -1290,8 +1288,6 @@ template <> struct float_info<double> {
   static const int small_divisor = 100;
   static const int min_k = -292;
   static const int max_k = 326;
-  static const int divisibility_check_by_5_threshold = 86;
-  static const int case_fc_pm_half_lower_threshold = -2;
   static const int shorter_interval_tie_lower_threshold = -77;
   static const int shorter_interval_tie_upper_threshold = -77;
 };
