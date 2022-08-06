@@ -2002,13 +2002,9 @@ template <typename Char, typename Duration>
 struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
                  Char> : formatter<std::tm, Char> {
   FMT_CONSTEXPR formatter() {
-    this->do_parse(default_specs,
-                   default_specs + sizeof(default_specs) / sizeof(Char));
-  }
-
-  template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
-    return this->do_parse(ctx.begin(), ctx.end(), true);
+    basic_string_view<Char> default_specs =
+        detail::string_literal<Char, '%', 'F', ' ', '%', 'T'>{};
+    this->do_parse(default_specs.begin(), default_specs.end());
   }
 
   template <typename FormatContext>
@@ -2016,17 +2012,7 @@ struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
               FormatContext& ctx) const -> decltype(ctx.out()) {
     return formatter<std::tm, Char>::format(localtime(val), ctx);
   }
-
-  // EDG frontend (Intel, NVHPC compilers) can't determine array length.
-  static constexpr const Char default_specs[5] = {'%', 'F', ' ', '%', 'T'};
 };
-
-#if FMT_CPLUSPLUS < 201703L
-template <typename Char, typename Duration>
-constexpr const Char
-    formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
-              Char>::default_specs[];
-#endif
 
 template <typename Char> struct formatter<std::tm, Char> {
  private:
@@ -2039,13 +2025,18 @@ template <typename Char> struct formatter<std::tm, Char> {
   basic_string_view<Char> specs;
 
  protected:
-  template <typename It>
-  FMT_CONSTEXPR auto do_parse(It begin, It end, bool with_default = false)
-      -> It {
+  template <typename It> FMT_CONSTEXPR auto do_parse(It begin, It end) -> It {
     if (begin != end && *begin == ':') ++begin;
     end = detail::parse_chrono_format(begin, end, detail::tm_format_checker());
-    if (!with_default || end != begin)
-      specs = {begin, detail::to_unsigned(end - begin)};
+    // Replace default spec only if the new spec is not empty.
+    if (end != begin) specs = {begin, detail::to_unsigned(end - begin)};
+    return end;
+  }
+
+ public:
+  FMT_CONSTEXPR auto parse(basic_format_parse_context<Char>& ctx)
+      -> decltype(ctx.begin()) {
+    auto end = this->do_parse(ctx.begin(), ctx.end());
     // basic_string_view<>::compare isn't constexpr before C++17.
     if (specs.size() == 2 && specs[0] == Char('%')) {
       if (specs[1] == Char('F'))
@@ -2054,12 +2045,6 @@ template <typename Char> struct formatter<std::tm, Char> {
         spec_ = spec::hh_mm_ss;
     }
     return end;
-  }
-
- public:
-  template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
-    return this->do_parse(ctx.begin(), ctx.end());
   }
 
   template <typename FormatContext>
