@@ -1557,7 +1557,10 @@ FMT_CONSTEXPR inline fp get_cached_power(int min_exponent,
   const int dec_exp_step = 8;
   index = (index - first_dec_exp - 1) / dec_exp_step + 1;
   pow10_exponent = first_dec_exp + index * dec_exp_step;
-  return {data::pow10_significands[index], data::pow10_exponents[index]};
+  // Using *(x + index) instead of x[index] avoids an issue with some compilers
+  // using the EDG frontend (e.g. nvhpc/22.3 in C++17 mode).
+  return {*(data::pow10_significands + index),
+          *(data::pow10_exponents + index)};
 }
 
 #ifndef _MSC_VER
@@ -1995,7 +1998,10 @@ auto write_int_localized(OutputIt out, UInt value, unsigned prefix,
                               grouping.count_separators(num_digits));
   return write_padded<align::right>(
       out, specs, size, size, [&](reserve_iterator<OutputIt> it) {
-        if (prefix != 0) *it++ = static_cast<Char>(prefix);
+        if (prefix != 0) {
+          char sign = static_cast<char>(prefix);
+          *it++ = static_cast<Char>(sign);
+        }
         return grouping.apply(it, string_view(digits, to_unsigned(num_digits)));
       });
 }
@@ -2154,7 +2160,8 @@ class counting_iterator {
     return it;
   }
 
-  FMT_CONSTEXPR friend counting_iterator operator+(counting_iterator it, difference_type n) {
+  FMT_CONSTEXPR friend counting_iterator operator+(counting_iterator it,
+                                                   difference_type n) {
     it.count_ += static_cast<size_t>(n);
     return it;
   }
