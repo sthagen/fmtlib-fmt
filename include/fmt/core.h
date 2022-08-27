@@ -17,7 +17,7 @@
 #include <type_traits>
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 90000
+#define FMT_VERSION 90100
 
 #if defined(__clang__) && !defined(__ibmxl__)
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
@@ -276,7 +276,8 @@
 #ifndef FMT_USE_NONTYPE_TEMPLATE_ARGS
 #  if defined(__cpp_nontype_template_args) &&                  \
       ((FMT_GCC_VERSION >= 903 && FMT_CPLUSPLUS >= 201709L) || \
-       __cpp_nontype_template_args >= 201911L)
+       __cpp_nontype_template_args >= 201911L) &&              \
+      !defined(__NVCOMPILER)
 #    define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
 #  else
 #    define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
@@ -2296,12 +2297,15 @@ constexpr auto to_ascii(Char c) -> underlying_t<Char> {
   return c;
 }
 
+FMT_CONSTEXPR inline auto code_point_length_impl(char c) -> int {
+  return "\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\0\0\0\0\0\0\0\0\2\2\2\2\3\3\4"
+      [static_cast<unsigned char>(c) >> 3];
+}
+
 template <typename Char>
 FMT_CONSTEXPR auto code_point_length(const Char* begin) -> int {
   if (const_check(sizeof(Char) != 1)) return 1;
-  auto lengths =
-      "\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\0\0\0\0\0\0\0\0\2\2\2\2\3\3\4";
-  int len = lengths[static_cast<unsigned char>(*begin) >> 3];
+  int len = code_point_length_impl(static_cast<char>(*begin));
 
   // Compute the pointer to the next character early so that the next
   // iteration can start working on the next character. Neither Clang
@@ -3166,7 +3170,7 @@ template <typename Char, typename... Args> class basic_format_string {
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 409
 // Workaround broken conversion on older gcc.
 template <typename...> using format_string = string_view;
-inline auto runtime(string_view s) -> basic_string_view<char> { return s; }
+inline auto runtime(string_view s) -> string_view { return s; }
 #else
 template <typename... Args>
 using format_string = basic_format_string<char, type_identity_t<Args>...>;
