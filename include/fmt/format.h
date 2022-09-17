@@ -961,13 +961,11 @@ FMT_API bool write_console(std::FILE* f, string_view text);
 FMT_API void print(std::FILE*, string_view);
 }  // namespace detail
 
-/** A formatting error such as invalid format string. */
+/** An error reported from a formatting function. */
 FMT_CLASS_API
 class FMT_API format_error : public std::runtime_error {
  public:
-  explicit format_error(const char* message) : std::runtime_error(message) {}
-  explicit format_error(const std::string& message)
-      : std::runtime_error(message) {}
+  using std::runtime_error::runtime_error;
   format_error(const format_error&) = default;
   format_error& operator=(const format_error&) = default;
   format_error(format_error&&) = default;
@@ -1001,6 +999,22 @@ constexpr auto compile_string_to_view(detail::std_string_view<Char> s)
 }
 }  // namespace detail_exported
 
+class loc_value {
+ private:
+  basic_format_arg<format_context> value_;
+
+ public:
+  template <typename T, FMT_ENABLE_IF(!detail::is_float128<T>::value)>
+  loc_value(T value) : value_(detail::make_arg<format_context>(value)) {}
+
+  template <typename T, FMT_ENABLE_IF(detail::is_float128<T>::value)>
+  loc_value(T) {}
+
+  template <typename Visitor> auto visit(Visitor&& vis) -> decltype(vis(0)) {
+    return visit_format_arg(vis, value_);
+  }
+};
+
 // A locale facet that formats values in UTF-8.
 // It is parameterized on the locale to avoid the heavy <locale> include.
 template <typename Locale> class format_facet : public Locale::facet {
@@ -1010,7 +1024,7 @@ template <typename Locale> class format_facet : public Locale::facet {
   std::string decimal_point_;
 
  protected:
-  virtual auto do_put(appender out, basic_format_arg<format_context> val,
+  virtual auto do_put(appender out, loc_value val,
                       const format_specs& specs) const -> bool;
 
  public:
@@ -1024,8 +1038,8 @@ template <typename Locale> class format_facet : public Locale::facet {
         grouping_(g.begin(), g.end()),
         decimal_point_(decimal_point) {}
 
-  auto put(appender out, basic_format_arg<format_context> val,
-           const format_specs& specs) const -> bool {
+  auto put(appender out, loc_value val, const format_specs& specs) const
+      -> bool {
     return do_put(out, val, specs);
   }
 };
@@ -2053,13 +2067,12 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
       });
 }
 
-// Writes localized value.
-FMT_API auto write_loc(appender out, basic_format_arg<format_context> value,
-                       const format_specs& specs, locale_ref loc) -> bool;
-
+// Writes a localized value.
+FMT_API auto write_loc(appender out, loc_value value, const format_specs& specs,
+                       locale_ref loc) -> bool;
 template <typename OutputIt, typename Char>
-inline auto write_loc(OutputIt, basic_format_arg<buffer_context<Char>>,
-                      const basic_format_specs<Char>&, locale_ref) -> bool {
+inline auto write_loc(OutputIt, loc_value, const basic_format_specs<Char>&,
+                      locale_ref) -> bool {
   return false;
 }
 
@@ -2181,10 +2194,7 @@ template <typename Char, typename OutputIt, typename T,
 FMT_CONSTEXPR FMT_INLINE auto write(OutputIt out, T value,
                                     const basic_format_specs<Char>& specs,
                                     locale_ref loc) -> OutputIt {
-  if (specs.localized &&
-      write_loc(out, make_arg<buffer_context<Char>>(value), specs, loc)) {
-    return out;
-  }
+  if (specs.localized && write_loc(out, value, specs, loc)) return out;
   return write_int_noinline(out, make_write_int_arg(value, specs.sign), specs,
                             loc);
 }
@@ -2196,10 +2206,7 @@ template <typename Char, typename OutputIt, typename T,
 FMT_CONSTEXPR FMT_INLINE auto write(OutputIt out, T value,
                                     const basic_format_specs<Char>& specs,
                                     locale_ref loc) -> OutputIt {
-  if (specs.localized &&
-      write_loc(out, make_arg<buffer_context<Char>>(value), specs, loc)) {
-    return out;
-  }
+  if (specs.localized && write_loc(out, value, specs, loc)) return out;
   return write_int(out, make_write_int_arg(value, specs.sign), specs, loc);
 }
 
@@ -2576,14 +2583,14 @@ template <typename T, FMT_ENABLE_IF(std::is_floating_point<T>::value&&
 FMT_CONSTEXPR20 bool isfinite(T value) {
   constexpr T inf = T(std::numeric_limits<double>::infinity());
   if (is_constant_evaluated())
-    return !detail::isnan(value) && value != inf && value != -inf;
+    return !detail::isnan(value) && value < inf && value > -inf;
   return std::isfinite(value);
 }
 template <typename T, FMT_ENABLE_IF(!has_isfinite<T>::value)>
 FMT_CONSTEXPR bool isfinite(T value) {
   T inf = T(std::numeric_limits<double>::infinity());
   // std::isfinite doesn't support __float128.
-  return !detail::isnan(value) && value != inf && value != -inf;
+  return !detail::isnan(value) && value < inf && value > -inf;
 }
 
 template <typename T, FMT_ENABLE_IF(is_floating_point<T>::value)>
@@ -3251,13 +3258,10 @@ FMT_CONSTEXPR20 auto format_float(Float value, int precision, float_specs specs,
   }
   return exp;
 }
-
-template <typename Char, typename OutputIt, typename T,
-          FMT_ENABLE_IF(is_floating_point<T>::value)>
-FMT_CONSTEXPR20 auto write(OutputIt out, T value,
-                           basic_format_specs<Char> specs, locale_ref loc = {})
+template <typename Char, typename OutputIt, typename T>
+FMT_CONSTEXPR20 auto write_float(OutputIt out, T value,
+                                 basic_format_specs<Char> specs, locale_ref loc)
     -> OutputIt {
-  if (const_check(!is_supported_floating_point(value))) return out;
   float_specs fspecs = parse_float_type_spec(specs);
   fspecs.sign = specs.sign;
   if (detail::signbit(value)) {  // value < 0 is false for NaN so use signbit.
@@ -3301,6 +3305,17 @@ FMT_CONSTEXPR20 auto write(OutputIt out, T value,
   fspecs.precision = precision;
   auto f = big_decimal_fp{buffer.data(), static_cast<int>(buffer.size()), exp};
   return write_float(out, f, specs, fspecs, loc);
+}
+
+template <typename Char, typename OutputIt, typename T,
+          FMT_ENABLE_IF(is_floating_point<T>::value)>
+FMT_CONSTEXPR20 auto write(OutputIt out, T value,
+                           basic_format_specs<Char> specs, locale_ref loc = {})
+    -> OutputIt {
+  if (const_check(!is_supported_floating_point(value))) return out;
+  return specs.localized && write_loc(out, value, specs, loc)
+             ? out
+             : write_float(out, value, specs, loc);
 }
 
 template <typename Char, typename OutputIt, typename T,
@@ -4259,7 +4274,7 @@ auto vformat_to(OutputIt out, const Locale& loc, string_view fmt,
   using detail::get_buffer;
   auto&& buf = get_buffer<char>(out);
   detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
-  return detail::get_iterator(buf);
+  return detail::get_iterator(buf, out);
 }
 
 template <typename OutputIt, typename Locale, typename... T,

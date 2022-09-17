@@ -22,18 +22,16 @@ namespace detail {
 template <typename T>
 using is_exotic_char = bool_constant<!std::is_same<T, char>::value>;
 
-template <typename OutputIt>
-auto write_loc(OutputIt out, basic_format_arg<buffer_context<wchar_t>> val,
-               const basic_format_specs<wchar_t>& specs, locale_ref loc)
-    -> bool {
+inline auto write_loc(std::back_insert_iterator<detail::buffer<wchar_t>> out,
+                      loc_value value, const basic_format_specs<wchar_t>& specs,
+                      locale_ref loc) -> bool {
 #ifndef FMT_STATIC_THOUSANDS_SEPARATOR
   auto& numpunct =
       std::use_facet<std::numpunct<wchar_t>>(loc.get<std::locale>());
   auto separator = std::wstring();
   auto grouping = numpunct.grouping();
   if (!grouping.empty()) separator = std::wstring(1, numpunct.thousands_sep());
-  return visit_format_arg(
-      loc_writer<wchar_t>{out, specs, separator, grouping, {}}, val);
+  return value.visit(loc_writer<wchar_t>{out, specs, separator, grouping, {}});
 #endif
   return false;
 }
@@ -147,7 +145,7 @@ auto vformat_to(OutputIt out, const S& format_str,
     -> OutputIt {
   auto&& buf = detail::get_buffer<Char>(out);
   detail::vformat_to(buf, detail::to_string_view(format_str), args);
-  return detail::get_iterator(buf);
+  return detail::get_iterator(buf, out);
 }
 
 template <typename OutputIt, typename S, typename... Args,
