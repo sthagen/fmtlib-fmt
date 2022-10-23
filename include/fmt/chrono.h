@@ -212,7 +212,8 @@ To safe_duration_cast(std::chrono::duration<FromRep, FromPeriod> from,
     }
     const auto min1 =
         (std::numeric_limits<IntermediateRep>::min)() / Factor::num;
-    if (!std::is_unsigned<IntermediateRep>::value && count < min1) {
+    if (detail::const_check(!std::is_unsigned<IntermediateRep>::value) &&
+        count < min1) {
       ec = 1;
       return {};
     }
@@ -1263,6 +1264,8 @@ class tm_writer {
 
   OutputIt out() const { return out_; }
 
+  const std::locale& locale() const { return loc_; }
+
   FMT_CONSTEXPR void on_text(const Char* begin, const Char* end) {
     out_ = copy_str<Char>(begin, end, out_);
   }
@@ -1838,7 +1841,7 @@ struct chrono_formatter {
       } else {
         write(second(), 2);
         write_fractional_seconds<char_type>(
-            out, std::chrono::duration<Rep, Period>(val));
+            out, std::chrono::duration<rep, Period>(val));
       }
       return;
     }
@@ -2071,9 +2074,9 @@ struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
       const auto subsecs = std::chrono::duration_cast<Duration>(
           epoch - std::chrono::duration_cast<std::chrono::seconds>(epoch));
 
-      return formatter<std::tm, Char>::format(
+      return formatter<std::tm, Char>::do_format(
           localtime(std::chrono::time_point_cast<std::chrono::seconds>(val)),
-          ctx, subsecs);
+          ctx, &subsecs);
     }
 
     return formatter<std::tm, Char>::format(
@@ -2117,6 +2120,22 @@ template <typename Char> struct formatter<std::tm, Char> {
     return end;
   }
 
+  template <typename FormatContext, typename Duration>
+  auto do_format(const std::tm& tm, FormatContext& ctx,
+                 const Duration* subsecs) const -> decltype(ctx.out()) {
+    const auto loc_ref = ctx.locale();
+    detail::get_locale loc(static_cast<bool>(loc_ref), loc_ref);
+    auto w = detail::tm_writer<decltype(ctx.out()), Char, Duration>(
+        loc, ctx.out(), tm, subsecs);
+    if (spec_ == spec::year_month_day)
+      w.on_iso_date();
+    else if (spec_ == spec::hh_mm_ss)
+      w.on_iso_time();
+    else
+      detail::parse_chrono_format(specs.begin(), specs.end(), w);
+    return w.out();
+  }
+
  public:
   FMT_CONSTEXPR auto parse(basic_format_parse_context<Char>& ctx)
       -> decltype(ctx.begin()) {
@@ -2134,32 +2153,7 @@ template <typename Char> struct formatter<std::tm, Char> {
   template <typename FormatContext>
   auto format(const std::tm& tm, FormatContext& ctx) const
       -> decltype(ctx.out()) {
-    const auto loc_ref = ctx.locale();
-    detail::get_locale loc(static_cast<bool>(loc_ref), loc_ref);
-    auto w = detail::tm_writer<decltype(ctx.out()), Char>(loc, ctx.out(), tm);
-    if (spec_ == spec::year_month_day)
-      w.on_iso_date();
-    else if (spec_ == spec::hh_mm_ss)
-      w.on_iso_time();
-    else
-      detail::parse_chrono_format(specs.begin(), specs.end(), w);
-    return w.out();
-  }
-
-  template <typename FormatContext, typename Duration>
-  auto format(const std::tm& tm, FormatContext& ctx,
-              const Duration& subsecs) const -> decltype(ctx.out()) {
-    const auto loc_ref = ctx.locale();
-    detail::get_locale loc(static_cast<bool>(loc_ref), loc_ref);
-    auto w = detail::tm_writer<decltype(ctx.out()), Char, Duration>(
-        loc, ctx.out(), tm, &subsecs);
-    if (spec_ == spec::year_month_day)
-      w.on_iso_date();
-    else if (spec_ == spec::hh_mm_ss)
-      w.on_iso_time();
-    else
-      detail::parse_chrono_format(specs.begin(), specs.end(), w);
-    return w.out();
+    return do_format<FormatContext, std::chrono::seconds>(tm, ctx, nullptr);
   }
 };
 
