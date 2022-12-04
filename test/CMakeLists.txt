@@ -78,11 +78,10 @@ endif()
 add_fmt_test(printf-test)
 add_fmt_test(ranges-test ranges-odr-test.cc)
 
+add_fmt_test(scan-test)
 check_symbol_exists(strptime "time.h" HAVE_STRPTIME)
 if (HAVE_STRPTIME)
-  add_fmt_test(scan-test)
-else()
-  message(WARNING "Skipping scan-test due to missing strptime dependency.")
+  target_compile_definitions(scan-test PRIVATE FMT_HAVE_STRPTIME)
 endif ()
 
 add_fmt_test(std-test)
@@ -109,7 +108,7 @@ if (FMT_MODULE)
   # If module support is present the module tests require a
   # test-only module to be built from {fmt}
   add_library(test-module OBJECT ${CMAKE_SOURCE_DIR}/src/fmt.cc)
-  target_compile_features(test-module PUBLIC ${FMT_REQUIRED_FEATURES})
+  target_compile_features(test-module PUBLIC cxx_std_11)
   target_include_directories(test-module PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
   enable_module(test-module)
