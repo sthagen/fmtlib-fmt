@@ -1679,7 +1679,8 @@ template <> struct formatter<date> {
   }
 
   auto format(const date& d, format_context& ctx) -> decltype(ctx.out()) {
-    format_to(ctx.out(), "{}-{}-{}", d.year(), d.month(), d.day());
+    // Namespace-qualify to avoid ambiguity with std::format_to.
+    fmt::format_to(ctx.out(), "{}-{}-{}", d.year(), d.month(), d.day());
     return ctx.out();
   }
 };
@@ -2416,6 +2417,11 @@ TEST(format_test, format_facet_grouping) {
   auto loc =
       std::locale({}, new fmt::format_facet<std::locale>(",", {1, 2, 3}));
   EXPECT_EQ(fmt::format(loc, "{:L}", 1234567890), "1,234,567,89,0");
+}
+
+TEST(format_test, format_named_arg_with_locale) {
+  EXPECT_EQ(fmt::format(std::locale(), "{answer}", fmt::arg("answer", 42)),
+            "42");
 }
 
 #endif  // FMT_STATIC_THOUSANDS_SEPARATOR
