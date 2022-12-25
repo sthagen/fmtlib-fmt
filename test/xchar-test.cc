@@ -309,7 +309,7 @@ TEST(chrono_test_wchar, time_point) {
 
   for (const auto& spec : spec_list) {
     auto t = std::chrono::system_clock::to_time_t(t1);
-    auto tm = *std::localtime(&t);
+    auto tm = *std::gmtime(&t);
 
     auto sys_output = system_wcsftime(spec, &tm);
 
@@ -464,13 +464,11 @@ template <class charT> struct formatter<std::complex<double>, charT> {
  public:
   FMT_CONSTEXPR typename basic_format_parse_context<charT>::iterator parse(
       basic_format_parse_context<charT>& ctx) {
-    using handler_type =
-        detail::dynamic_specs_handler<basic_format_parse_context<charT>>;
-    detail::specs_checker<handler_type> handler(handler_type(specs_, ctx),
-                                                detail::type::string_type);
-    auto it = parse_format_specs(ctx.begin(), ctx.end(), handler);
-    detail::parse_float_type_spec(specs_, ctx.error_handler());
-    return it;
+    auto result = parse_format_specs(ctx.begin(), ctx.end(), ctx,
+                                     detail::type::string_type);
+    specs_ = result.specs;
+    detail::parse_float_type_spec(specs_, detail::error_handler());
+    return result.end;
   }
 
   template <class FormatContext>
