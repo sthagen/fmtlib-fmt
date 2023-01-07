@@ -241,6 +241,19 @@ FMT_END_NAMESPACE
 #endif
 
 FMT_BEGIN_NAMESPACE
+
+template <typename...> struct disjunction : std::false_type {};
+template <typename P> struct disjunction<P> : P {};
+template <typename P1, typename... Pn>
+struct disjunction<P1, Pn...>
+    : conditional_t<bool(P1::value), P1, disjunction<Pn...>> {};
+
+template <typename...> struct conjunction : std::true_type {};
+template <typename P> struct conjunction<P> : P {};
+template <typename P1, typename... Pn>
+struct conjunction<P1, Pn...>
+    : conditional_t<bool(P1::value), conjunction<Pn...>, P1> {};
+
 namespace detail {
 
 FMT_CONSTEXPR inline void abort_fuzzing_if(bool condition) {
@@ -1885,9 +1898,12 @@ template <typename Char, typename OutputIt>
 FMT_CONSTEXPR auto write(OutputIt out, Char value,
                          const format_specs<Char>& specs, locale_ref loc = {})
     -> OutputIt {
+  // char is formatted as unsigned char for consistency across platforms.
+  using unsigned_type =
+      conditional_t<std::is_same<Char, char>::value, unsigned char, unsigned>;
   return check_char_specs(specs)
              ? write_char(out, value, specs)
-             : write(out, static_cast<int>(value), specs, loc);
+             : write(out, static_cast<unsigned_type>(value), specs, loc);
 }
 
 // Data for write_int that doesn't depend on output iterator type. It is used to
@@ -2134,7 +2150,7 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
   case presentation_type::chr:
     return write_char(out, static_cast<Char>(abs_value), specs);
   default:
-    throw_format_error("invalid type specifier");
+    throw_format_error("invalid format specifier");
   }
   return out;
 }
@@ -2233,14 +2249,13 @@ FMT_CONSTEXPR auto write(OutputIt out,
                          basic_string_view<type_identity_t<Char>> s,
                          const format_specs<Char>& specs, locale_ref)
     -> OutputIt {
-  check_string_type_spec(specs.type);
   return write(out, s, specs);
 }
 template <typename Char, typename OutputIt>
 FMT_CONSTEXPR auto write(OutputIt out, const Char* s,
                          const format_specs<Char>& specs, locale_ref)
     -> OutputIt {
-  return check_cstring_type_spec(specs.type)
+  return specs.type != presentation_type::pointer
              ? write(out, basic_string_view<Char>(s), specs, {})
              : write_ptr<Char>(out, bit_cast<uintptr_t>(s), &specs);
 }
@@ -2265,6 +2280,68 @@ FMT_CONSTEXPR auto write(OutputIt out, T value) -> OutputIt {
   if (negative) *it++ = static_cast<Char>('-');
   it = format_decimal<Char>(it, abs_value, num_digits).end;
   return base_iterator(out, it);
+}
+
+// A floating-point presentation format.
+enum class float_format : unsigned char {
+  general,  // General: exponent notation or fixed point based on magnitude.
+  exp,      // Exponent notation with the default precision of 6, e.g. 1.2e-3.
+  fixed,    // Fixed point with the default precision of 6, e.g. 0.0012.
+  hex
+};
+
+struct float_specs {
+  int precision;
+  float_format format : 8;
+  sign_t sign : 8;
+  bool upper : 1;
+  bool locale : 1;
+  bool binary32 : 1;
+  bool showpoint : 1;
+};
+
+template <typename ErrorHandler = error_handler, typename Char>
+FMT_CONSTEXPR auto parse_float_type_spec(const format_specs<Char>& specs,
+                                         ErrorHandler&& eh = {})
+    -> float_specs {
+  auto result = float_specs();
+  result.showpoint = specs.alt;
+  result.locale = specs.localized;
+  switch (specs.type) {
+  case presentation_type::none:
+    result.format = float_format::general;
+    break;
+  case presentation_type::general_upper:
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case presentation_type::general_lower:
+    result.format = float_format::general;
+    break;
+  case presentation_type::exp_upper:
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case presentation_type::exp_lower:
+    result.format = float_format::exp;
+    result.showpoint |= specs.precision != 0;
+    break;
+  case presentation_type::fixed_upper:
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case presentation_type::fixed_lower:
+    result.format = float_format::fixed;
+    result.showpoint |= specs.precision != 0;
+    break;
+  case presentation_type::hexfloat_upper:
+    result.upper = true;
+    FMT_FALLTHROUGH;
+  case presentation_type::hexfloat_lower:
+    result.format = float_format::hex;
+    break;
+  default:
+    eh.on_error("invalid format specifier");
+    break;
+  }
+  return result;
 }
 
 template <typename Char, typename OutputIt>
@@ -3440,11 +3517,8 @@ FMT_CONSTEXPR auto write(OutputIt out, Char value) -> OutputIt {
 template <typename Char, typename OutputIt>
 FMT_CONSTEXPR_CHAR_TRAITS auto write(OutputIt out, const Char* value)
     -> OutputIt {
-  if (!value) {
-    throw_format_error("string pointer is null");
-  } else {
-    out = write(out, basic_string_view<Char>(value));
-  }
+  if (value) return write(out, basic_string_view<Char>(value));
+  throw_format_error("string pointer is null");
   return out;
 }
 
@@ -3452,7 +3526,6 @@ template <typename Char, typename OutputIt, typename T,
           FMT_ENABLE_IF(std::is_same<T, void>::value)>
 auto write(OutputIt out, const T* value, const format_specs<Char>& specs = {},
            locale_ref = {}) -> OutputIt {
-  check_pointer_type_spec(specs.type, error_handler());
   return write_ptr<Char>(out, bit_cast<uintptr_t>(value), &specs);
 }
 
@@ -3654,12 +3727,12 @@ template <typename Char> struct udl_arg {
 #endif  // FMT_USE_USER_DEFINED_LITERALS
 
 template <typename Locale, typename Char>
-auto vformat(const Locale& loc, basic_string_view<Char> format_str,
+auto vformat(const Locale& loc, basic_string_view<Char> fmt,
              basic_format_args<buffer_context<type_identity_t<Char>>> args)
     -> std::basic_string<Char> {
-  basic_memory_buffer<Char> buffer;
-  detail::vformat_to(buffer, format_str, args, detail::locale_ref(loc));
-  return {buffer.data(), buffer.size()};
+  auto buf = basic_memory_buffer<Char>();
+  detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
+  return {buf.data(), buf.size()};
 }
 
 using format_func = void (*)(detail::buffer<char>&, int, const char*);
@@ -3871,16 +3944,13 @@ class bytes {
 
 template <> struct formatter<bytes> {
  private:
-  detail::dynamic_format_specs<char> specs_;
+  detail::dynamic_format_specs<> specs_;
 
  public:
   template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
-    auto result = parse_format_specs(ctx.begin(), ctx.end(), ctx,
-                                     detail::type::string_type);
-    specs_ = result.specs;
-    detail::check_string_type_spec(specs_.type, detail::error_handler());
-    return result.end;
+  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> const char* {
+    return parse_format_specs(ctx.begin(), ctx.end(), specs_, ctx,
+                              detail::type::string_type);
   }
 
   template <typename FormatContext>
@@ -3913,16 +3983,13 @@ template <typename T> auto group_digits(T value) -> group_digits_view<T> {
 
 template <typename T> struct formatter<group_digits_view<T>> : formatter<T> {
  private:
-  detail::dynamic_format_specs<char> specs_;
+  detail::dynamic_format_specs<> specs_;
 
  public:
   template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
-    auto result =
-        parse_format_specs(ctx.begin(), ctx.end(), ctx, detail::type::int_type);
-    specs_ = result.specs;
-    detail::check_string_type_spec(specs_.type, detail::error_handler());
-    return result.end;
+  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> const char* {
+    return parse_format_specs(ctx.begin(), ctx.end(), specs_, ctx,
+                              detail::type::int_type);
   }
 
   template <typename FormatContext>
@@ -3938,6 +4005,7 @@ template <typename T> struct formatter<group_digits_view<T>> : formatter<T> {
   }
 };
 
+// DEPRECATED! join_view will be moved to ranges.h.
 template <typename It, typename Sentinel, typename Char = char>
 struct join_view : detail::view {
   It begin;
@@ -3980,7 +4048,7 @@ struct formatter<join_view<It, Sentinel, Char>, Char> {
 
  public:
   template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
+  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> const Char* {
     return value_formatter_.parse(ctx);
   }
 
@@ -4074,8 +4142,7 @@ FMT_BEGIN_DETAIL_NAMESPACE
 
 template <typename Char>
 void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
-                basic_format_args<FMT_BUFFER_CONTEXT(Char)> args,
-                locale_ref loc) {
+                typename vformat_args<Char>::type args, locale_ref loc) {
   // workaround for msvc bug regarding name-lookup in module
   // link names into function scope
   using detail::arg_formatter;
@@ -4134,21 +4201,19 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
         -> const Char* {
       auto arg = get_arg(context, id);
       if (arg.type() == type::custom_type) {
-        parse_context.advance_to(parse_context.begin() +
-                                 (begin - &*parse_context.begin()));
+        parse_context.advance_to(begin);
         visit_format_arg(custom_formatter<Char>{parse_context, context}, arg);
         return parse_context.begin();
       }
-      auto result = parse_format_specs(begin, end, parse_context, arg.type());
+      auto specs = detail::dynamic_format_specs<Char>();
+      begin = parse_format_specs(begin, end, specs, parse_context, arg.type());
       detail::handle_dynamic_spec<detail::width_checker>(
-          result.specs.width, result.specs.width_ref, context);
+          specs.width, specs.width_ref, context);
       detail::handle_dynamic_spec<detail::precision_checker>(
-          result.specs.precision, result.specs.precision_ref, context);
-      begin = result.end;
+          specs.precision, specs.precision_ref, context);
       if (begin == end || *begin != '}')
         on_error("missing '}' in format string");
-      auto f =
-          arg_formatter<Char>{context.out(), result.specs, context.locale()};
+      auto f = arg_formatter<Char>{context.out(), specs, context.locale()};
       context.advance_to(visit_format_arg(f, arg));
       return begin;
     }
@@ -4157,9 +4222,9 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
 }
 
 #ifndef FMT_HEADER_ONLY
-extern template FMT_API void vformat_to(
-    buffer<char>&, string_view, basic_format_args<FMT_BUFFER_CONTEXT(char)>,
-    locale_ref);
+extern template FMT_API void vformat_to(buffer<char>&, string_view,
+                                        typename vformat_args<>::type,
+                                        locale_ref);
 extern template FMT_API auto thousands_sep_impl<char>(locale_ref)
     -> thousands_sep_result<char>;
 extern template FMT_API auto thousands_sep_impl<wchar_t>(locale_ref)
@@ -4233,9 +4298,8 @@ FMT_NODISCARD FMT_INLINE auto formatted_size(const Locale& loc,
                                              format_string<T...> fmt,
                                              T&&... args) -> size_t {
   auto buf = detail::counting_buffer<>();
-  detail::vformat_to(buf, string_view(fmt),
-                     format_args(fmt::make_format_args(args...)),
-                     detail::locale_ref(loc));
+  detail::vformat_to<char>(buf, fmt, fmt::make_format_args(args...),
+                           detail::locale_ref(loc));
   return buf.count();
 }
 
