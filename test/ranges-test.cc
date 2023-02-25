@@ -106,6 +106,7 @@ TEST(ranges_test, format_tuple) {
   auto t =
       std::tuple<int, float, std::string, char>(42, 1.5f, "this is tuple", 'i');
   EXPECT_EQ(fmt::format("{}", t), "(42, 1.5, \"this is tuple\", 'i')");
+
   EXPECT_EQ(fmt::format("{}", std::tuple<>()), "()");
 
   EXPECT_TRUE((fmt::is_formattable<std::tuple<>>::value));
@@ -116,6 +117,25 @@ TEST(ranges_test, format_tuple) {
   EXPECT_FALSE(
       (fmt::is_formattable<std::tuple<unformattable, unformattable>>::value));
   EXPECT_TRUE((fmt::is_formattable<std::tuple<int, float>>::value));
+}
+
+struct not_default_formattable {};
+struct bad_format {};
+
+FMT_BEGIN_NAMESPACE
+template <> struct formatter<not_default_formattable> {
+  auto parse(format_parse_context&) -> const char* { throw bad_format(); }
+  auto format(not_default_formattable, format_context& ctx)
+      -> format_context::iterator {
+    return ctx.out();
+  }
+};
+FMT_END_NAMESPACE
+
+TEST(ranges_test, tuple_parse_calls_element_parse) {
+  auto f = fmt::formatter<std::tuple<not_default_formattable>>();
+  auto ctx = fmt::format_parse_context("");
+  EXPECT_THROW(f.parse(ctx), bad_format);
 }
 
 #ifdef FMT_RANGES_TEST_ENABLE_FORMAT_STRUCT
@@ -170,8 +190,8 @@ TEST(ranges_test, path_like) {
   EXPECT_FALSE((fmt::is_range<path_like, char>::value));
 }
 
-// A range that provides non-const only begin()/end() to test fmt::join handles
-// that.
+// A range that provides non-const only begin()/end() to test fmt::join
+// handles that.
 //
 // Some ranges (e.g. those produced by range-v3's views::filter()) can cache
 // information during iteration so they only provide non-const begin()/end().
@@ -234,7 +254,6 @@ TEST(ranges_test, enum_range) {
 }
 
 #if !FMT_MSC_VERSION
-
 TEST(ranges_test, unformattable_range) {
   EXPECT_FALSE((fmt::has_formatter<std::vector<unformattable>,
                                    fmt::format_context>::value));
@@ -366,7 +385,7 @@ TEST(ranges_test, is_printable) {
   EXPECT_FALSE(is_printable(0x110000));
 }
 
-TEST(ranges_test, escape_string) {
+TEST(ranges_test, escape) {
   using vec = std::vector<std::string>;
   EXPECT_EQ(fmt::format("{}", vec{"\n\r\t\"\\"}), "[\"\\n\\r\\t\\\"\\\\\"]");
   EXPECT_EQ(fmt::format("{}", vec{"\x07"}), "[\"\\x07\"]");
@@ -386,8 +405,12 @@ TEST(ranges_test, escape_string) {
               "[\"\\xf0(\\x00\\x00anything\"]");
 
     // Correct utf-8.
-    EXPECT_EQ(fmt::format("{}", vec{"понедельник"}), "[\"понедельник\"]");
+    EXPECT_EQ(fmt::format("{}", vec{"🦄"}), "[\"🦄\"]");
   }
+
+  EXPECT_EQ(fmt::format("{}", std::vector<std::vector<char>>{{'x'}}),
+            "[['x']]");
+  EXPECT_EQ(fmt::format("{}", std::tuple<std::vector<char>>{{'x'}}), "(['x'])");
 }
 
 template <typename R> struct fmt_ref_view {
@@ -420,7 +443,7 @@ TEST(ranges_test, container_adaptor) {
   }
 
   {
-    std::stack<int> s;
+    auto s = std::stack<int>();
     s.push(1);
     s.push(2);
     EXPECT_EQ(fmt::format("{}", s), "[1, 2]");
@@ -428,14 +451,14 @@ TEST(ranges_test, container_adaptor) {
   }
 
   {
-    std::queue<int> q;
+    auto q = std::queue<int>();
     q.push(1);
     q.push(2);
     EXPECT_EQ(fmt::format("{}", q), "[1, 2]");
   }
 
   {
-    std::priority_queue<int> q;
+    auto q = std::priority_queue<int>();
     q.push(3);
     q.push(1);
     q.push(2);
@@ -444,7 +467,7 @@ TEST(ranges_test, container_adaptor) {
   }
 
   {
-    std::stack<char, std::string> s;
+    auto s = std::stack<char, std::string>();
     s.push('a');
     s.push('b');
     // See https://cplusplus.github.io/LWG/issue3881.
@@ -461,7 +484,7 @@ TEST(ranges_test, container_adaptor) {
       container_type c;
     };
 
-    my_container_adaptor m;
+    auto m = my_container_adaptor();
     m.push(1);
     m.push(2);
     EXPECT_EQ(fmt::format("{}", m), "[1, 2]");

@@ -504,7 +504,7 @@ inline std::tm localtime(std::time_t time) {
 }
 
 #if FMT_USE_LOCAL_TIME
-template <class Duration>
+template <typename Duration>
 inline auto localtime(std::chrono::local_time<Duration> time) -> std::tm {
   return localtime(std::chrono::system_clock::to_time_t(
       std::chrono::current_zone()->to_sys(time)));
@@ -1156,7 +1156,7 @@ void write_fractional_seconds(OutputIt& out, Duration d, int precision = -1) {
   }
 }
 
-// Format subseconds which are given as a floating point type with an appropiate
+// Format subseconds which are given as a floating point type with an appropriate
 // number of digits. We cannot pass the Duration here, as we explicitly need to
 // pass the Rep value in the chrono_formatter.
 template <typename Duration>
