@@ -437,7 +437,6 @@ struct range_formatter<
                     detail::has_fallback_formatter<T, Char>>>::value>> {
  private:
   detail::range_formatter_type<Char, T> underlying_;
-  bool custom_specs_ = false;
   basic_string_view<Char> separator_ = detail::string_literal<Char, ',', ' '>{};
   basic_string_view<Char> opening_bracket_ =
       detail::string_literal<Char, '['>{};
@@ -473,7 +472,6 @@ struct range_formatter<
 
     if (it != end && *it != '}') {
       if (*it != ':') FMT_THROW(format_error("invalid format specifier"));
-      custom_specs_ = true;
       ++it;
     } else {
       detail::maybe_set_debug_format(underlying_, true);
@@ -505,13 +503,14 @@ struct range_formatter<
 enum class range_format { disabled, map, set, sequence, string, debug_string };
 
 namespace detail {
-template <typename T> struct range_format_kind_ {
-  static constexpr auto value = std::is_same<range_reference_type<T>, T>::value
-                                    ? range_format::disabled
-                                : is_map<T>::value ? range_format::map
-                                : is_set<T>::value ? range_format::set
-                                                   : range_format::sequence;
-};
+template <typename T>
+struct range_format_kind_
+    : std::integral_constant<range_format,
+                             std::is_same<uncvref_type<T>, T>::value
+                                 ? range_format::disabled
+                             : is_map<T>::value ? range_format::map
+                             : is_set<T>::value ? range_format::set
+                                                : range_format::sequence> {};
 
 template <range_format K, typename R, typename Char, typename Enable = void>
 struct range_default_formatter;
