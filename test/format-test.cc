@@ -1489,8 +1489,15 @@ TEST(format_test, format_long_double) {
   safe_sprintf(buffer, "%Le", 392.65l);
   EXPECT_EQ(buffer, fmt::format("{0:e}", 392.65l));
   EXPECT_EQ("+0000392.6", fmt::format("{0:+010.4g}", 392.64l));
-  safe_sprintf(buffer, "%La", 3.31l);
-  EXPECT_EQ(buffer, fmt::format("{:a}", 3.31l));
+
+  auto ld = 3.31l;
+  if (fmt::detail::is_double_double<decltype(ld)>::value) {
+    safe_sprintf(buffer, "%a", static_cast<double>(ld));
+    EXPECT_EQ(buffer, fmt::format("{:a}", ld));
+  } else {
+    safe_sprintf(buffer, "%La", ld);
+    EXPECT_EQ(buffer, fmt::format("{:a}", ld));
+  }
 }
 
 TEST(format_test, format_char) {
@@ -2143,6 +2150,27 @@ FMT_END_NAMESPACE
 
 TEST(format_test, back_insert_slicing) {
   EXPECT_EQ(fmt::format("{}", check_back_appender{}), "y");
+}
+
+namespace test {
+enum class scoped_enum_as_int {};
+auto format_as(scoped_enum_as_int) -> int { return 42; }
+
+enum class scoped_enum_as_string_view {};
+auto format_as(scoped_enum_as_string_view) -> fmt::string_view { return "foo"; }
+
+enum class scoped_enum_as_string {};
+auto format_as(scoped_enum_as_string) -> std::string { return "foo"; }
+
+struct struct_as_int {};
+auto format_as(struct_as_int) -> int { return 42; }
+}  // namespace test
+
+TEST(format_test, format_as) {
+  EXPECT_EQ(fmt::format("{}", test::scoped_enum_as_int()), "42");
+  EXPECT_EQ(fmt::format("{}", test::scoped_enum_as_string_view()), "foo");
+  EXPECT_EQ(fmt::format("{}", test::scoped_enum_as_string()), "foo");
+  EXPECT_EQ(fmt::format("{}", test::struct_as_int()), "42");
 }
 
 template <typename Char, typename T> bool check_enabled_formatter() {

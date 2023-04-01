@@ -138,20 +138,6 @@
 #  endif
 #endif
 
-#ifndef FMT_DEPRECATED
-#  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VERSION >= 1900
-#    define FMT_DEPRECATED [[deprecated]]
-#  else
-#    if (defined(__GNUC__) && !defined(__LCC__)) || defined(__clang__)
-#      define FMT_DEPRECATED __attribute__((deprecated))
-#    elif FMT_MSC_VERSION
-#      define FMT_DEPRECATED __declspec(deprecated)
-#    else
-#      define FMT_DEPRECATED /* deprecated */
-#    endif
-#  endif
-#endif
-
 // Disable [[noreturn]] on MSVC/NVCC because of bogus unreachable code warnings.
 #if FMT_EXCEPTIONS && FMT_HAS_CPP_ATTRIBUTE(noreturn) && !FMT_MSC_VERSION && \
     !defined(__NVCC__)
@@ -160,33 +146,12 @@
 #  define FMT_NORETURN
 #endif
 
-#if FMT_HAS_CPP17_ATTRIBUTE(fallthrough)
-#  define FMT_FALLTHROUGH [[fallthrough]]
-#elif defined(__clang__)
-#  define FMT_FALLTHROUGH [[clang::fallthrough]]
-#elif FMT_GCC_VERSION >= 700 && \
-    (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 520)
-#  define FMT_FALLTHROUGH [[gnu::fallthrough]]
-#else
-#  define FMT_FALLTHROUGH
-#endif
-
 #ifndef FMT_NODISCARD
 #  if FMT_HAS_CPP17_ATTRIBUTE(nodiscard)
 #    define FMT_NODISCARD [[nodiscard]]
 #  else
 #    define FMT_NODISCARD
 #  endif
-#endif
-
-#ifndef FMT_USE_FLOAT
-#  define FMT_USE_FLOAT 1
-#endif
-#ifndef FMT_USE_DOUBLE
-#  define FMT_USE_DOUBLE 1
-#endif
-#ifndef FMT_USE_LONG_DOUBLE
-#  define FMT_USE_LONG_DOUBLE 1
 #endif
 
 #ifndef FMT_INLINE
@@ -329,6 +294,12 @@ struct monostate {
 #  define FMT_ENABLE_IF(...) fmt::enable_if_t<(__VA_ARGS__), int> = 0
 #endif
 
+#ifdef __cpp_lib_byte
+inline auto format_as(std::byte b) -> unsigned char {
+  return static_cast<unsigned char>(b);
+}
+#endif
+
 FMT_BEGIN_DETAIL_NAMESPACE
 
 // Suppresses "unused variable" warnings with the method described in
@@ -366,12 +337,12 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 #  ifdef NDEBUG
 // FMT_ASSERT is not empty to avoid -Wempty-body.
 #    define FMT_ASSERT(condition, message) \
-      ::fmt::detail::ignore_unused((condition), (message))
+      fmt::detail::ignore_unused((condition), (message))
 #  else
 #    define FMT_ASSERT(condition, message)                                    \
       ((condition) /* void() fails with -Winvalid-constexpr on clang 4.0.1 */ \
            ? (void)0                                                          \
-           : ::fmt::detail::assert_fail(__FILE__, __LINE__, (message)))
+           : fmt::detail::assert_fail(__FILE__, __LINE__, (message)))
 #  endif
 #endif
 
@@ -1154,20 +1125,6 @@ auto get_iterator(buffer<T>&, OutputIt out) -> OutputIt {
   return out;
 }
 
-template <typename T, typename Char = char, typename Enable = void>
-struct fallback_formatter {
-  fallback_formatter() = delete;
-};
-
-// Specifies if T has an enabled fallback_formatter specialization.
-template <typename T, typename Char>
-using has_fallback_formatter =
-#ifdef FMT_DEPRECATED_OSTREAM
-    std::is_constructible<fallback_formatter<T, Char>>;
-#else
-    std::false_type;
-#endif
-
 struct view {};
 
 template <typename Char, typename T> struct named_arg : view {
@@ -1326,10 +1283,7 @@ template <typename Context> class value {
     // have different extension points, e.g. `formatter<T>` for `format` and
     // `printf_formatter<T>` for `printf`.
     custom.format = format_custom_arg<
-        value_type,
-        conditional_t<has_formatter<value_type, Context>::value,
-                      typename Context::template formatter_type<value_type>,
-                      fallback_formatter<value_type, char_type>>>;
+        value_type, typename Context::template formatter_type<value_type>>;
   }
   value(unformattable);
   value(unformattable_char);
@@ -1358,12 +1312,6 @@ FMT_CONSTEXPR auto make_arg(T&& value) -> basic_format_arg<Context>;
 enum { long_short = sizeof(long) == sizeof(int) };
 using long_type = conditional_t<long_short, int, long long>;
 using ulong_type = conditional_t<long_short, unsigned, unsigned long long>;
-
-#ifdef __cpp_lib_byte
-inline auto format_as(std::byte b) -> unsigned char {
-  return static_cast<unsigned char>(b);
-}
-#endif
 
 template <typename T> struct format_as_result {
   template <typename U,
@@ -1493,8 +1441,7 @@ template <typename Context> struct arg_mapper {
   template <typename T, typename U = remove_cvref_t<T>>
   struct formattable
       : bool_constant<has_const_formatter<U, Context>() ||
-                      !std::is_const<remove_reference_t<T>>::value ||
-                      has_fallback_formatter<U, char_type>::value> {};
+                      !std::is_const<remove_reference_t<T>>::value> {};
 
 #if (FMT_MSC_VERSION != 0 && FMT_MSC_VERSION < 1910) || \
     FMT_ICC_VERSION != 0 || defined(__NVCC__)
@@ -1518,8 +1465,7 @@ template <typename Context> struct arg_mapper {
                           !std::is_array<U>::value &&
                           !std::is_pointer<U>::value &&
                           !std::is_arithmetic<format_as_t<U>>::value &&
-                          (has_formatter<U, Context>::value ||
-                           has_fallback_formatter<U, char_type>::value))>
+                          has_formatter<U, Context>::value)>
   FMT_CONSTEXPR FMT_INLINE auto map(T&& val)
       -> decltype(this->do_map(std::forward<T>(val))) {
     return do_map(std::forward<T>(val));
@@ -1770,9 +1716,9 @@ FMT_CONSTEXPR auto make_arg(T&& value) -> basic_format_arg<Context> {
   return arg;
 }
 
-// The type template parameter is there to avoid an ODR violation when using
-// a fallback formatter in one translation unit and an implicit conversion in
-// another (not recommended).
+// The DEPRECATED type template parameter is there to avoid an ODR violation
+// when using a fallback formatter in one translation unit and an implicit
+// conversion in another (not recommended).
 template <bool IS_PACKED, typename Context, type, typename T,
           FMT_ENABLE_IF(IS_PACKED)>
 FMT_CONSTEXPR FMT_INLINE auto make_arg(T&& val) -> value<Context> {
@@ -1843,11 +1789,9 @@ using buffer_context =
 using format_context = buffer_context<char>;
 
 template <typename T, typename Char = char>
-using is_formattable = bool_constant<
-    !std::is_base_of<detail::unformattable,
-                     decltype(detail::arg_mapper<buffer_context<Char>>().map(
-                         std::declval<T>()))>::value &&
-    !detail::has_fallback_formatter<T, Char>::value>;
+using is_formattable = bool_constant<!std::is_base_of<
+    detail::unformattable, decltype(detail::arg_mapper<buffer_context<Char>>()
+                                        .map(std::declval<T>()))>::value>;
 
 /**
   \rst
@@ -2104,7 +2048,6 @@ FMT_END_DETAIL_NAMESPACE
 
 enum class presentation_type : unsigned char {
   none,
-  // Integer types should go first,
   dec,             // 'd'
   oct,             // 'o'
   hex_lower,       // 'x'
@@ -2626,15 +2569,11 @@ FMT_CONSTEXPR auto parse_format_specs(ParseContext& ctx)
     -> decltype(ctx.begin()) {
   using char_type = typename ParseContext::char_type;
   using context = buffer_context<char_type>;
-  using stripped_type = typename strip_named_arg<T>::type;
   using mapped_type = conditional_t<
       mapped_type_constant<T, context>::value != type::custom_type,
       decltype(arg_mapper<context>().map(std::declval<const T&>())),
-      stripped_type>;
-  auto f = conditional_t<has_formatter<mapped_type, context>::value,
-                         formatter<mapped_type, char_type>,
-                         fallback_formatter<stripped_type, char_type>>();
-  return f.parse(ctx);
+      typename strip_named_arg<T>::type>;
+  return formatter<mapped_type, char_type>().parse(ctx);
 }
 
 // Checks char specs and returns true iff the presentation type is char-like.
