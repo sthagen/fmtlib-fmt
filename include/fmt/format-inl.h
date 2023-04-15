@@ -9,13 +9,9 @@
 #define FMT_FORMAT_INL_H_
 
 #include <algorithm>
-#include <cctype>
 #include <cerrno>  // errno
 #include <climits>
 #include <cmath>
-#include <cstdarg>
-#include <cstring>  // std::memmove
-#include <cwchar>
 #include <exception>
 
 #ifndef FMT_STATIC_THOUSANDS_SEPARATOR
@@ -148,10 +144,6 @@ FMT_API FMT_FUNC auto format_facet<std::locale>::do_put(
 }
 #endif
 
-#if !FMT_MSC_VERSION
-FMT_API FMT_FUNC format_error::~format_error() noexcept = default;
-#endif
-
 FMT_FUNC std::system_error vsystem_error(int error_code, string_view format_str,
                                          format_args args) {
   auto ec = std::error_code(error_code, std::generic_category());
@@ -203,7 +195,7 @@ inline int floor_log10_pow2_minus_log10_4_over_3(int e) noexcept {
   return (e * 631305 - 261663) >> 21;
 }
 
-static constexpr struct {
+FMT_INLINE_VARIABLE constexpr struct {
   uint32_t divisor;
   int shift_amount;
 } div_small_pow10_infos[] = {{10, 16}, {100, 16}};

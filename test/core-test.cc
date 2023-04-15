@@ -88,25 +88,6 @@ TEST(string_view_test, compare) {
   check_op<std::greater_equal>();
 }
 
-namespace test_ns {
-template <typename Char> class test_string {
- private:
-  std::basic_string<Char> s_;
-
- public:
-  test_string(const Char* s) : s_(s) {}
-  auto data() const -> const Char* { return s_.data(); }
-  auto length() const -> size_t { return s_.size(); }
-  operator const Char*() const { return s_.c_str(); }
-};
-
-template <typename Char>
-auto to_string_view(const test_string<Char>& s)
-    -> fmt::basic_string_view<Char> {
-  return {s.data(), s.length()};
-}
-}  // namespace test_ns
-
 TEST(core_test, is_output_iterator) {
   EXPECT_TRUE((fmt::detail::is_output_iterator<char*, char>::value));
   EXPECT_FALSE((fmt::detail::is_output_iterator<const char*, char>::value));
@@ -691,7 +672,8 @@ TEST(core_test, is_formattable) {
   static_assert(fmt::is_formattable<enabled_formatter>::value, "");
   static_assert(!fmt::is_formattable<enabled_ptr_formatter*>::value, "");
   static_assert(!fmt::is_formattable<disabled_formatter>::value, "");
-  static_assert(fmt::is_formattable<disabled_formatter_convertible>::value, "");
+  static_assert(!fmt::is_formattable<disabled_formatter_convertible>::value,
+                "");
 
   static_assert(fmt::is_formattable<const_formattable&>::value, "");
   static_assert(fmt::is_formattable<const const_formattable&>::value, "");
@@ -769,15 +751,6 @@ TEST(core_test, adl_check) {
   EXPECT_EQ(fmt::format("{}", test_struct()), "test");
 }
 
-TEST(core_test, to_string_view_foreign_strings) {
-  using namespace test_ns;
-  EXPECT_EQ(to_string_view(test_string<char>("42")), "42");
-  fmt::detail::type type =
-      fmt::detail::mapped_type_constant<test_string<char>,
-                                        fmt::format_context>::value;
-  EXPECT_EQ(type, fmt::detail::type::string_type);
-}
-
 struct implicitly_convertible_to_string_view {
   operator fmt::string_view() const { return "foo"; }
 };
@@ -825,25 +798,6 @@ TEST(core_test, format_explicitly_convertible_to_std_string_view) {
 }
 #  endif
 #endif
-
-struct convertible_to_long_long {
-  operator long long() const { return 1LL << 32; }
-};
-
-TEST(core_test, format_convertible_to_long_long) {
-  EXPECT_EQ("100000000", fmt::format("{:x}", convertible_to_long_long()));
-}
-
-struct disabled_rvalue_conversion {
-  operator const char*() const& { return "foo"; }
-  operator const char*() & { return "foo"; }
-  operator const char*() const&& = delete;
-  operator const char*() && = delete;
-};
-
-TEST(core_test, disabled_rvalue_conversion) {
-  EXPECT_EQ("foo", fmt::format("{}", disabled_rvalue_conversion()));
-}
 
 namespace adl_test {
 template <typename... T> void make_format_args(const T&...) = delete;
