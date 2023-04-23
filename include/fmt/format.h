@@ -225,7 +225,8 @@ inline auto clzll(uint64_t x) -> int {
   _BitScanReverse64(&r, x);
 #  else
   // Scan the high 32 bits.
-  if (_BitScanReverse(&r, static_cast<uint32_t>(x >> 32))) return 63 ^ (r + 32);
+  if (_BitScanReverse(&r, static_cast<uint32_t>(x >> 32)))
+    return 63 ^ static_cast<int>(r + 32);
   // Scan the low 32 bits.
   _BitScanReverse(&r, static_cast<uint32_t>(x));
 #  endif
@@ -1039,9 +1040,7 @@ struct is_contiguous<basic_memory_buffer<T, SIZE, Allocator>> : std::true_type {
 };
 
 namespace detail {
-#ifdef _WIN32
 FMT_API bool write_console(std::FILE* f, string_view text);
-#endif
 FMT_API void print(std::FILE*, string_view);
 }  // namespace detail
 
@@ -4492,18 +4491,6 @@ FMT_BEGIN_DETAIL_NAMESPACE
 template <typename Char>
 void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
                 typename vformat_args<Char>::type args, locale_ref loc) {
-  // workaround for msvc bug regarding name-lookup in module
-  // link names into function scope
-  using detail::arg_formatter;
-  using detail::buffer_appender;
-  using detail::custom_formatter;
-  using detail::default_arg_formatter;
-  using detail::get_arg;
-  using detail::locale_ref;
-  using detail::parse_format_specs;
-  using detail::to_unsigned;
-  using detail::type;
-  using detail::write;
   auto out = buffer_appender<Char>(buf);
   if (fmt.size() == 2 && equal2(fmt.data(), "{}")) {
     auto arg = args.get(0);
