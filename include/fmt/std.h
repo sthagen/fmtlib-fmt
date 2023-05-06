@@ -56,12 +56,13 @@ void write_escaped_path(basic_memory_buffer<Char>& quoted,
 }
 #  ifdef _WIN32
 template <>
-inline void write_escaped_path<char>(basic_memory_buffer<char>& quoted,
+inline void write_escaped_path<char>(memory_buffer& quoted,
                                      const std::filesystem::path& p) {
-  auto s = p.u8string();
-  write_escaped_string<char>(
-      std::back_inserter(quoted),
-      string_view(reinterpret_cast<const char*>(s.c_str()), s.size()));
+  auto buf = basic_memory_buffer<wchar_t>();
+  write_escaped_string<wchar_t>(std::back_inserter(buf), p.native());
+  // Convert UTF-16 to UTF-8.
+  if (!unicode_to_utf8<wchar_t>::convert(quoted, {buf.data(), buf.size()}))
+    FMT_THROW(std::runtime_error("invalid utf16"));
 }
 #  endif
 template <>
@@ -86,7 +87,7 @@ struct formatter<std::filesystem::path, Char>
   template <typename FormatContext>
   auto format(const std::filesystem::path& p, FormatContext& ctx) const ->
       typename FormatContext::iterator {
-    basic_memory_buffer<Char> quoted;
+    auto quoted = basic_memory_buffer<Char>();
     detail::write_escaped_path(quoted, p);
     return formatter<basic_string_view<Char>>::format(
         basic_string_view<Char>(quoted.data(), quoted.size()), ctx);
