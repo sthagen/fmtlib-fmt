@@ -377,8 +377,8 @@ auto write_encoded_tm_str(OutputIt out, string_view in, const std::locale& loc)
     unit_t unit;
     write_codecvt(unit, in, loc);
     // In UTF-8 is used one to four one-byte code units.
-    unicode_to_utf8<code_unit, basic_memory_buffer<char, unit_t::max_size * 4>>
-        u;
+    auto u =
+        to_utf8<code_unit, basic_memory_buffer<char, unit_t::max_size * 4>>();
     if (!u.convert({unit.buf, to_unsigned(unit.end - unit.buf)}))
       FMT_THROW(format_error("failed to format time"));
     return copy_str<char>(u.c_str(), u.c_str() + u.size(), out);
@@ -1360,8 +1360,6 @@ class tm_writer {
 
   OutputIt out() const { return out_; }
 
-  const std::locale& locale() const { return loc_; }
-
   FMT_CONSTEXPR void on_text(const Char* begin, const Char* end) {
     out_ = copy_str<Char>(begin, end, out_);
   }
@@ -1640,7 +1638,8 @@ struct chrono_format_checker : null_chrono_spec_handler<chrono_format_checker> {
   FMT_CONSTEXPR void on_duration_unit() {}
 };
 
-template <typename T, FMT_ENABLE_IF(std::is_integral<T>::value && has_isfinite<T>::value)>
+template <typename T,
+          FMT_ENABLE_IF(std::is_integral<T>::value&& has_isfinite<T>::value)>
 inline bool isfinite(T) {
   return true;
 }
@@ -2143,7 +2142,8 @@ struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
           epoch - std::chrono::duration_cast<std::chrono::seconds>(epoch));
 
       if (subsecs.count() < 0) {
-        auto second = std::chrono::seconds(1);
+        auto second = std::chrono::duration_cast<Duration>(
+            std::chrono::seconds(1));
         if (epoch.count() < ((Duration::min)() + second).count())
           FMT_THROW(format_error("duration is too small"));
         subsecs += second;

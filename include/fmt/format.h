@@ -84,12 +84,6 @@
 #  define FMT_GCC_VISIBILITY_HIDDEN
 #endif
 
-#ifdef __NVCC__
-#  define FMT_CUDA_VERSION (__CUDACC_VER_MAJOR__ * 100 + __CUDACC_VER_MINOR__)
-#else
-#  define FMT_CUDA_VERSION 0
-#endif
-
 #ifdef __has_builtin
 #  define FMT_HAS_BUILTIN(x) __has_builtin(x)
 #else
@@ -1419,14 +1413,13 @@ class utf8_to_utf16 {
 };
 
 // A converter from UTF-16/UTF-32 (host endian) to UTF-8.
-template <typename WChar, typename Buffer = memory_buffer>
-class unicode_to_utf8 {
+template <typename WChar, typename Buffer = memory_buffer> class to_utf8 {
  private:
   Buffer buffer_;
 
  public:
-  unicode_to_utf8() {}
-  explicit unicode_to_utf8(basic_string_view<WChar> s) {
+  to_utf8() {}
+  explicit to_utf8(basic_string_view<WChar> s) {
     static_assert(sizeof(WChar) == 2 || sizeof(WChar) == 4,
                   "Expect utf16 or utf32");
 
@@ -2027,16 +2020,14 @@ auto write_escaped_cp(OutputIt out, const find_escape_result<Char>& escape)
     *out++ = static_cast<Char>('\\');
     break;
   default:
-    if (is_utf8()) {
-      if (escape.cp < 0x100) {
-        return write_codepoint<2, Char>(out, 'x', escape.cp);
-      }
-      if (escape.cp < 0x10000) {
-        return write_codepoint<4, Char>(out, 'u', escape.cp);
-      }
-      if (escape.cp < 0x110000) {
-        return write_codepoint<8, Char>(out, 'U', escape.cp);
-      }
+    if (escape.cp < 0x100) {
+      return write_codepoint<2, Char>(out, 'x', escape.cp);
+    }
+    if (escape.cp < 0x10000) {
+      return write_codepoint<4, Char>(out, 'u', escape.cp);
+    }
+    if (escape.cp < 0x110000) {
+      return write_codepoint<8, Char>(out, 'U', escape.cp);
     }
     for (Char escape_char : basic_string_view<Char>(
              escape.begin, to_unsigned(escape.end - escape.begin))) {
@@ -4187,22 +4178,22 @@ FMT_API auto vsystem_error(int error_code, string_view format_str,
                            format_args args) -> std::system_error;
 
 /**
- \rst
- Constructs :class:`std::system_error` with a message formatted with
- ``fmt::format(fmt, args...)``.
+  \rst
+  Constructs :class:`std::system_error` with a message formatted with
+  ``fmt::format(fmt, args...)``.
   *error_code* is a system error code as given by ``errno``.
 
- **Example**::
+  **Example**::
 
-   // This throws std::system_error with the description
-   //   cannot open file 'madeup': No such file or directory
-   // or similar (system message may vary).
-   const char* filename = "madeup";
-   std::FILE* file = std::fopen(filename, "r");
-   if (!file)
-     throw fmt::system_error(errno, "cannot open file '{}'", filename);
- \endrst
-*/
+    // This throws std::system_error with the description
+    //   cannot open file 'madeup': No such file or directory
+    // or similar (system message may vary).
+    const char* filename = "madeup";
+    std::FILE* file = std::fopen(filename, "r");
+    if (!file)
+      throw fmt::system_error(errno, "cannot open file '{}'", filename);
+  \endrst
+ */
 template <typename... T>
 auto system_error(int error_code, format_string<T...> fmt, T&&... args)
     -> std::system_error {
