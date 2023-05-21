@@ -178,8 +178,8 @@
     }
 #endif
 
-#ifndef FMT_MODULE_EXPORT
-#  define FMT_MODULE_EXPORT
+#ifndef FMT_EXPORT
+#  define FMT_EXPORT
 #  define FMT_BEGIN_EXPORT
 #  define FMT_END_EXPORT
 #endif
@@ -291,6 +291,7 @@ struct monostate {
 #  define FMT_ENABLE_IF(...) fmt::enable_if_t<(__VA_ARGS__), int> = 0
 #endif
 
+// This is defined in core.h instead of format.h to avoid injecting in std.
 #ifdef __cpp_lib_byte
 inline auto format_as(std::byte b) -> unsigned char {
   return static_cast<unsigned char>(b);
@@ -396,7 +397,7 @@ FMT_CONSTEXPR inline auto is_utf8() -> bool {
   compiled with a different ``-std`` option than the client code (which is not
   recommended).
  */
-FMT_MODULE_EXPORT
+FMT_EXPORT
 template <typename Char> class basic_string_view {
  private:
   const Char* data_;
@@ -499,11 +500,11 @@ template <typename Char> class basic_string_view {
   }
 };
 
-FMT_MODULE_EXPORT
+FMT_EXPORT
 using string_view = basic_string_view<char>;
 
 /** Specifies if ``T`` is a character type. Can be specialized by users. */
-FMT_MODULE_EXPORT
+FMT_EXPORT
 template <typename T> struct is_char : std::false_type {};
 template <> struct is_char<char> : std::true_type {};
 
@@ -651,7 +652,7 @@ template <typename S> using char_t = typename detail::char_t_impl<S>::type;
   You can use the ``format_parse_context`` type alias for ``char`` instead.
   \endrst
  */
-FMT_MODULE_EXPORT
+FMT_EXPORT
 template <typename Char> class basic_format_parse_context {
  private:
   basic_string_view<Char> format_str_;
@@ -717,7 +718,7 @@ template <typename Char> class basic_format_parse_context {
   FMT_CONSTEXPR void check_dynamic_spec(int arg_id);
 };
 
-FMT_MODULE_EXPORT
+FMT_EXPORT
 using format_parse_context = basic_format_parse_context<char>;
 
 namespace detail {
@@ -1059,12 +1060,12 @@ FMT_CONSTEXPR void basic_format_parse_context<Char>::check_dynamic_spec(
   }
 }
 
-FMT_MODULE_EXPORT template <typename Context> class basic_format_arg;
-FMT_MODULE_EXPORT template <typename Context> class basic_format_args;
-FMT_MODULE_EXPORT template <typename Context> class dynamic_format_arg_store;
+FMT_EXPORT template <typename Context> class basic_format_arg;
+FMT_EXPORT template <typename Context> class basic_format_args;
+FMT_EXPORT template <typename Context> class dynamic_format_arg_store;
 
 // A formatter for objects of type T.
-FMT_MODULE_EXPORT
+FMT_EXPORT
 template <typename T, typename Char = char, typename Enable = void>
 struct formatter {
   // A deleted default constructor indicates a disabled formatter.
@@ -1646,7 +1647,7 @@ template <typename Context> class basic_format_arg {
   ``vis(value)`` will be called with the value of type ``double``.
   \endrst
  */
-FMT_MODULE_EXPORT
+FMT_EXPORT
 template <typename Visitor, typename Context>
 FMT_CONSTEXPR FMT_INLINE auto visit_format_arg(
     Visitor&& vis, const basic_format_arg<Context>& arg) -> decltype(vis(0)) {
@@ -1954,7 +1955,7 @@ template <typename Context> class basic_format_args {
 /** An alias to ``basic_format_args<format_context>``. */
 // A separate type would result in shorter symbols but break ABI compatibility
 // between clang and gcc on ARM (#1919).
-FMT_MODULE_EXPORT using format_args = basic_format_args<format_context>;
+FMT_EXPORT using format_args = basic_format_args<format_context>;
 
 // We cannot use enum classes as bit fields because of a gcc bug, so we put them
 // in namespaces instead (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=61414).
@@ -2693,7 +2694,7 @@ struct formatter<T, Char,
   template <typename Char>                                               \
   struct formatter<Type, Char> : formatter<Base, Char> {                 \
     template <typename FormatContext>                                    \
-    auto format(const Type& val, FormatContext& ctx) const               \
+    auto format(Type const& val, FormatContext& ctx) const               \
         -> decltype(ctx.out()) {                                         \
       return formatter<Base, Char>::format(static_cast<Base>(val), ctx); \
     }                                                                    \
@@ -2703,8 +2704,8 @@ FMT_FORMAT_AS(signed char, int);
 FMT_FORMAT_AS(unsigned char, unsigned);
 FMT_FORMAT_AS(short, int);
 FMT_FORMAT_AS(unsigned short, unsigned);
-FMT_FORMAT_AS(long, long long);
-FMT_FORMAT_AS(unsigned long, unsigned long long);
+FMT_FORMAT_AS(long, detail::long_type);
+FMT_FORMAT_AS(unsigned long, detail::ulong_type);
 FMT_FORMAT_AS(Char*, const Char*);
 FMT_FORMAT_AS(std::basic_string<Char>, basic_string_view<Char>);
 FMT_FORMAT_AS(std::nullptr_t, const void*);
