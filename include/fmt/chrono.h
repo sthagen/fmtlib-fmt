@@ -530,7 +530,7 @@ inline std::tm gmtime(
   return gmtime(std::chrono::system_clock::to_time_t(time_point));
 }
 
-FMT_BEGIN_DETAIL_NAMESPACE
+namespace detail {
 
 // DEPRECATED!
 template <typename Char>
@@ -1997,7 +1997,7 @@ struct chrono_formatter {
   }
 };
 
-FMT_END_DETAIL_NAMESPACE
+}  // namespace detail
 
 #if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907
 using weekday = std::chrono::weekday;
@@ -2135,15 +2135,16 @@ struct formatter<std::chrono::time_point<std::chrono::system_clock, Duration>,
   auto format(std::chrono::time_point<std::chrono::system_clock, Duration> val,
               FormatContext& ctx) const -> decltype(ctx.out()) {
     using period = typename Duration::period;
-    if (period::num != 1 || period::den != 1 ||
-        std::is_floating_point<typename Duration::rep>::value) {
+    if (detail::const_check(
+            period::num != 1 || period::den != 1 ||
+            std::is_floating_point<typename Duration::rep>::value)) {
       const auto epoch = val.time_since_epoch();
       auto subsecs = std::chrono::duration_cast<Duration>(
           epoch - std::chrono::duration_cast<std::chrono::seconds>(epoch));
 
       if (subsecs.count() < 0) {
-        auto second = std::chrono::duration_cast<Duration>(
-            std::chrono::seconds(1));
+        auto second =
+            std::chrono::duration_cast<Duration>(std::chrono::seconds(1));
         if (epoch.count() < ((Duration::min)() + second).count())
           FMT_THROW(format_error("duration is too small"));
         subsecs += second;
