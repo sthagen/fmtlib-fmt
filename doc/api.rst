@@ -124,7 +124,7 @@ parsing and formatting. To use this method specialize the ``formatter`` struct
 template for your type and implement ``parse`` and ``format`` methods.
 For example::
 
-  #include <fmt/format.h>
+  #include <fmt/core.h>
 
   struct point {
     double x, y;
@@ -156,7 +156,7 @@ For example::
       if (it != end && (*it == 'f' || *it == 'e')) presentation = *it++;
 
       // Check if reached the end of the range:
-      if (it != end && *it != '}') throw format_error("invalid format");
+      if (it != end && *it != '}') throw_format_error("invalid format");
 
       // Return an iterator past the end of the parsed range:
       return it;
@@ -635,7 +635,7 @@ the POSIX extension for positional arguments. Unlike their standard
 counterparts, the ``fmt`` functions are type-safe and throw an exception if an
 argument type doesn't match its format specification.
 
-.. doxygenfunction:: printf(string_view fmt, const T&... args)
+.. doxygenfunction:: printf(string_view fmt, const T&... args) -> int
 
 .. doxygenfunction:: fprintf(std::FILE *f, const S &fmt, const T&... args) -> int
 

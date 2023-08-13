@@ -1472,6 +1472,7 @@ TEST(format_test, format_long_double) {
   EXPECT_EQ("0", fmt::format("{0:}", 0.0l));
   EXPECT_EQ("0.000000", fmt::format("{0:f}", 0.0l));
   EXPECT_EQ("0.0", fmt::format("{:.1f}", 0.000000001l));
+  EXPECT_EQ("0.10", fmt::format("{:.2f}", 0.099l));
   EXPECT_EQ("392.65", fmt::format("{0:}", 392.65l));
   EXPECT_EQ("392.65", fmt::format("{0:g}", 392.65l));
   EXPECT_EQ("392.65", fmt::format("{0:G}", 392.65l));
@@ -2138,6 +2139,13 @@ TEST(format_test, format_as) {
   EXPECT_EQ(fmt::format("{}", test::scoped_enum_as_string_view()), "foo");
   EXPECT_EQ(fmt::format("{}", test::scoped_enum_as_string()), "foo");
   EXPECT_EQ(fmt::format("{}", test::struct_as_int()), "42");
+}
+
+TEST(format_test, format_as_to_string) {
+  EXPECT_EQ(fmt::to_string(test::scoped_enum_as_int()), "42");
+  EXPECT_EQ(fmt::to_string(test::scoped_enum_as_string_view()), "foo");
+  EXPECT_EQ(fmt::to_string(test::scoped_enum_as_string()), "foo");
+  EXPECT_EQ(fmt::to_string(test::struct_as_int()), "42");
 }
 
 template <typename Char, typename T> bool check_enabled_formatter() {

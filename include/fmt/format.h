@@ -920,7 +920,7 @@ class basic_memory_buffer final : public detail::buffer<T> {
  private:
   T store_[SIZE];
 
-  // Don't inherit from Allocator avoid generating type_info for it.
+  // Don't inherit from Allocator to avoid generating type_info for it.
   FMT_NO_UNIQUE_ADDRESS Allocator alloc_;
 
   // Deallocate memory allocated by the buffer.
@@ -1741,14 +1741,14 @@ template <typename T = void> struct basic_data {
   // The kth entry is chosen to be the smallest integer such that the
   // upper 32-bits of 10^(k+1) times it is strictly bigger than 5 * 10^k.
   static constexpr uint32_t fractional_part_rounding_thresholds[8] = {
-      2576980378,  // ceil(2^31 + 2^32/10^1)
-      2190433321,  // ceil(2^31 + 2^32/10^2)
-      2151778616,  // ceil(2^31 + 2^32/10^3)
-      2147913145,  // ceil(2^31 + 2^32/10^4)
-      2147526598,  // ceil(2^31 + 2^32/10^5)
-      2147487943,  // ceil(2^31 + 2^32/10^6)
-      2147484078,  // ceil(2^31 + 2^32/10^7)
-      2147483691   // ceil(2^31 + 2^32/10^8)
+      2576980378U,  // ceil(2^31 + 2^32/10^1)
+      2190433321U,  // ceil(2^31 + 2^32/10^2)
+      2151778616U,  // ceil(2^31 + 2^32/10^3)
+      2147913145U,  // ceil(2^31 + 2^32/10^4)
+      2147526598U,  // ceil(2^31 + 2^32/10^5)
+      2147487943U,  // ceil(2^31 + 2^32/10^6)
+      2147484078U,  // ceil(2^31 + 2^32/10^7)
+      2147483691U   // ceil(2^31 + 2^32/10^8)
   };
 };
 // This is a struct rather than an alias to avoid shadowing warnings in gcc.
@@ -2896,7 +2896,7 @@ class bigint {
     auto size = other.bigits_.size();
     bigits_.resize(size);
     auto data = other.bigits_.data();
-    std::copy(data, data + size, bigits_.data());
+    copy_str<bigit>(data, data + size, bigits_.data());
     exp_ = other.exp_;
   }
 
@@ -3178,7 +3178,8 @@ FMT_CONSTEXPR20 inline void format_dragon(basic_fp<uint128_t> value,
       }
       if (buf[0] == overflow) {
         buf[0] = '1';
-        ++exp10;
+        if ((flags & dragon::fixed) != 0) buf.push_back('0');
+        else ++exp10;
       }
       return;
     }
@@ -4286,7 +4287,8 @@ auto join(Range&& range, string_view sep)
     std::string answer = fmt::to_string(42);
   \endrst
  */
-template <typename T, FMT_ENABLE_IF(!std::is_integral<T>::value)>
+template <typename T, FMT_ENABLE_IF(!std::is_integral<T>::value &&
+                                    !detail::has_format_as<T>::value)>
 inline auto to_string(const T& value) -> std::string {
   auto buffer = memory_buffer();
   detail::write<char>(appender(buffer), value);
@@ -4309,6 +4311,12 @@ FMT_NODISCARD auto to_string(const basic_memory_buffer<Char, SIZE>& buf)
   auto size = buf.size();
   detail::assume(size < std::basic_string<Char>().max_size());
   return std::basic_string<Char>(buf.data(), size);
+}
+
+template <typename T, FMT_ENABLE_IF(!std::is_integral<T>::value &&
+                                    detail::has_format_as<T>::value)>
+inline auto to_string(const T& value) -> std::string {
+  return to_string(format_as(value));
 }
 
 namespace detail {
