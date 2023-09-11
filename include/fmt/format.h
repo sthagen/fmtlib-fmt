@@ -1394,7 +1394,7 @@ FMT_CONSTEXPR inline auto format_uint(It out, UInt value, int num_digits,
     return out;
   }
   // Buffer should be large enough to hold all digits (digits / BASE_BITS + 1).
-  char buffer[num_bits<UInt>() / BASE_BITS + 1];
+  char buffer[num_bits<UInt>() / BASE_BITS + 1] = {};
   format_uint<BASE_BITS>(buffer, value, num_digits, upper);
   return detail::copy_str_noinline<Char>(buffer, buffer + num_digits, out);
 }
@@ -4195,6 +4195,38 @@ template <typename T> struct formatter<group_digits_view<T>> : formatter<T> {
     return detail::write_int(
         ctx.out(), static_cast<detail::uint64_or_128_t<T>>(t.value), 0, specs_,
         detail::digit_grouping<char>("\3", ","));
+  }
+};
+
+template <typename T>
+struct nested_view {
+  const formatter<T>* fmt;
+  const T* value;
+};
+
+template <typename T>
+struct formatter<nested_view<T>> {
+  FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> const char* {
+    return ctx.begin();
+  }
+  auto format(nested_view<T> view, format_context& ctx) const
+      -> decltype(ctx.out()) {
+    return view.fmt->format(*view.value, ctx);
+  }
+};
+
+template <typename T>
+struct nested_formatter {
+ private:
+  formatter<T> formatter_;
+ 
+ public:
+  FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> const char* {
+    return formatter_.parse(ctx);
+  }
+
+  auto nested(const T& value) const -> nested_view<T> {
+    return nested_view<T>{&formatter_, &value};
   }
 };
 
