@@ -185,18 +185,20 @@
 #  define FMT_END_EXPORT
 #endif
 
+#if FMT_GCC_VERSION || FMT_CLANG_VERSION
+#  define FMT_VISIBILITY(value) __attribute__((visibility(value)))
+#else
+#  define FMT_VISIBILITY(value)
+#endif
+
 #if !defined(FMT_HEADER_ONLY) && defined(_WIN32)
-#  ifdef FMT_LIB_EXPORT
+#  if defined(FMT_LIB_EXPORT)
 #    define FMT_API __declspec(dllexport)
 #  elif defined(FMT_SHARED)
 #    define FMT_API __declspec(dllimport)
 #  endif
-#else
-#  if defined(FMT_LIB_EXPORT) || defined(FMT_SHARED)
-#    if defined(__GNUC__) || defined(__clang__)
-#      define FMT_API __attribute__((visibility("default")))
-#    endif
-#  endif
+#elif defined(FMT_LIB_EXPORT) || defined(FMT_SHARED)
+#  define FMT_API FMT_VISIBILITY("default")
 #endif
 #ifndef FMT_API
 #  define FMT_API
@@ -2541,8 +2543,8 @@ FMT_CONSTEXPR auto parse_format_specs(ParseContext& ctx)
       decltype(arg_mapper<context>().map(std::declval<const T&>())),
       typename strip_named_arg<T>::type>;
 #if defined(__cpp_if_constexpr)
-  if constexpr (std::is_default_constructible_v<
-                    formatter<mapped_type, char_type>>) {
+  if constexpr (std::is_default_constructible<
+                    formatter<mapped_type, char_type>>::value) {
     return formatter<mapped_type, char_type>().parse(ctx);
   } else {
     type_is_unformattable_for<T, char_type> _;

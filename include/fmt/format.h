@@ -93,10 +93,11 @@
 #  define FMT_NO_UNIQUE_ADDRESS
 #endif
 
-#if FMT_GCC_VERSION || defined(__clang__)
-#  define FMT_VISIBILITY(value) __attribute__((visibility(value)))
+// Visibility when compiled as a shared library/object.
+#if defined(FMT_LIB_EXPORT) || defined(FMT_SHARED)
+#  define FMT_SO_VISIBILITY(value) FMT_VISIBILITY(value)
 #else
-#  define FMT_VISIBILITY(value)
+#  define FMT_SO_VISIBILITY(value)
 #endif
 
 #ifdef __has_builtin
@@ -1046,7 +1047,7 @@ FMT_BEGIN_EXPORT
 #endif
 
 /** An error reported from a formatting function. */
-class FMT_VISIBILITY("default") format_error : public std::runtime_error {
+class FMT_SO_VISIBILITY("default") format_error : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
 };
