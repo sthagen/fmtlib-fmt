@@ -1740,7 +1740,6 @@ FMT_CONSTEXPR inline fp operator*(fp x, fp y) {
   return {multiply(x.f, y.f), x.e + y.e + 64};
 }
 
-
 template <typename T, bool doublish = num_bits<T>() == num_bits<double>()>
 using convert_float_result =
     conditional_t<std::is_same<T, float>::value || doublish, double, T>;
@@ -3160,8 +3159,10 @@ FMT_CONSTEXPR20 inline void format_dragon(basic_fp<uint128_t> value,
       }
       if (buf[0] == overflow) {
         buf[0] = '1';
-        if ((flags & dragon::fixed) != 0) buf.push_back('0');
-        else ++exp10;
+        if ((flags & dragon::fixed) != 0)
+          buf.push_back('0');
+        else
+          ++exp10;
       }
       return;
     }
@@ -3258,27 +3259,20 @@ FMT_CONSTEXPR20 void format_hexfloat(Float value, int precision,
   format_hexfloat(static_cast<double>(value), precision, specs, buf);
 }
 
-FMT_CONSTEXPR inline uint32_t fractional_part_rounding_thresholds(int index) {
+constexpr uint32_t fractional_part_rounding_thresholds(int index) {
   // For checking rounding thresholds.
   // The kth entry is chosen to be the smallest integer such that the
   // upper 32-bits of 10^(k+1) times it is strictly bigger than 5 * 10^k.
-  constexpr uint32_t thresholds[8] = {
-      2576980378U,  // ceil(2^31 + 2^32/10^1)
-      2190433321U,  // ceil(2^31 + 2^32/10^2)
-      2151778616U,  // ceil(2^31 + 2^32/10^3)
-      2147913145U,  // ceil(2^31 + 2^32/10^4)
-      2147526598U,  // ceil(2^31 + 2^32/10^5)
-      2147487943U,  // ceil(2^31 + 2^32/10^6)
-      2147484078U,  // ceil(2^31 + 2^32/10^7)
-      2147483691U   // ceil(2^31 + 2^32/10^8)
-  };
-  return thresholds[index];
+  // It is equal to ceil(2^31 + 2^32/10^(k + 1)).
+  // These are stored in a string literal because we cannot have static arrays
+  // in constexpr functions and non-static ones are poorly optimized.
+  return U"\x9999999a\x828f5c29\x80418938\x80068db9\x8000a7c6\x800010c7"
+         U"\x800001ae\x8000002b"[index];
 }
 
 template <typename Float>
 FMT_CONSTEXPR20 auto format_float(Float value, int precision, float_specs specs,
                                   buffer<char>& buf) -> int {
-  
   // float is passed as double to reduce the number of instantiations.
   static_assert(!std::is_same<Float, float>::value, "");
   FMT_ASSERT(value >= 0, "value is negative");
@@ -3480,12 +3474,12 @@ FMT_CONSTEXPR20 auto format_float(Float value, int precision, float_specs specs,
           //    fractional part is strictly larger than 1/2.
           if (precision < 9) {
             uint32_t fractional_part = static_cast<uint32_t>(prod);
-            should_round_up = fractional_part >=
-                                  fractional_part_rounding_thresholds
-                                      (8 - number_of_digits_to_print) ||
-                              ((fractional_part >> 31) &
-                               ((digits & 1) | (second_third_subsegments != 0) |
-                                has_more_segments)) != 0;
+            should_round_up =
+                fractional_part >= fractional_part_rounding_thresholds(
+                                       8 - number_of_digits_to_print) ||
+                ((fractional_part >> 31) &
+                 ((digits & 1) | (second_third_subsegments != 0) |
+                  has_more_segments)) != 0;
           }
           // Rounding at the subsegment boundary.
           // In this case, the fractional part is at least 1/2 if and only if
@@ -3520,12 +3514,12 @@ FMT_CONSTEXPR20 auto format_float(Float value, int precision, float_specs specs,
             // of 19 digits, so in this case the third segment should be
             // consisting of a genuine digit from the input.
             uint32_t fractional_part = static_cast<uint32_t>(prod);
-            should_round_up = fractional_part >=
-                                  fractional_part_rounding_thresholds
-                                      (8 - number_of_digits_to_print) ||
-                              ((fractional_part >> 31) &
-                               ((digits & 1) | (third_subsegment != 0) |
-                                has_more_segments)) != 0;
+            should_round_up =
+                fractional_part >= fractional_part_rounding_thresholds(
+                                       8 - number_of_digits_to_print) ||
+                ((fractional_part >> 31) &
+                 ((digits & 1) | (third_subsegment != 0) |
+                  has_more_segments)) != 0;
           }
           // Rounding at the subsegment boundary.
           else {
@@ -4198,14 +4192,12 @@ template <typename T> struct formatter<group_digits_view<T>> : formatter<T> {
   }
 };
 
-template <typename T>
-struct nested_view {
+template <typename T> struct nested_view {
   const formatter<T>* fmt;
   const T* value;
 };
 
-template <typename T>
-struct formatter<nested_view<T>> {
+template <typename T> struct formatter<nested_view<T>> {
   FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> const char* {
     return ctx.begin();
   }
@@ -4215,8 +4207,7 @@ struct formatter<nested_view<T>> {
   }
 };
 
-template <typename T>
-struct nested_formatter {
+template <typename T> struct nested_formatter {
  private:
   int width_;
   detail::fill_t<char> fill_;
@@ -4226,8 +4217,8 @@ struct nested_formatter {
  public:
   FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> const char* {
     auto specs = detail::dynamic_format_specs<char>();
-    auto it = parse_format_specs(
-      ctx.begin(), ctx.end(), specs, ctx, detail::type::none_type);
+    auto it = parse_format_specs(ctx.begin(), ctx.end(), specs, ctx,
+                                 detail::type::none_type);
     width_ = specs.width;
     fill_ = specs.fill;
     align_ = specs.align;
