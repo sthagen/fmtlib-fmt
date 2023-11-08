@@ -64,37 +64,29 @@ FMT_BEGIN_NAMESPACE
 
 namespace detail {
 
-template <typename Char> auto get_path_string(const std::filesystem::path& p) {
-  return p.string<Char>();
+template <typename Char, typename PathChar> auto get_path_string(
+  const std::filesystem::path& p, const std::basic_string<PathChar>& native) {
+  if constexpr (std::is_same_v<Char, char> && std::is_same_v<PathChar, wchar_t>)
+    return to_utf8<wchar_t>(native, to_utf8_error_policy::replace);
+  else
+    return p.string<Char>();
 }
 
-template <typename Char>
+template <typename Char, typename PathChar>
 void write_escaped_path(basic_memory_buffer<Char>& quoted,
-                        const std::filesystem::path& p) {
-  write_escaped_string<Char>(std::back_inserter(quoted), p.string<Char>());
-}
-
-#  ifdef _WIN32
-template <> inline auto get_path_string<char>(const std::filesystem::path& p) {
-  return to_utf8<wchar_t>(p.native(), to_utf8_error_policy::replace);
-}
-
-template <>
-inline void write_escaped_path<char>(memory_buffer& quoted,
-                                     const std::filesystem::path& p) {
-  auto buf = basic_memory_buffer<wchar_t>();
-  write_escaped_string<wchar_t>(std::back_inserter(buf), p.native());
-  bool valid = to_utf8<wchar_t>::convert(quoted, {buf.data(), buf.size()});
-  FMT_ASSERT(valid, "invalid utf16");
-}
-#  endif  // _WIN32
-
-template <>
-inline void write_escaped_path<std::filesystem::path::value_type>(
-    basic_memory_buffer<std::filesystem::path::value_type>& quoted,
-    const std::filesystem::path& p) {
-  write_escaped_string<std::filesystem::path::value_type>(
-      std::back_inserter(quoted), p.native());
+                        const std::filesystem::path& p,
+                        const std::basic_string<PathChar>& native) {
+  if constexpr (std::is_same_v<Char, char> && std::is_same_v<PathChar, wchar_t>) {
+    auto buf = basic_memory_buffer<wchar_t>();
+    write_escaped_string<wchar_t>(std::back_inserter(buf), native);
+    bool valid = to_utf8<wchar_t>::convert(quoted, {buf.data(), buf.size()});
+    FMT_ASSERT(valid, "invalid utf16");
+  } else if constexpr (std::is_same_v<Char, PathChar>) {
+    write_escaped_string<std::filesystem::path::value_type>(
+        std::back_inserter(quoted), native);
+  } else {
+    write_escaped_string<Char>(std::back_inserter(quoted), p.string<Char>());
+  }
 }
 
 }  // namespace detail
@@ -130,11 +122,11 @@ template <typename Char> struct formatter<std::filesystem::path, Char> {
     detail::handle_dynamic_spec<detail::width_checker>(specs.width, width_ref_,
                                                        ctx);
     if (!debug_) {
-      auto s = detail::get_path_string<Char>(p);
+      auto s = detail::get_path_string<Char>(p, p.native());
       return detail::write(ctx.out(), basic_string_view<Char>(s), specs);
     }
     auto quoted = basic_memory_buffer<Char>();
-    detail::write_escaped_path(quoted, p);
+    detail::write_escaped_path(quoted, p, p.native());
     return detail::write(ctx.out(),
                          basic_string_view<Char>(quoted.data(), quoted.size()),
                          specs);
