@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 3.8...3.26)
+cmake_minimum_required(VERSION 3.8...3.28)
 
 # Fallback for using newer policies on CMake <3.12.
-if(${CMAKE_VERSION} VERSION_LESS 3.12)
+if (${CMAKE_VERSION} VERSION_LESS 3.12)
   cmake_policy(VERSION ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION})
-endif()
+endif ()
 
 # Determine if fmt is built as a subproject (using add_subdirectory)
 # or if it is the master project.
@@ -26,7 +26,7 @@ endfunction()
 
 # DEPRECATED! Should be merged into add_module_library.
 function(enable_module target)
-  if (MSVC)
+  if (MSVC AND CMAKE_VERSION VERSION_LESS 3.28)
     set(BMI ${CMAKE_CURRENT_BINARY_DIR}/${target}.ifc)
     target_compile_options(${target}
       PRIVATE /interface /ifcOutput ${BMI}
@@ -65,7 +65,7 @@ function(add_module_library name)
   # `std` is affected by CMake options and may be higher than C++20.
   get_target_property(std ${name} CXX_STANDARD)
 
-  if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_VERSION VERSION_LESS 3.28)
     set(pcms)
     foreach (src ${sources})
       get_filename_component(pcm ${src} NAME_WE)
@@ -103,7 +103,12 @@ function(add_module_library name)
         DEPENDS ${pcm})
     endforeach ()
   endif ()
-  target_sources(${name} PRIVATE ${sources})
+  if (CMAKE_VERSION VERSION_LESS 3.28)
+    target_sources(${name} PRIVATE ${sources})
+  else ()
+    target_sources(${name} PUBLIC FILE_SET fmt_module TYPE CXX_MODULES
+                   FILES ${sources})
+  endif ()
 endfunction()
 
 include(CMakeParseArguments)
@@ -162,10 +167,10 @@ set(FMT_SYSTEM_HEADERS_ATTRIBUTE "")
 if (FMT_SYSTEM_HEADERS)
   set(FMT_SYSTEM_HEADERS_ATTRIBUTE SYSTEM)
 endif ()
-if(CMAKE_SYSTEM_NAME STREQUAL "MSDOS")
+if (CMAKE_SYSTEM_NAME STREQUAL "MSDOS")
   set(FMT_TEST OFF)
   message(STATUS "MSDOS is incompatible with gtest")
-endif()
+endif ()
 
 # Get version from core.h
 file(READ include/fmt/core.h core_h)
@@ -334,7 +339,7 @@ if (BUILD_SHARED_LIBS)
 endif ()
 if (FMT_SAFE_DURATION_CAST)
   target_compile_definitions(fmt PUBLIC FMT_SAFE_DURATION_CAST)
-endif()
+endif ()
 
 add_library(fmt-header-only INTERFACE)
 add_library(fmt::fmt-header-only ALIAS fmt-header-only)
@@ -342,7 +347,8 @@ add_library(fmt::fmt-header-only ALIAS fmt-header-only)
 target_compile_definitions(fmt-header-only INTERFACE FMT_HEADER_ONLY=1)
 target_compile_features(fmt-header-only INTERFACE cxx_std_11)
 
-target_include_directories(fmt-header-only ${FMT_SYSTEM_HEADERS_ATTRIBUTE} INTERFACE
+target_include_directories(fmt-header-only
+  ${FMT_SYSTEM_HEADERS_ATTRIBUTE} INTERFACE
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${FMT_INC_DIR}>)
 
@@ -392,7 +398,15 @@ if (FMT_INSTALL)
           LIBRARY DESTINATION ${FMT_LIB_DIR}
           ARCHIVE DESTINATION ${FMT_LIB_DIR}
           PUBLIC_HEADER DESTINATION "${FMT_INC_DIR}/fmt"
+          FILE_SET fmt_module DESTINATION "${FMT_LIB_DIR}/cxx/miu"
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+  if (FMT_MODULE AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+    # Install format.cc and os.cc which are included by the fmt.cc module
+    # interface file.
+    install(FILES src/format.cc src/os.cc
+            DESTINATION "${FMT_LIB_DIR}/cxx/miu/src")
+  endif ()
 
   # Use a namespace because CMake provides better diagnostics for namespaced
   # imported targets.
