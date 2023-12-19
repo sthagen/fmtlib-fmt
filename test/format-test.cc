@@ -499,20 +499,17 @@ TEST(format_test, arg_errors) {
   EXPECT_THROW_MSG((void)fmt::format(runtime("{00}"), 42), format_error,
                    "invalid format string");
 
-  char format_str[buffer_size];
-  safe_sprintf(format_str, "{%u", INT_MAX);
-  EXPECT_THROW_MSG((void)fmt::format(runtime(format_str)), format_error,
+  auto int_max = std::to_string(INT_MAX);
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{" + int_max)), format_error,
                    "invalid format string");
-  safe_sprintf(format_str, "{%u}", INT_MAX);
-  EXPECT_THROW_MSG((void)fmt::format(runtime(format_str)), format_error,
-                   "argument not found");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{" + int_max + "}")),
+                   format_error, "argument not found");
 
-  safe_sprintf(format_str, "{%u", INT_MAX + 1u);
-  EXPECT_THROW_MSG((void)fmt::format(runtime(format_str)), format_error,
+  auto int_maxer = std::to_string(INT_MAX + 1u);
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{" + int_maxer)), format_error,
                    "invalid format string");
-  safe_sprintf(format_str, "{%u}", INT_MAX + 1u);
-  EXPECT_THROW_MSG((void)fmt::format(runtime(format_str)), format_error,
-                   "argument not found");
+  EXPECT_THROW_MSG((void)fmt::format(runtime("{" + int_maxer + "}")),
+                   format_error, "argument not found");
 }
 
 template <int N> struct test_format {
@@ -1361,14 +1358,11 @@ TEST(format_test, format_double) {
   EXPECT_EQ(fmt::format("{0:e}", 392.65), "3.926500e+02");
   EXPECT_EQ(fmt::format("{0:E}", 392.65), "3.926500E+02");
   EXPECT_EQ(fmt::format("{0:+010.4g}", 392.65), "+0000392.6");
-  char buffer[buffer_size];
 
 #if FMT_CPLUSPLUS >= 201703L
   double xd = 0x1.ffffffffffp+2;
-  safe_sprintf(buffer, "%.*a", 10, xd);
-  EXPECT_EQ(fmt::format("{:.10a}", xd), buffer);
-  safe_sprintf(buffer, "%.*a", 9, xd);
-  EXPECT_EQ(fmt::format("{:.9a}", xd), buffer);
+  EXPECT_EQ(fmt::format("{:.10a}", xd), "0x1.ffffffffffp+2");
+  EXPECT_EQ(fmt::format("{:.9a}", xd), "0x2.000000000p+2");
 
   if (std::numeric_limits<long double>::digits == 64) {
     auto ld = 0xf.ffffffffffp-3l;
@@ -1384,8 +1378,7 @@ TEST(format_test, format_double) {
     EXPECT_EQ(fmt::format("{:#a}", d), "0x1.p-1022");
 
     d = (std::numeric_limits<double>::max)();
-    safe_sprintf(buffer, "%a", d);
-    EXPECT_EQ(fmt::format("{:a}", d), buffer);
+    EXPECT_EQ(fmt::format("{:a}", d), "0x1.fffffffffffffp+1023");
 
     d = std::numeric_limits<double>::denorm_min();
     EXPECT_EQ(fmt::format("{:a}", d), "0x0.0000000000001p-1022");
@@ -1402,8 +1395,7 @@ TEST(format_test, format_double) {
     EXPECT_EQ(fmt::format("{:a}", ld), "0x0.000000000000001p-16382");
   }
 
-  safe_sprintf(buffer, "%.*a", 10, 4.2);
-  EXPECT_EQ(fmt::format("{:.10a}", 4.2), buffer);
+  EXPECT_EQ(fmt::format("{:.10a}", 4.2), "0x1.0ccccccccdp+2");
 
   EXPECT_EQ(fmt::format("{:a}", -42.0), "-0x1.5p+5");
   EXPECT_EQ(fmt::format("{:A}", -42.0), "-0X1.5P+5");
