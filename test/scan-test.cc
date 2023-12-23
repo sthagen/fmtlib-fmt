@@ -28,6 +28,8 @@ TEST(scan_test, read_int) {
   EXPECT_EQ(n, 42);
   fmt::scan("-42", "{}", n);
   EXPECT_EQ(n, -42);
+  EXPECT_THROW_MSG(fmt::scan(std::to_string(INT_MAX + 1u), "{}", n),
+                   fmt::format_error, "number is too big");
 }
 
 TEST(scan_test, read_longlong) {
@@ -122,11 +124,11 @@ TEST(scan_test, example) {
 TEST(scan_test, file) {
   fmt::file read_end, write_end;
   fmt::file::pipe(read_end, write_end);
-  fmt::string_view input = "4";
+  fmt::string_view input = "42";
   write_end.write(input.data(), input.size());
   write_end.close();
   int value = 0;
   fmt::scan(read_end.fdopen("r").get(), "{}", value);
-  EXPECT_EQ(value, 4);
+  EXPECT_EQ(value, 42);
 }
 #endif  // FMT_USE_FCNTL
