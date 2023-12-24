@@ -43,7 +43,7 @@
 #include <system_error>      // std::system_error
 
 #ifdef __cpp_lib_bit_cast
-#  include <bit>  // std::bitcast
+#  include <bit>  // std::bit_cast
 #endif
 
 #include "core.h"
@@ -277,19 +277,6 @@ FMT_END_NAMESPACE
 #endif
 
 FMT_BEGIN_NAMESPACE
-
-template <typename...> struct disjunction : std::false_type {};
-template <typename P> struct disjunction<P> : P {};
-template <typename P1, typename... Pn>
-struct disjunction<P1, Pn...>
-    : conditional_t<bool(P1::value), P1, disjunction<Pn...>> {};
-
-template <typename...> struct conjunction : std::true_type {};
-template <typename P> struct conjunction<P> : P {};
-template <typename P1, typename... Pn>
-struct conjunction<P1, Pn...>
-    : conditional_t<bool(P1::value), conjunction<Pn...>, P1> {};
-
 namespace detail {
 
 FMT_CONSTEXPR inline void abort_fuzzing_if(bool condition) {
@@ -310,37 +297,6 @@ template <typename CharT, CharT... C> struct string_literal {
 template <typename CharT, CharT... C>
 constexpr CharT string_literal<CharT, C...>::value[sizeof...(C)];
 #endif
-
-template <typename Streambuf> class formatbuf : public Streambuf {
- private:
-  using char_type = typename Streambuf::char_type;
-  using streamsize = decltype(std::declval<Streambuf>().sputn(nullptr, 0));
-  using int_type = typename Streambuf::int_type;
-  using traits_type = typename Streambuf::traits_type;
-
-  buffer<char_type>& buffer_;
-
- public:
-  explicit formatbuf(buffer<char_type>& buf) : buffer_(buf) {}
-
- protected:
-  // The put area is always empty. This makes the implementation simpler and has
-  // the advantage that the streambuf and the buffer are always in sync and
-  // sputc never writes into uninitialized memory. A disadvantage is that each
-  // call to sputc always results in a (virtual) call to overflow. There is no
-  // disadvantage here for sputn since this always results in a call to xsputn.
-
-  auto overflow(int_type ch) -> int_type override {
-    if (!traits_type::eq_int_type(ch, traits_type::eof()))
-      buffer_.push_back(static_cast<char_type>(ch));
-    return ch;
-  }
-
-  auto xsputn(const char_type* s, streamsize count) -> streamsize override {
-    buffer_.append(s, s + count);
-    return count;
-  }
-};
 
 // Implementation of std::bit_cast for pre-C++20.
 template <typename To, typename From, FMT_ENABLE_IF(sizeof(To) == sizeof(From))>
