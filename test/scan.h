@@ -14,6 +14,25 @@
 FMT_BEGIN_NAMESPACE
 namespace detail {
 
+inline bool is_whitespace(char c) { return c == ' ' || c == '\n'; }
+
+template <typename T> class optional {
+ private:
+  T value_;
+  bool has_value_ = false;
+
+ public:
+  optional() = default;
+  optional(T value) : value_(std::move(value)), has_value_(true) {}
+
+  explicit operator bool() const { return has_value_; }
+
+  auto operator*() const -> const T& {
+    if (!has_value_) throw std::runtime_error("bad optional access");
+    return value_;
+  }
+};
+
 struct maybe_contiguous_range {
   const char* begin;
   const char* end;
@@ -32,27 +51,19 @@ class scan_buffer {
       : ptr_(ptr), end_(end), contiguous_(contiguous) {}
   ~scan_buffer() = default;
 
-  auto is_empty() const -> bool { return ptr_ == end_; }
-
-  void set(const char* ptr, const char* end) noexcept {
-    ptr_ = ptr;
-    end_ = end;
+  void set(string_view buf) {
+    ptr_ = buf.begin();
+    end_ = buf.end();
   }
 
-  auto peek() -> int {
-    if (ptr_ == end_) {
-      // TODO: refill buffer
-      return EOF;
-    }
-    return *ptr_;
-  }
-
-  // Fills the buffer with more input if available.
-  virtual void consume() = 0;
+  auto ptr() const -> const char* { return ptr_; }
 
  public:
   scan_buffer(const scan_buffer&) = delete;
   void operator=(const scan_buffer&) = delete;
+
+  // Fills the buffer with more input if available.
+  virtual void consume() = 0;
 
   class iterator {
    private:
@@ -74,9 +85,13 @@ class scan_buffer {
       return *lhs.ptr_ != *rhs.ptr_;
     }
 
-    iterator(scan_buffer* buf)
-        : ptr_(&buf->ptr_), buf_(buf), value_(static_cast<char>(buf->peek())) {
-      if (value_ == EOF) ptr_ = sentinel();
+    iterator(scan_buffer* buf) : buf_(buf) {
+      if (buf->ptr_ == buf->end_) {
+        ptr_ = sentinel();
+        return;
+      }
+      ptr_ = &buf->ptr_;
+      value_ = *buf->ptr_;
     }
 
    public:
@@ -112,12 +127,12 @@ class scan_buffer {
     if (ptr == it.buf_->end_) it.ptr_ = iterator::sentinel();
   }
 
-  auto begin() noexcept -> iterator { return this; }
-  auto end() noexcept -> iterator { return {}; }
+  auto begin() -> iterator { return this; }
+  auto end() -> iterator { return {}; }
 
   auto is_contiguous() const -> bool { return contiguous_; }
 
-  // Tries consuming a single code unit.
+  // Tries consuming a single code unit. Returns true iff there is more input.
   auto try_consume() -> bool {
     FMT_ASSERT(ptr_ != end_, "");
     ++ptr_;
@@ -136,6 +151,12 @@ class string_scan_buffer : public scan_buffer {
       : scan_buffer(s.begin(), s.end(), true) {}
 };
 
+#ifdef _WIN32
+void flockfile(FILE* f) { _lock_file(f); }
+void funlockfile(FILE* f) { _unlock_file(f); }
+int getc_unlocked(FILE *f) { return _fgetc_nolock(f); }
+#endif
+
 // A FILE wrapper. F is FILE defined as a template parameter to make
 // system-specific API detection work.
 template <typename F> class file_base {
@@ -148,7 +169,7 @@ template <typename F> class file_base {
 
   // Reads a code unit from the stream.
   auto get() -> int {
-    int result = getc(file_);
+    int result = getc_unlocked(file_);
     if (result == EOF && ferror(file_) != 0)
       FMT_THROW(system_error(errno, FMT_STRING("getc failed")));
     return result;
@@ -166,6 +187,7 @@ template <typename F> class glibc_file : public file_base<F> {
  public:
   using file_base<F>::file_base;
 
+  // Returns the file's read buffer as a string_view.
   auto buffer() const -> string_view {
     return {this->file_->_IO_read_ptr,
             to_unsigned(this->file_->_IO_read_end - this->file_->_IO_read_ptr)};
@@ -177,7 +199,6 @@ template <typename F> class apple_file : public file_base<F> {
  public:
   using file_base<F>::file_base;
 
-  // Returns the file's read buffer as a string_view.
   auto buffer() const -> string_view {
     return {reinterpret_cast<char*>(this->file_->_p),
             to_unsigned(this->file_->_r)};
@@ -207,20 +228,21 @@ template <typename F> class fallback_file : public file_base<F> {
   }
 };
 
-template <typename F, FMT_ENABLE_IF(sizeof(F::_IO_read_ptr) != 0)>
-auto get_file(F* file, int) -> glibc_file<F> {
-  return file;
-}
-template <typename F, FMT_ENABLE_IF(sizeof(F::_p) != 0)>
-auto get_file(F* file, int) -> apple_file<F> {
-  return file;
-}
-auto get_file(FILE* file, ...) -> fallback_file<FILE> { return file; }
-
 class file_scan_buffer : public scan_buffer {
  private:
+  template <typename F, FMT_ENABLE_IF(sizeof(F::_IO_read_ptr) != 0)>
+  static auto get_file(F* f, int) -> glibc_file<F> {
+    return f;
+  }
+  template <typename F, FMT_ENABLE_IF(sizeof(F::_p) != 0)>
+  static auto get_file(F* f, int) -> apple_file<F> {
+    return f;
+  }
+  static auto get_file(FILE* f, ...) -> fallback_file<FILE> { return f; }
+
   decltype(get_file(static_cast<FILE*>(nullptr), 0)) file_;
 
+  // Fills the buffer if it is empty.
   void fill() {
     string_view buf = file_.buffer();
     if (buf.size() == 0) {
@@ -229,22 +251,23 @@ class file_scan_buffer : public scan_buffer {
       if (c != EOF) file_.unget(static_cast<char>(c));
       buf = file_.buffer();
     }
-    this->set(buf.begin(), buf.end());
+    set(buf);
   }
 
   void consume() override {
     // Consume the current buffer content.
-    // TODO: do it more efficiently
-    for (size_t i = 0, n = file_.buffer().size(); i != n; ++i) file_.get();
+    size_t n = to_unsigned(ptr() - file_.buffer().begin());
+    for (size_t i = 0; i != n; ++i) file_.get();
     fill();
   }
 
  public:
   explicit file_scan_buffer(FILE* f)
       : scan_buffer(nullptr, nullptr, false), file_(f) {
-    // TODO: lock file?
+    flockfile(f);
     fill();
   }
+  ~file_scan_buffer() { funlockfile(file_); }
 };
 }  // namespace detail
 
@@ -283,10 +306,7 @@ struct scan_context {
   auto begin() const -> iterator { return buf_.begin(); }
   auto end() const -> iterator { return buf_.end(); }
 
-  void advance_to(iterator) {
-    // The scan_buffer iterator automatically updates the buffer position when
-    // incremented.
-  }
+  void advance_to(iterator) { buf_.consume(); }
 };
 
 namespace detail {
@@ -371,13 +391,15 @@ struct scan_handler : error_handler {
   int next_arg_id_;
   scan_arg arg_;
 
-  template <typename T = unsigned> auto read_uint() -> T {
+  template <typename T = unsigned> auto read_uint() -> optional<T> {
     auto it = scan_ctx_.begin(), end = scan_ctx_.end();
-    char c = it != end ? *it : '\0', prev_digit;
+    if (it == end) return {};
+    char c = *it;
     if (c < '0' || c > '9') on_error("invalid input");
 
     int num_digits = 0;
     T value = 0, prev = 0;
+    char prev_digit = c;
     do {
       prev = value;
       value = value * 10 + static_cast<unsigned>(c - '0');
@@ -387,7 +409,7 @@ struct scan_handler : error_handler {
       if (c < '0' || c > '9') break;
     } while (it != end);
     scan_ctx_.advance_to(it);
-    
+
     // Check overflow.
     if (num_digits <= std::numeric_limits<int>::digits10) return value;
     const unsigned max = to_unsigned((std::numeric_limits<int>::max)());
@@ -398,16 +420,19 @@ struct scan_handler : error_handler {
     throw format_error("number is too big");
   }
 
-  template <typename T = int> auto read_int() -> T {
+  template <typename T = int> auto read_int() -> optional<T> {
     auto it = scan_ctx_.begin(), end = scan_ctx_.end();
     bool negative = it != end && *it == '-';
     if (negative) {
       ++it;
       scan_ctx_.advance_to(it);
     }
-    auto abs_value = read_uint<typename std::make_unsigned<T>::type>();
-    auto value = static_cast<T>(abs_value);
-    return negative ? -value : value;
+    if (auto abs_value = read_uint<typename std::make_unsigned<T>::type>()) {
+      auto value = static_cast<T>(*abs_value);
+      return negative ? -value : value;
+    }
+    if (negative) on_error("invalid input");
+    return {};
   }
 
  public:
@@ -418,6 +443,7 @@ struct scan_handler : error_handler {
   auto pos() const -> scan_buffer::iterator { return scan_ctx_.begin(); }
 
   void on_text(const char* begin, const char* end) {
+    if (begin == end) return;
     auto it = scan_ctx_.begin(), scan_end = scan_ctx_.end();
     for (; begin != end; ++begin, ++it) {
       if (it == scan_end || *begin != *it) on_error("invalid input");
@@ -438,18 +464,21 @@ struct scan_handler : error_handler {
 
   void on_replacement_field(int, const char*) {
     auto it = scan_ctx_.begin(), end = scan_ctx_.end();
+    while (it != end && is_whitespace(*it)) ++it;
+    scan_ctx_.advance_to(it);
     switch (arg_.type) {
     case scan_type::int_type:
-      *arg_.int_value = read_int();
+      if (auto value = read_int()) *arg_.int_value = *value;
       break;
     case scan_type::uint_type:
-      *arg_.uint_value = read_uint();
+      if (auto value = read_uint()) *arg_.uint_value = *value;
       break;
     case scan_type::long_long_type:
-      *arg_.long_long_value = read_int<long long>();
+      if (auto value = read_int<long long>()) *arg_.long_long_value = *value;
       break;
     case scan_type::ulong_long_type:
-      *arg_.ulong_long_value = read_uint<unsigned long long>();
+      if (auto value = read_uint<unsigned long long>())
+        *arg_.ulong_long_value = *value;
       break;
     case scan_type::string_type:
       while (it != end && *it != ' ') arg_.string->push_back(*it++);
@@ -479,6 +508,11 @@ struct scan_handler : error_handler {
     arg_.custom.scan(arg_.custom.value, parse_ctx_, scan_ctx_);
     return parse_ctx_.begin();
   }
+
+  void on_error(const char* message) {
+    scan_ctx_.advance_to(scan_ctx_.end());
+    error_handler::on_error(message);
+  }
 };
 }  // namespace detail
 
@@ -500,9 +534,10 @@ auto scan(string_view input, string_view fmt, T&... args)
   return input.begin() + (buf.begin().base() - input.data());
 }
 
-template <typename... T> void scan(std::FILE* f, string_view fmt, T&... args) {
+template <typename... T> bool scan(std::FILE* f, string_view fmt, T&... args) {
   auto&& buf = detail::file_scan_buffer(f);
   vscan(buf, fmt, make_scan_args(args...));
+  return buf.begin() != buf.end();
 }
 
 FMT_END_NAMESPACE

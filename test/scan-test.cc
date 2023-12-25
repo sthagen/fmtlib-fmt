@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include <climits>
+#include <thread>
 
 #include "fmt/os.h"
 #include "gmock/gmock.h"
@@ -94,7 +95,7 @@ template <> struct scanner<num> {
   template <class ScanContext>
   auto scan(num&, ScanContext& ctx) const -> typename ScanContext::iterator {
     // TODO
-    //return fmt::scan({ctx.begin(), ctx.end()}, "{}", n.value);
+    // return fmt::scan({ctx.begin(), ctx.end()}, "{}", n.value);
     return ctx.begin();
   }
 };
@@ -104,7 +105,7 @@ TEST(scan_test, read_custom) {
   auto input = "42";
   auto n = num();
   fmt::scan(input, "{:}", n);
-  //EXPECT_EQ(n, 42);
+  // EXPECT_EQ(n, 42);
 }
 #endif
 
@@ -123,15 +124,52 @@ TEST(scan_test, example) {
   EXPECT_EQ(value, 42);
 }
 
+TEST(scan_test, end_of_input) {
+  int value = 0;
+  fmt::scan("", "{}", value);
+}
+
 #if FMT_USE_FCNTL
 TEST(scan_test, file) {
   fmt::file read_end, write_end;
   fmt::file::pipe(read_end, write_end);
-  fmt::string_view input = "42";
+
+  fmt::string_view input = "10 20";
   write_end.write(input.data(), input.size());
   write_end.close();
-  int value = 0;
-  fmt::scan(read_end.fdopen("r").get(), "{}", value);
-  EXPECT_EQ(value, 42);
+
+  int n1 = 0, n2 = 0;
+  fmt::buffered_file f = read_end.fdopen("r");
+  fmt::scan(f.get(), "{} {}", n1, n2);
+  EXPECT_EQ(n1, 10);
+  EXPECT_EQ(n2, 20);
+}
+
+TEST(scan_test, lock) {
+  fmt::file read_end, write_end;
+  fmt::file::pipe(read_end, write_end);
+
+  std::thread producer([&]() {
+    fmt::string_view input = "42 ";
+    for (int i = 0; i < 1000; ++i) write_end.write(input.data(), input.size());
+    write_end.close();
+  });
+
+  fmt::buffered_file f = read_end.fdopen("r");
+  auto fun = [&]() {
+    int value = 0;
+    while (fmt::scan(f.get(), "{}", value)) {
+      if (value != 42) {
+        read_end.close();
+        EXPECT_EQ(value, 42);
+        break;
+      }
+    }
+  };
+  std::thread consumer1(fun);
+  std::thread consumer2(fun);
+  producer.join();
+  consumer1.join();
+  consumer2.join();
 }
 #endif  // FMT_USE_FCNTL
