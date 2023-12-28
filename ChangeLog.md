@@ -1,5 +1,9 @@
 # 10.2.0 - TBD
 
+-   Added support for the `%j` specifier (the number of days) for
+    `std::chrono::duration` (https://github.com/fmtlib/fmt/issues/3643,
+    https://github.com/fmtlib/fmt/pull/3732). Thanks @intelfx.
+
 -   Added support for the chrono suffix for days and changed
     the suffix for minutes from "m" to the correct "min"
     (https://github.com/fmtlib/fmt/pull/3664).
@@ -14,6 +18,30 @@
     ```
 
     Thanks @Richardk2n.
+
+-   Fixed an overflow in `std::chrono::time_point` formatting with large dates
+    (https://github.com/fmtlib/fmt/issues/3725,
+    https://github.com/fmtlib/fmt/pull/3727). Thanks @cschreib.
+
+-   Added a formatter for `std::source_location`
+    (https://github.com/fmtlib/fmt/pull/3730). For example
+    ([godbolt](https://godbolt.org/z/YajfKjhhr)):
+
+    ```c++
+    #include <fmt/chrono.h>
+
+    int main() {
+      fmt::print("{}\n", std::source_location::current());
+    }
+    ```
+
+    prints
+
+    ```
+    /app/example.cpp:5:51: int main()
+    ```
+
+    Thanks @felix642.
 
 -   Added a formatter for `std::bitset`
     (https://github.com/fmtlib/fmt/pull/3660).
@@ -30,6 +58,23 @@
 
     Thanks @muggenhor.
 
+-   Added the generic representation (`g`) to `std::filesystem::path`
+    (https://github.com/fmtlib/fmt/issues/3715,
+    https://github.com/fmtlib/fmt/pull/3729). For example:
+
+    ```c++
+    #include <filesystem>
+    #include <fmt/std.h>
+
+    int main() {
+      fmt::print("{:g}\n", std::filesystem::path("C:\\foo"));
+    }
+    ```
+
+    prints `"C:/foo"` on Windows.
+
+    Thanks @js324.
+
 -   Added synchronization with the underlying output stream when writing to
     the Windows console
     (https://github.com/fmtlib/fmt/pull/3668,
@@ -37,8 +82,8 @@
     https://github.com/fmtlib/fmt/pull/3689).
     Thanks @Roman-Koshelev and @dimztimz.
 
--   Only export `format_error` when {fmt} is built as a shared library
-    (https://github.com/fmtlib/fmt/issues/3626,
+-   Changed to only export `format_error` when {fmt} is built as a shared
+    library (https://github.com/fmtlib/fmt/issues/3626,
     https://github.com/fmtlib/fmt/pull/3627). Thanks @phprus.
 
 -   Made `fmt::streamed` `constexpr`.
@@ -67,16 +112,18 @@
     https://github.com/fmtlib/fmt/pull/369,
     https://github.com/fmtlib/fmt/issues/3712,
     https://github.com/fmtlib/fmt/pull/3713,
-    https://github.com/fmtlib/fmt/pull/3716).
+    https://github.com/fmtlib/fmt/pull/3716,
+    https://github.com/fmtlib/fmt/pull/3723).
     Thanks @danakj, @vinayyadav3016, @cyyever, @phprus, @qimiko, @saschasc,
     @gsjaardema, @lazka, @Zhaojun-Liu, @carlsmedstad, @hotwatermorning,
-    @cptFracassa, @kuguma.
+    @cptFracassa, @kuguma, @PeterJohnson .
 
 -   Improved documentation and README
     (https://github.com/fmtlib/fmt/pull/3642,
     https://github.com/fmtlib/fmt/pull/3653,
     https://github.com/fmtlib/fmt/pull/3655,
     https://github.com/fmtlib/fmt/pull/3661,
+    https://github.com/fmtlib/fmt/issues/3673,
     https://github.com/fmtlib/fmt/pull/3677).
     Thanks @idzm, @perlun, @joycebrum, @fennewald.
 
