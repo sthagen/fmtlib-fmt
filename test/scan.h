@@ -94,6 +94,10 @@ class scan_buffer {
       value_ = *buf->ptr_;
     }
 
+    friend scan_buffer& get_buffer(iterator it) {
+      return *it.buf_;
+    }
+
    public:
     iterator() : ptr_(sentinel()), buf_(nullptr) {}
 
@@ -154,7 +158,7 @@ class string_scan_buffer : public scan_buffer {
 #ifdef _WIN32
 void flockfile(FILE* f) { _lock_file(f); }
 void funlockfile(FILE* f) { _unlock_file(f); }
-int getc_unlocked(FILE *f) { return _fgetc_nolock(f); }
+int getc_unlocked(FILE* f) { return _fgetc_nolock(f); }
 #endif
 
 // A FILE wrapper. F is FILE defined as a template parameter to make
@@ -383,6 +387,34 @@ struct scan_args {
 
 namespace detail {
 
+const char* parse_scan_specs(
+  const char* begin, const char* end, format_specs<>& specs, scan_type) {
+  while (begin != end) {
+    switch (to_ascii(*begin)) {
+      // TODO: parse scan format specifiers
+      case 'x':
+        specs.type = presentation_type::hex_lower;
+        break;
+      case '}':
+        return begin;
+    }
+  }
+  return begin;
+}
+
+struct arg_scanner {
+  using iterator = scan_buffer::iterator;
+
+  iterator begin;
+  iterator end;
+  const format_specs<>& specs;
+
+  template <typename T>
+  auto operator()(T) -> iterator {
+    return begin;
+  }
+};
+
 struct scan_handler : error_handler {
  private:
   scan_parse_context parse_ctx_;
@@ -391,8 +423,10 @@ struct scan_handler : error_handler {
   int next_arg_id_;
   scan_arg arg_;
 
-  template <typename T = unsigned> auto read_uint() -> optional<T> {
-    auto it = scan_ctx_.begin(), end = scan_ctx_.end();
+  using iterator = scan_buffer::iterator;
+
+  template <typename T = unsigned> auto read_uint(iterator& it) -> optional<T> {
+    auto end = scan_ctx_.end();
     if (it == end) return {};
     char c = *it;
     if (c < '0' || c > '9') on_error("invalid input");
@@ -408,7 +442,6 @@ struct scan_handler : error_handler {
       ++num_digits;
       if (c < '0' || c > '9') break;
     } while (it != end);
-    scan_ctx_.advance_to(it);
 
     // Check overflow.
     if (num_digits <= std::numeric_limits<int>::digits10) return value;
@@ -420,14 +453,11 @@ struct scan_handler : error_handler {
     throw format_error("number is too big");
   }
 
-  template <typename T = int> auto read_int() -> optional<T> {
-    auto it = scan_ctx_.begin(), end = scan_ctx_.end();
+  template <typename T = int> auto read_int(iterator& it) -> optional<T> {
+    auto end = scan_ctx_.end();
     bool negative = it != end && *it == '-';
-    if (negative) {
-      ++it;
-      scan_ctx_.advance_to(it);
-    }
-    if (auto abs_value = read_uint<typename std::make_unsigned<T>::type>()) {
+    if (negative) ++it;
+    if (auto abs_value = read_uint<typename std::make_unsigned<T>::type>(it)) {
       auto value = static_cast<T>(*abs_value);
       return negative ? -value : value;
     }
@@ -465,24 +495,22 @@ struct scan_handler : error_handler {
   void on_replacement_field(int, const char*) {
     auto it = scan_ctx_.begin(), end = scan_ctx_.end();
     while (it != end && is_whitespace(*it)) ++it;
-    scan_ctx_.advance_to(it);
     switch (arg_.type) {
     case scan_type::int_type:
-      if (auto value = read_int()) *arg_.int_value = *value;
+      if (auto value = read_int(it)) *arg_.int_value = *value;
       break;
     case scan_type::uint_type:
-      if (auto value = read_uint()) *arg_.uint_value = *value;
+      if (auto value = read_uint(it)) *arg_.uint_value = *value;
       break;
     case scan_type::long_long_type:
-      if (auto value = read_int<long long>()) *arg_.long_long_value = *value;
+      if (auto value = read_int<long long>(it)) *arg_.long_long_value = *value;
       break;
     case scan_type::ulong_long_type:
-      if (auto value = read_uint<unsigned long long>())
+      if (auto value = read_uint<unsigned long long>(it))
         *arg_.ulong_long_value = *value;
       break;
     case scan_type::string_type:
       while (it != end && *it != ' ') arg_.string->push_back(*it++);
-      scan_ctx_.advance_to(it);
       break;
     case scan_type::string_view_type: {
       auto range = to_contiguous(it);
@@ -493,20 +521,30 @@ struct scan_handler : error_handler {
       size_t size = to_unsigned(p - range.begin);
       *arg_.string_view = {range.begin, size};
       advance(it, size);
-      scan_ctx_.advance_to(it);
       break;
     }
     case scan_type::none_type:
     case scan_type::custom_type:
       assert(false);
     }
+    scan_ctx_.advance_to(it);
   }
 
-  auto on_format_specs(int, const char* begin, const char*) -> const char* {
-    if (arg_.type != scan_type::custom_type) return begin;
-    parse_ctx_.advance_to(begin);
-    arg_.custom.scan(arg_.custom.value, parse_ctx_, scan_ctx_);
-    return parse_ctx_.begin();
+  auto on_format_specs(int, const char* begin, const char* end) -> const char* {
+    if (arg_.type == scan_type::custom_type) {
+      parse_ctx_.advance_to(begin);
+      arg_.custom.scan(arg_.custom.value, parse_ctx_, scan_ctx_);
+      return parse_ctx_.begin();
+    }
+    auto specs = format_specs<>();
+    begin = parse_scan_specs(begin, end, specs, arg_.type);
+    if (begin == end || *begin != '}')
+      on_error("missing '}' in format string");
+    auto s = arg_scanner{scan_ctx_.begin(), scan_ctx_.end(), specs};
+    // TODO: scan argument according to specs
+    (void)s;
+    //context.advance_to(visit_format_arg(s, arg));
+    return begin;
   }
 
   void on_error(const char* message) {
@@ -532,6 +570,15 @@ auto scan(string_view input, string_view fmt, T&... args)
   auto&& buf = detail::string_scan_buffer(input);
   vscan(buf, fmt, make_scan_args(args...));
   return input.begin() + (buf.begin().base() - input.data());
+}
+
+template <typename InputRange, typename... T,
+          FMT_ENABLE_IF(!std::is_convertible<InputRange, string_view>::value)>
+auto scan(InputRange&& input, string_view fmt, T&... args)
+    -> decltype(std::begin(input)) {
+  auto it = std::begin(input);
+  vscan(get_buffer(it), fmt, make_scan_args(args...));
+  return it;
 }
 
 template <typename... T> bool scan(std::FILE* f, string_view fmt, T&... args) {
