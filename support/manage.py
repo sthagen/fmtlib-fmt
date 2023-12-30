@@ -232,12 +232,23 @@ def release(args):
     # Update the date in the changelog.
     changelog = 'ChangeLog.md'
     changelog_path = os.path.join(fmt_repo.dir, changelog)
-    title_len = 0
+    first_section = True
+    code_block = False
+    changes = ''
     for line in fileinput.input(changelog_path, inplace=True):
         m = re.match(r'# (.*) - TBD', line)
         if m:
             version = m.group(1)
             line = version + ' - ' + datetime.date.today().isoformat() + '\n'
+        elif line.startswith('#'):
+            first_section = False
+        elif first_section:
+            changes_line = line
+            if re.match(r'^\s*```', line):
+                code_block = not code_block
+            elif not code_block and line != '\n':
+                changes_line = line.rstrip() + ' '
+            changes += changes_line
         sys.stdout.write(line)
 
     cmakelists = 'CMakeLists.txt'
