@@ -1,4 +1,4 @@
-# 10.2.0 - TBD
+# 10.2.0 - 2024-01-01
 
 -   Added support for the `%j` specifier (the number of days) for
     `std::chrono::duration` (https://github.com/fmtlib/fmt/issues/3643,
@@ -212,11 +212,12 @@
     https://github.com/fmtlib/fmt/pull/3762,
     https://github.com/fmtlib/fmt/issues/3763,
     https://github.com/fmtlib/fmt/pull/3764,
-    https://github.com/fmtlib/fmt/issues/3774).
+    https://github.com/fmtlib/fmt/issues/3774,
+    https://github.com/fmtlib/fmt/pull/3779).
     Thanks @danakj, @vinayyadav3016, @cyyever, @phprus, @qimiko, @saschasc,
     @gsjaardema, @lazka, @Zhaojun-Liu, @carlsmedstad, @hotwatermorning,
     @cptFracassa, @kuguma, @PeterJohnson, @H1X4Dev, @asantoni, @eltociear,
-    @msimberg, @tchaikov.
+    @msimberg, @tchaikov, @waywardmonkeys.
 
 -   Improved documentation and README
     (https://github.com/fmtlib/fmt/issues/2086,
@@ -239,7 +240,8 @@
     https://github.com/fmtlib/fmt/pull/3666,
     https://github.com/fmtlib/fmt/pull/3696,
     https://github.com/fmtlib/fmt/pull/3697,
-    https://github.com/fmtlib/fmt/pull/3759).
+    https://github.com/fmtlib/fmt/pull/3759,
+    https://github.com/fmtlib/fmt/pull/3782).
 
 # 10.1.1 - 2023-08-28
 
