@@ -88,6 +88,20 @@
 #define FMT_HAS_CPP17_ATTRIBUTE(attribute) \
   (FMT_CPLUSPLUS >= 201703L && FMT_HAS_CPP_ATTRIBUTE(attribute))
 
+#ifndef FMT_DEPRECATED
+#  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VERSION >= 1900
+#    define FMT_DEPRECATED [[deprecated]]
+#  else
+#    if (defined(__GNUC__) && !defined(__LCC__)) || defined(__clang__)
+#      define FMT_DEPRECATED __attribute__((deprecated))
+#    elif FMT_MSC_VERSION
+#      define FMT_DEPRECATED __declspec(deprecated)
+#    else
+#      define FMT_DEPRECATED /* deprecated */
+#    endif
+#  endif
+#endif
+
 // Check if relaxed C++14 constexpr is supported.
 // GCC doesn't allow throw in constexpr until version 6 (bug 67371).
 #ifndef FMT_USE_CONSTEXPR
@@ -321,8 +335,8 @@ template <typename... T> FMT_CONSTEXPR void ignore_unused(const T&...) {}
 constexpr FMT_INLINE auto is_constant_evaluated(
     bool default_value = false) noexcept -> bool {
 // Workaround for incompatibility between libstdc++ consteval-based
-// std::is_constant_evaluated() implementation and clang-14.
-// https://github.com/fmtlib/fmt/issues/3247
+// std::is_constant_evaluated() implementation and clang-14:
+// https://github.com/fmtlib/fmt/issues/3247.
 #if FMT_CPLUSPLUS >= 202002L && defined(_GLIBCXX_RELEASE) && \
     _GLIBCXX_RELEASE >= 12 &&                                \
     (FMT_CLANG_VERSION >= 1400 && FMT_CLANG_VERSION < 1500)
@@ -643,22 +657,10 @@ enum {
   cstring_set = set(type::cstring_type),
   pointer_set = set(type::pointer_type)
 };
-
-// DEPRECATED!
-FMT_NORETURN FMT_API void throw_format_error(const char* message);
-
-struct error_handler {
-  constexpr error_handler() = default;
-
-  // This function is intentionally not constexpr to give a compile-time error.
-  FMT_NORETURN void on_error(const char* message) {
-    throw_format_error(message);
-  }
-};
 }  // namespace detail
 
 /** Throws ``format_error`` with a given message. */
-using detail::throw_format_error;
+FMT_NORETURN FMT_API void throw_format_error(const char* message);
 
 /** String's character type. */
 template <typename S> using char_t = typename detail::char_t_impl<S>::type;
@@ -710,7 +712,7 @@ template <typename Char> class basic_format_parse_context {
    */
   FMT_CONSTEXPR auto next_arg_id() -> int {
     if (next_arg_id_ < 0) {
-      detail::throw_format_error(
+      throw_format_error(
           "cannot switch from manual to automatic argument indexing");
       return 0;
     }
@@ -725,7 +727,7 @@ template <typename Char> class basic_format_parse_context {
    */
   FMT_CONSTEXPR void check_arg_id(int id) {
     if (next_arg_id_ > 0) {
-      detail::throw_format_error(
+      throw_format_error(
           "cannot switch from automatic to manual argument indexing");
       return;
     }
@@ -1063,7 +1065,7 @@ FMT_CONSTEXPR void basic_format_parse_context<Char>::do_check_arg_id(int id) {
       (!FMT_GCC_VERSION || FMT_GCC_VERSION >= 1200)) {
     using context = detail::compile_parse_context<Char>;
     if (id >= static_cast<context*>(this)->num_args())
-      detail::throw_format_error("argument not found");
+      throw_format_error("argument not found");
   }
 }
 
@@ -1633,11 +1635,6 @@ template <typename Context> class basic_format_arg {
   friend FMT_CONSTEXPR auto detail::make_arg(T& value)
       -> basic_format_arg<ContextType>;
 
-  template <typename Visitor, typename Ctx>
-  friend FMT_CONSTEXPR auto visit_format_arg(Visitor&& vis,
-                                             const basic_format_arg<Ctx>& arg)
-      -> decltype(vis(0));
-
   friend class basic_format_args<Context>;
   friend class dynamic_format_arg_store<Context>;
 
@@ -1676,6 +1673,53 @@ template <typename Context> class basic_format_arg {
     return detail::is_arithmetic_type(type_);
   }
 
+  /**
+    \rst
+    Visits an argument dispatching to the appropriate visit method based on
+    the argument type. For example, if the argument type is ``double`` then
+    ``vis(value)`` will be called with the value of type ``double``.
+    \endrst
+  */
+  template <typename Visitor>
+  FMT_CONSTEXPR auto visit(Visitor&& vis) -> decltype(vis(0)) {
+    switch (type_) {
+    case detail::type::none_type:
+      break;
+    case detail::type::int_type:
+      return vis(value_.int_value);
+    case detail::type::uint_type:
+      return vis(value_.uint_value);
+    case detail::type::long_long_type:
+      return vis(value_.long_long_value);
+    case detail::type::ulong_long_type:
+      return vis(value_.ulong_long_value);
+    case detail::type::int128_type:
+      return vis(detail::convert_for_visit(value_.int128_value));
+    case detail::type::uint128_type:
+      return vis(detail::convert_for_visit(value_.uint128_value));
+    case detail::type::bool_type:
+      return vis(value_.bool_value);
+    case detail::type::char_type:
+      return vis(value_.char_value);
+    case detail::type::float_type:
+      return vis(value_.float_value);
+    case detail::type::double_type:
+      return vis(value_.double_value);
+    case detail::type::long_double_type:
+      return vis(value_.long_double_value);
+    case detail::type::cstring_type:
+      return vis(value_.string.data);
+    case detail::type::string_type:
+      using sv = basic_string_view<typename Context::char_type>;
+      return vis(sv(value_.string.data, value_.string.size));
+    case detail::type::pointer_type:
+      return vis(value_.pointer);
+    case detail::type::custom_type:
+      return vis(typename basic_format_arg<Context>::handle(value_.custom));
+    }
+    return vis(monostate());
+  }
+
   FMT_INLINE auto format_custom(const char_type* parse_begin,
                                 typename Context::parse_context_type& parse_ctx,
                                 Context& ctx) -> bool {
@@ -1686,53 +1730,10 @@ template <typename Context> class basic_format_arg {
   }
 };
 
-/**
-  \rst
-  Visits an argument dispatching to the appropriate visit method based on
-  the argument type. For example, if the argument type is ``double`` then
-  ``vis(value)`` will be called with the value of type ``double``.
-  \endrst
- */
-// DEPRECATED!
 template <typename Visitor, typename Context>
-FMT_CONSTEXPR FMT_INLINE auto visit_format_arg(
+FMT_DEPRECATED FMT_CONSTEXPR FMT_INLINE auto visit_format_arg(
     Visitor&& vis, const basic_format_arg<Context>& arg) -> decltype(vis(0)) {
-  switch (arg.type_) {
-  case detail::type::none_type:
-    break;
-  case detail::type::int_type:
-    return vis(arg.value_.int_value);
-  case detail::type::uint_type:
-    return vis(arg.value_.uint_value);
-  case detail::type::long_long_type:
-    return vis(arg.value_.long_long_value);
-  case detail::type::ulong_long_type:
-    return vis(arg.value_.ulong_long_value);
-  case detail::type::int128_type:
-    return vis(detail::convert_for_visit(arg.value_.int128_value));
-  case detail::type::uint128_type:
-    return vis(detail::convert_for_visit(arg.value_.uint128_value));
-  case detail::type::bool_type:
-    return vis(arg.value_.bool_value);
-  case detail::type::char_type:
-    return vis(arg.value_.char_value);
-  case detail::type::float_type:
-    return vis(arg.value_.float_value);
-  case detail::type::double_type:
-    return vis(arg.value_.double_value);
-  case detail::type::long_double_type:
-    return vis(arg.value_.long_double_value);
-  case detail::type::cstring_type:
-    return vis(arg.value_.string.data);
-  case detail::type::string_type:
-    using sv = basic_string_view<typename Context::char_type>;
-    return vis(sv(arg.value_.string.data, arg.value_.string.size));
-  case detail::type::pointer_type:
-    return vis(arg.value_.pointer);
-  case detail::type::custom_type:
-    return vis(typename basic_format_arg<Context>::handle(arg.value_.custom));
-  }
-  return vis(monostate());
+  return arg.visit(std::forward<Visitor>(vis));
 }
 
 // Formatting context.
@@ -1772,9 +1773,8 @@ template <typename OutputIt, typename Char> class basic_format_context {
   }
   auto args() const -> const format_args& { return args_; }
 
-  // DEPRECATED!
-  FMT_CONSTEXPR auto error_handler() -> detail::error_handler { return {}; }
-  void on_error(const char* message) { error_handler().on_error(message); }
+  // This function is intentionally not constexpr to give a compile-time error.
+  void on_error(const char* message) { throw_format_error(message); }
 
   // Returns an iterator to the beginning of the output range.
   FMT_CONSTEXPR auto out() -> iterator { return out_; }

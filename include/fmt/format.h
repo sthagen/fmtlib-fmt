@@ -65,25 +65,11 @@
 #  define FMT_FALLTHROUGH
 #endif
 
-#ifndef FMT_DEPRECATED
-#  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VERSION >= 1900
-#    define FMT_DEPRECATED [[deprecated]]
-#  else
-#    if (defined(__GNUC__) && !defined(__LCC__)) || defined(__clang__)
-#      define FMT_DEPRECATED __attribute__((deprecated))
-#    elif FMT_MSC_VERSION
-#      define FMT_DEPRECATED __declspec(deprecated)
-#    else
-#      define FMT_DEPRECATED /* deprecated */
-#    endif
-#  endif
-#endif
-
 #ifndef FMT_NO_UNIQUE_ADDRESS
 #  if FMT_CPLUSPLUS >= 202002L
 #    if FMT_HAS_CPP_ATTRIBUTE(no_unique_address)
 #      define FMT_NO_UNIQUE_ADDRESS [[no_unique_address]]
-// VS2019 v16.10 and later except clang-cl (https://reviews.llvm.org/D110485)
+// VS2019 v16.10 and later except clang-cl (https://reviews.llvm.org/D110485).
 #    elif (FMT_MSC_VERSION >= 1929) && !FMT_CLANG_VERSION
 #      define FMT_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #    endif
@@ -1053,7 +1039,7 @@ class loc_value {
   loc_value(T) {}
 
   template <typename Visitor> auto visit(Visitor&& vis) -> decltype(vis(0)) {
-    return visit_format_arg(vis, value_);
+    return value_.visit(vis);
   }
 };
 
@@ -1881,15 +1867,11 @@ auto write_escaped_cp(OutputIt out, const find_escape_result<Char>& escape)
     *out++ = static_cast<Char>('\\');
     break;
   default:
-    if (escape.cp < 0x100) {
-      return write_codepoint<2, Char>(out, 'x', escape.cp);
-    }
-    if (escape.cp < 0x10000) {
+    if (escape.cp < 0x100) return write_codepoint<2, Char>(out, 'x', escape.cp);
+    if (escape.cp < 0x10000)
       return write_codepoint<4, Char>(out, 'u', escape.cp);
-    }
-    if (escape.cp < 0x110000) {
+    if (escape.cp < 0x110000)
       return write_codepoint<8, Char>(out, 'U', escape.cp);
-    }
     for (Char escape_char : basic_string_view<Char>(
              escape.begin, to_unsigned(escape.end - escape.begin))) {
       out = write_codepoint<2, Char>(out, 'x',
@@ -3831,7 +3813,7 @@ struct precision_checker {
 
 template <typename Handler, typename FormatArg>
 FMT_CONSTEXPR auto get_dynamic_spec(FormatArg arg) -> int {
-  unsigned long long value = visit_format_arg(Handler(), arg);
+  unsigned long long value = arg.visit(Handler());
   if (value > to_unsigned(max_value<int>()))
     throw_format_error("number is too big");
   return static_cast<int>(value);
@@ -4224,84 +4206,6 @@ template <typename T> struct nested_formatter {
   }
 };
 
-// DEPRECATED! join_view will be moved to ranges.h.
-template <typename It, typename Sentinel, typename Char = char>
-struct join_view : detail::view {
-  It begin;
-  Sentinel end;
-  basic_string_view<Char> sep;
-
-  join_view(It b, Sentinel e, basic_string_view<Char> s)
-      : begin(b), end(e), sep(s) {}
-};
-
-template <typename It, typename Sentinel, typename Char>
-struct formatter<join_view<It, Sentinel, Char>, Char> {
- private:
-  using value_type =
-#ifdef __cpp_lib_ranges
-      std::iter_value_t<It>;
-#else
-      typename std::iterator_traits<It>::value_type;
-#endif
-  formatter<remove_cvref_t<value_type>, Char> value_formatter_;
-
- public:
-  template <typename ParseContext>
-  FMT_CONSTEXPR auto parse(ParseContext& ctx) -> const Char* {
-    return value_formatter_.parse(ctx);
-  }
-
-  template <typename FormatContext>
-  auto format(const join_view<It, Sentinel, Char>& value,
-              FormatContext& ctx) const -> decltype(ctx.out()) {
-    auto it = value.begin;
-    auto out = ctx.out();
-    if (it != value.end) {
-      out = value_formatter_.format(*it, ctx);
-      ++it;
-      while (it != value.end) {
-        out = detail::copy_str<Char>(value.sep.begin(), value.sep.end(), out);
-        ctx.advance_to(out);
-        out = value_formatter_.format(*it, ctx);
-        ++it;
-      }
-    }
-    return out;
-  }
-};
-
-/**
-  Returns a view that formats the iterator range `[begin, end)` with elements
-  separated by `sep`.
- */
-template <typename It, typename Sentinel>
-auto join(It begin, Sentinel end, string_view sep) -> join_view<It, Sentinel> {
-  return {begin, end, sep};
-}
-
-/**
-  \rst
-  Returns a view that formats `range` with elements separated by `sep`.
-
-  **Example**::
-
-    std::vector<int> v = {1, 2, 3};
-    fmt::print("{}", fmt::join(v, ", "));
-    // Output: "1, 2, 3"
-
-  ``fmt::join`` applies passed format specifiers to the range elements::
-
-    fmt::print("{:02}", fmt::join(v, ", "));
-    // Output: "01, 02, 03"
-  \endrst
- */
-template <typename Range>
-auto join(Range&& range, string_view sep)
-    -> join_view<detail::iterator_t<Range>, detail::sentinel_t<Range>> {
-  return join(std::begin(range), std::end(range), sep);
-}
-
 /**
   \rst
   Converts *value* to ``std::string`` using the default format for type *T*.
@@ -4356,11 +4260,11 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
   if (fmt.size() == 2 && equal2(fmt.data(), "{}")) {
     auto arg = args.get(0);
     if (!arg) throw_format_error("argument not found");
-    visit_format_arg(default_arg_formatter<Char>{out, args, loc}, arg);
+    arg.visit(default_arg_formatter<Char>{out, args, loc});
     return;
   }
 
-  struct format_handler : error_handler {
+  struct format_handler {
     basic_format_parse_context<Char> parse_context;
     buffer_context<Char> context;
 
@@ -4388,10 +4292,8 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
 
     FMT_INLINE void on_replacement_field(int id, const Char*) {
       auto arg = get_arg(context, id);
-      context.advance_to(visit_format_arg(
-          default_arg_formatter<Char>{context.out(), context.args(),
-                                      context.locale()},
-          arg));
+      context.advance_to(arg.visit(default_arg_formatter<Char>{
+          context.out(), context.args(), context.locale()}));
     }
 
     auto on_format_specs(int id, const Char* begin, const Char* end)
@@ -4408,10 +4310,12 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
           specs.precision, specs.precision_ref, context);
       if (begin == end || *begin != '}')
         throw_format_error("missing '}' in format string");
-      auto f = arg_formatter<Char>{context.out(), specs, context.locale()};
-      context.advance_to(visit_format_arg(f, arg));
+      context.advance_to(arg.visit(
+          arg_formatter<Char>{context.out(), specs, context.locale()}));
       return begin;
     }
+
+    void on_error(const char* message) { throw_format_error(message); }
   };
   detail::parse_format_string<false>(fmt, format_handler(out, fmt, args, loc));
 }
