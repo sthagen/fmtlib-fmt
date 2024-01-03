@@ -8,12 +8,12 @@
 #ifndef FMT_CORE_H_
 #define FMT_CORE_H_
 
-#include <cstddef>  // std::byte
-#include <cstdio>   // std::FILE
-#include <cstring>  // std::strlen
-#include <iterator>
-#include <limits>
-#include <memory>  // std::addressof
+#include <cstddef>   // std::byte
+#include <cstdio>    // std::FILE
+#include <cstring>   // std::strlen
+#include <iterator>  // std::back_insert_iterator
+#include <limits>    // std::numeric_limits
+#include <memory>    // std::addressof
 #include <string>
 #include <type_traits>
 
@@ -56,6 +56,12 @@
 #else
 #  define FMT_MSC_VERSION 0
 #  define FMT_MSC_WARNING(...)
+#endif
+
+#ifdef _GLIBCXX_RELEASE
+#  define FMT_GLIBCXX_RELEASE _GLIBCXX_RELEASE
+#else
+#  define FMT_GLIBCXX_RELEASE 0
 #endif
 
 #ifdef _MSVC_LANG
@@ -121,7 +127,7 @@
 
 #if (FMT_CPLUSPLUS >= 202002L ||                                \
      (FMT_CPLUSPLUS >= 201709L && FMT_GCC_VERSION >= 1002)) &&  \
-    ((!defined(_GLIBCXX_RELEASE) || _GLIBCXX_RELEASE >= 10) &&  \
+    ((!FMT_GLIBCXX_RELEASE || FMT_GLIBCXX_RELEASE >= 10) &&     \
      (!defined(_LIBCPP_VERSION) || _LIBCPP_VERSION >= 10000) && \
      (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1928)) &&          \
     defined(__cpp_lib_is_constant_evaluated)
@@ -131,15 +137,11 @@
 #endif
 
 // Check if constexpr std::char_traits<>::{compare,length} are supported.
-#if defined(__GLIBCXX__)
-#  if FMT_CPLUSPLUS >= 201703L && defined(_GLIBCXX_RELEASE) && \
-      _GLIBCXX_RELEASE >= 7  // GCC 7+ libstdc++ has _GLIBCXX_RELEASE.
-#    define FMT_CONSTEXPR_CHAR_TRAITS constexpr
-#  endif
-#elif defined(_LIBCPP_VERSION) && FMT_CPLUSPLUS >= 201703L && \
-    _LIBCPP_VERSION >= 4000
-#  define FMT_CONSTEXPR_CHAR_TRAITS constexpr
-#elif FMT_MSC_VERSION >= 1914 && FMT_CPLUSPLUS >= 201703L
+#if FMT_CPLUSPLUS < 201703L
+// Not supported.
+#elif FMT_GLIBCXX_RELEASE >= 7 ||                            \
+    (defined(_LIBCPP_VERSION) && _LIBCPP_VERSION >= 4000) || \
+    FMT_MSC_VERSION >= 1914
 #  define FMT_CONSTEXPR_CHAR_TRAITS constexpr
 #endif
 #ifndef FMT_CONSTEXPR_CHAR_TRAITS
@@ -262,7 +264,7 @@
 #  endif
 #endif
 
-// GCC < 5 requires this-> in decltype
+// GCC < 5 requires this-> in decltype.
 #ifndef FMT_DECLTYPE_THIS
 #  if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
 #    define FMT_DECLTYPE_THIS this->
@@ -337,8 +339,7 @@ constexpr FMT_INLINE auto is_constant_evaluated(
 // Workaround for incompatibility between libstdc++ consteval-based
 // std::is_constant_evaluated() implementation and clang-14:
 // https://github.com/fmtlib/fmt/issues/3247.
-#if FMT_CPLUSPLUS >= 202002L && defined(_GLIBCXX_RELEASE) && \
-    _GLIBCXX_RELEASE >= 12 &&                                \
+#if FMT_CPLUSPLUS >= 202002L && FMT_GLIBCXX_RELEASE >= 12 && \
     (FMT_CLANG_VERSION >= 1400 && FMT_CLANG_VERSION < 1500)
   ignore_unused(default_value);
   return __builtin_is_constant_evaluated();
@@ -821,13 +822,18 @@ template <typename T> class buffer {
   size_t size_;
   size_t capacity_;
 
+  using grow_fun = void (*)(buffer& buf, size_t capacity);
+  grow_fun grow_;
+
  protected:
   // Don't initialize ptr_ since it is not accessed to save a few cycles.
   FMT_MSC_WARNING(suppress : 26495)
-  FMT_CONSTEXPR buffer(size_t sz) noexcept : size_(sz), capacity_(sz) {}
+  FMT_CONSTEXPR buffer(grow_fun grow, size_t sz) noexcept
+      : size_(sz), capacity_(sz), grow_(grow) {}
 
-  FMT_CONSTEXPR20 buffer(T* p = nullptr, size_t sz = 0, size_t cap = 0) noexcept
-      : ptr_(p), size_(sz), capacity_(cap) {}
+  FMT_CONSTEXPR20 buffer(grow_fun grow, T* p = nullptr, size_t sz = 0,
+                         size_t cap = 0) noexcept
+      : ptr_(p), size_(sz), capacity_(cap), grow_(grow) {}
 
   FMT_CONSTEXPR20 ~buffer() = default;
   buffer(buffer&&) = default;
@@ -837,10 +843,6 @@ template <typename T> class buffer {
     ptr_ = buf_data;
     capacity_ = buf_capacity;
   }
-
-  /** Increases the buffer capacity to hold at least *capacity* elements. */
-  // DEPRECATED!
-  virtual FMT_CONSTEXPR20 void grow(size_t capacity) = 0;
 
  public:
   using value_type = T;
@@ -880,7 +882,7 @@ template <typename T> class buffer {
   // for at least one additional element either by increasing the capacity or by
   // flushing the buffer if it is full.
   FMT_CONSTEXPR20 void try_reserve(size_t new_capacity) {
-    if (new_capacity > capacity_) grow(new_capacity);
+    if (new_capacity > capacity_) grow_(*this, new_capacity);
   }
 
   FMT_CONSTEXPR20 void push_back(const T& value) {
@@ -929,9 +931,8 @@ class iterator_buffer final : public Traits, public buffer<T> {
   enum { buffer_size = 256 };
   T data_[buffer_size];
 
- protected:
-  FMT_CONSTEXPR20 void grow(size_t) override {
-    if (this->size() == buffer_size) flush();
+  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+    if (buf.size() == buffer_size) static_cast<iterator_buffer&>(buf).flush();
   }
 
   void flush() {
@@ -942,9 +943,11 @@ class iterator_buffer final : public Traits, public buffer<T> {
 
  public:
   explicit iterator_buffer(OutputIt out, size_t n = buffer_size)
-      : Traits(n), buffer<T>(data_, 0, buffer_size), out_(out) {}
+      : Traits(n), buffer<T>(grow, data_, 0, buffer_size), out_(out) {}
   iterator_buffer(iterator_buffer&& other)
-      : Traits(other), buffer<T>(data_, 0, buffer_size), out_(other.out_) {}
+      : Traits(other),
+        buffer<T>(grow, data_, 0, buffer_size),
+        out_(other.out_) {}
   ~iterator_buffer() { flush(); }
 
   auto out() -> OutputIt {
@@ -963,9 +966,9 @@ class iterator_buffer<T*, T, fixed_buffer_traits> final
   enum { buffer_size = 256 };
   T data_[buffer_size];
 
- protected:
-  FMT_CONSTEXPR20 void grow(size_t) override {
-    if (this->size() == this->capacity()) flush();
+  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+    if (buf.size() == buf.capacity())
+      static_cast<iterator_buffer&>(buf).flush();
   }
 
   void flush() {
@@ -979,7 +982,7 @@ class iterator_buffer<T*, T, fixed_buffer_traits> final
 
  public:
   explicit iterator_buffer(T* out, size_t n = buffer_size)
-      : fixed_buffer_traits(n), buffer<T>(out, 0, n), out_(out) {}
+      : fixed_buffer_traits(n), buffer<T>(grow, out, 0, n), out_(out) {}
   iterator_buffer(iterator_buffer&& other)
       : fixed_buffer_traits(other),
         buffer<T>(std::move(other)),
@@ -1001,11 +1004,9 @@ class iterator_buffer<T*, T, fixed_buffer_traits> final
 };
 
 template <typename T> class iterator_buffer<T*, T> final : public buffer<T> {
- protected:
-  FMT_CONSTEXPR20 void grow(size_t) override {}
-
  public:
-  explicit iterator_buffer(T* out, size_t = 0) : buffer<T>(out, 0, ~size_t()) {}
+  explicit iterator_buffer(T* out, size_t = 0)
+      : buffer<T>([](buffer<T>&, size_t) {}, out, 0, ~size_t()) {}
 
   auto out() -> T* { return &*this->end(); }
 };
@@ -1017,17 +1018,18 @@ class iterator_buffer<std::back_insert_iterator<Container>,
                                   typename Container::value_type>>
     final : public buffer<typename Container::value_type> {
  private:
+  using value_type = typename Container::value_type;
   Container& container_;
 
- protected:
-  FMT_CONSTEXPR20 void grow(size_t capacity) override {
-    container_.resize(capacity);
-    this->set(&container_[0], capacity);
+  static FMT_CONSTEXPR20 void grow(buffer<value_type>& buf, size_t capacity) {
+    auto& self = static_cast<iterator_buffer&>(buf);
+    self.container_.resize(capacity);
+    self.set(&self.container_[0], capacity);
   }
 
  public:
   explicit iterator_buffer(Container& c)
-      : buffer<typename Container::value_type>(c.size()), container_(c) {}
+      : buffer<value_type>(grow, c.size()), container_(c) {}
   explicit iterator_buffer(std::back_insert_iterator<Container> out, size_t = 0)
       : iterator_buffer(get_container(out)) {}
 
@@ -1043,15 +1045,14 @@ template <typename T = char> class counting_buffer final : public buffer<T> {
   T data_[buffer_size];
   size_t count_ = 0;
 
- protected:
-  FMT_CONSTEXPR20 void grow(size_t) override {
-    if (this->size() != buffer_size) return;
-    count_ += this->size();
-    this->clear();
+  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+    if (buf.size() != buffer_size) return;
+    static_cast<counting_buffer&>(buf).count_ += buf.size();
+    buf.clear();
   }
 
  public:
-  counting_buffer() : buffer<T>(data_, 0, buffer_size) {}
+  counting_buffer() : buffer<T>(grow, data_, 0, buffer_size) {}
 
   auto count() -> size_t { return count_ + this->size(); }
 };
@@ -1856,7 +1857,7 @@ class format_arg_store
 // Arguments are taken by lvalue references to avoid some lifetime issues.
 template <typename Context = format_context, typename... T>
 constexpr auto make_format_args(T&... args)
-    -> format_arg_store<Context, remove_cvref_t<T>...> {
+    -> format_arg_store<Context, remove_const_t<T>...> {
   return {args...};
 }
 
@@ -2132,11 +2133,8 @@ struct dynamic_format_specs : format_specs<Char> {
 };
 
 // Converts a character to ASCII. Returns '\0' on conversion failure.
-template <typename Char, FMT_ENABLE_IF(std::is_integral<Char>::value)>
-constexpr auto to_ascii(Char c) -> char {
-  return c <= 0xff ? static_cast<char>(c) : '\0';
-}
-template <typename Char, FMT_ENABLE_IF(std::is_enum<Char>::value)>
+template <typename Char, FMT_ENABLE_IF(std::is_integral<Char>::value ||
+                                       std::is_enum<Char>::value)>
 constexpr auto to_ascii(Char c) -> char {
   return c <= 0xff ? static_cast<char>(c) : '\0';
 }
