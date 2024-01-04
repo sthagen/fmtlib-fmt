@@ -8,12 +8,12 @@
 #ifndef FMT_CORE_H_
 #define FMT_CORE_H_
 
-#include <cstddef>   // std::byte
-#include <cstdio>    // std::FILE
-#include <cstring>   // std::strlen
-#include <limits>    // std::numeric_limits
-#include <string>
-#include <type_traits>
+#include <cstddef>      // std::byte
+#include <cstdio>       // std::FILE
+#include <cstring>      // std::strlen
+#include <limits.h>     // CHAR_BIT
+#include <string>       // std::string
+#include <type_traits>  // std::enable_if
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
 #define FMT_VERSION 100200
@@ -134,18 +134,6 @@
 #  define FMT_CONSTEXPR20
 #endif
 
-// Check if constexpr std::char_traits<>::{compare,length} are supported.
-#if FMT_CPLUSPLUS < 201703L
-// Not supported.
-#elif FMT_GLIBCXX_RELEASE >= 7 ||                            \
-    (defined(_LIBCPP_VERSION) && _LIBCPP_VERSION >= 4000) || \
-    FMT_MSC_VERSION >= 1914
-#  define FMT_CONSTEXPR_CHAR_TRAITS constexpr
-#endif
-#ifndef FMT_CONSTEXPR_CHAR_TRAITS
-#  define FMT_CONSTEXPR_CHAR_TRAITS
-#endif
-
 // Check if exceptions are disabled.
 #ifndef FMT_EXCEPTIONS
 #  if (defined(__GNUC__) && !defined(__EXCEPTIONS)) || \
@@ -221,16 +209,6 @@
 #  define FMT_API
 #endif
 
-// libc++ supports string_view in pre-c++17.
-#if FMT_HAS_INCLUDE(<string_view>) && \
-    (FMT_CPLUSPLUS >= 201703L || defined(_LIBCPP_VERSION))
-#  include <string_view>
-#  define FMT_USE_STRING_VIEW
-#elif FMT_HAS_INCLUDE("experimental/string_view") && FMT_CPLUSPLUS >= 201402L
-#  include <experimental/string_view>
-#  define FMT_USE_EXPERIMENTAL_STRING_VIEW
-#endif
-
 #ifndef FMT_UNICODE
 #  define FMT_UNICODE !FMT_MSC_VERSION
 #endif
@@ -299,10 +277,15 @@ template <typename T> using type_identity_t = typename type_identity<T>::type;
 template <typename T>
 using underlying_t = typename std::underlying_type<T>::type;
 
-// Checks whether T is a container with contiguous storage.
-template <typename T> struct is_contiguous : std::false_type {};
-template <typename Char>
-struct is_contiguous<std::basic_string<Char>> : std::true_type {};
+#if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
+// A workaround for gcc 4.8 to make void_t work in a SFINAE context.
+template <typename...> struct void_t_impl {
+  using type = void;
+};
+template <typename... T> using void_t = typename void_t_impl<T...>::type;
+#else
+template <typename...> using void_t = void;
+#endif
 
 struct monostate {
   constexpr monostate() {}
@@ -400,15 +383,6 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 #  endif
 #endif
 
-#if defined(FMT_USE_STRING_VIEW)
-template <typename Char> using std_string_view = std::basic_string_view<Char>;
-#elif defined(FMT_USE_EXPERIMENTAL_STRING_VIEW)
-template <typename Char>
-using std_string_view = std::experimental::basic_string_view<Char>;
-#else
-template <typename T> struct std_string_view {};
-#endif
-
 #ifdef FMT_USE_INT128
 // Do nothing.
 #elif defined(__SIZEOF_INT128__) && !defined(__NVCC__) && \
@@ -437,6 +411,15 @@ FMT_CONSTEXPR auto to_unsigned(Int value) ->
   return static_cast<typename std::make_unsigned<Int>::type>(value);
 }
 
+template <typename T, typename Enable = void>
+struct is_string_like : std::false_type {};
+
+// A heuristic to detect std::string and std::string_view.
+template <typename T>
+struct is_string_like<T, void_t<decltype(std::declval<T>().find_first_of(
+                             typename T::value_type(), 0))>> : std::true_type {
+};
+
 FMT_CONSTEXPR inline auto is_utf8() -> bool {
   FMT_MSC_WARNING(suppress : 4566) constexpr unsigned char section[] = "\u00A7";
 
@@ -445,7 +428,32 @@ FMT_CONSTEXPR inline auto is_utf8() -> bool {
   return FMT_UNICODE || (sizeof(section) == 3 && uchar(section[0]) == 0xC2 &&
                          uchar(section[1]) == 0xA7);
 }
+
+template <typename Char> FMT_CONSTEXPR auto length(const Char* s) -> size_t {
+  size_t len = 0;
+  while (*s++) ++len;
+  return len;
+}
+
+template <typename Char>
+FMT_CONSTEXPR auto compare(const Char* s1, const Char* s2, std::size_t n)
+    -> int {
+  for (; n != 0; ++s1, ++s2, --n) {
+    if (*s1 < *s2) return -1;
+    if (*s1 > *s2) return 1;
+  }
+  return 0;
+}
 }  // namespace detail
+
+template <typename Char>
+using basic_string =
+    std::basic_string<Char, std::char_traits<Char>, std::allocator<Char>>;
+
+// Checks whether T is a container with contiguous storage.
+template <typename T> struct is_contiguous : std::false_type {};
+template <typename Char>
+struct is_contiguous<basic_string<Char>> : std::true_type {};
 
 /**
   An implementation of ``std::basic_string_view`` for pre-C++17. It provides a
@@ -471,29 +479,25 @@ template <typename Char> class basic_string_view {
       : data_(s), size_(count) {}
 
   /**
-    \rst
-    Constructs a string reference object from a C string computing
-    the size with ``std::char_traits<Char>::length``.
-    \endrst
+    Constructs a string reference object from a C string.
    */
-  FMT_CONSTEXPR_CHAR_TRAITS
+  FMT_CONSTEXPR20
   FMT_INLINE
   basic_string_view(const Char* s)
       : data_(s),
         size_(detail::const_check(std::is_same<Char, char>::value &&
-                                  !detail::is_constant_evaluated(true))
+                                  !detail::is_constant_evaluated(false))
                   ? std::strlen(reinterpret_cast<const char*>(s))
-                  : std::char_traits<Char>::length(s)) {}
+                  : detail::length(s)) {}
 
-  /** Constructs a string reference from a ``std::basic_string`` object. */
-  template <typename Traits, typename Alloc>
-  FMT_CONSTEXPR basic_string_view(
-      const std::basic_string<Char, Traits, Alloc>& s) noexcept
-      : data_(s.data()), size_(s.size()) {}
-
-  template <typename S, FMT_ENABLE_IF(std::is_same<
-                                      S, detail::std_string_view<Char>>::value)>
-  FMT_CONSTEXPR basic_string_view(S s) noexcept
+  /**
+    Constructs a string reference from a ``std::basic_string`` or a
+    ``std::basic_string_view`` object.
+  */
+  template <typename S,
+            FMT_ENABLE_IF(detail::is_string_like<S>::value&& std::is_same<
+                          typename S::value_type, Char>::value)>
+  FMT_CONSTEXPR basic_string_view(const S& s) noexcept
       : data_(s.data()), size_(s.size()) {}
 
   /** Returns a pointer to the string data. */
@@ -514,30 +518,28 @@ template <typename Char> class basic_string_view {
     size_ -= n;
   }
 
-  FMT_CONSTEXPR_CHAR_TRAITS auto starts_with(
-      basic_string_view<Char> sv) const noexcept -> bool {
-    return size_ >= sv.size_ &&
-           std::char_traits<Char>::compare(data_, sv.data_, sv.size_) == 0;
+  FMT_CONSTEXPR auto starts_with(basic_string_view<Char> sv) const noexcept
+      -> bool {
+    return size_ >= sv.size_ && detail::compare(data_, sv.data_, sv.size_) == 0;
   }
-  FMT_CONSTEXPR_CHAR_TRAITS auto starts_with(Char c) const noexcept -> bool {
-    return size_ >= 1 && std::char_traits<Char>::eq(*data_, c);
+  FMT_CONSTEXPR auto starts_with(Char c) const noexcept -> bool {
+    return size_ >= 1 && *data_ == c;
   }
-  FMT_CONSTEXPR_CHAR_TRAITS auto starts_with(const Char* s) const -> bool {
+  FMT_CONSTEXPR auto starts_with(const Char* s) const -> bool {
     return starts_with(basic_string_view<Char>(s));
   }
 
   // Lexicographically compare this string reference to other.
-  FMT_CONSTEXPR_CHAR_TRAITS auto compare(basic_string_view other) const -> int {
+  FMT_CONSTEXPR auto compare(basic_string_view other) const -> int {
     size_t str_size = size_ < other.size_ ? size_ : other.size_;
-    int result = std::char_traits<Char>::compare(data_, other.data_, str_size);
+    int result = detail::compare(data_, other.data_, str_size);
     if (result == 0)
       result = size_ == other.size_ ? 0 : (size_ < other.size_ ? -1 : 1);
     return result;
   }
 
-  FMT_CONSTEXPR_CHAR_TRAITS friend auto operator==(basic_string_view lhs,
-                                                   basic_string_view rhs)
-      -> bool {
+  FMT_CONSTEXPR friend auto operator==(basic_string_view lhs,
+                                       basic_string_view rhs) -> bool {
     return lhs.compare(rhs) == 0;
   }
   friend auto operator!=(basic_string_view lhs, basic_string_view rhs) -> bool {
@@ -577,19 +579,14 @@ template <typename Char, FMT_ENABLE_IF(is_char<Char>::value)>
 FMT_INLINE auto to_string_view(const Char* s) -> basic_string_view<Char> {
   return s;
 }
-template <typename Char, typename Traits, typename Alloc>
-inline auto to_string_view(const std::basic_string<Char, Traits, Alloc>& s)
-    -> basic_string_view<Char> {
-  return s;
+template <typename S, FMT_ENABLE_IF(is_string_like<S>::value)>
+inline auto to_string_view(const S& s)
+    -> basic_string_view<typename S::value_type> {
+  return s;  // std::basic_string[_view]
 }
 template <typename Char>
 constexpr auto to_string_view(basic_string_view<Char> s)
     -> basic_string_view<Char> {
-  return s;
-}
-template <typename Char,
-          FMT_ENABLE_IF(!std::is_empty<std_string_view<Char>>::value)>
-inline auto to_string_view(std_string_view<Char> s) -> basic_string_view<Char> {
   return s;
 }
 template <typename S, FMT_ENABLE_IF(is_compile_string<S>::value)>
@@ -809,23 +806,6 @@ class compile_parse_context : public basic_format_parse_context<Char> {
   }
 };
 
-template <typename Char, typename InputIt, typename OutputIt>
-FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
-    -> OutputIt {
-  while (begin != end) *out++ = static_cast<Char>(*begin++);
-  return out;
-}
-
-template <typename Char, typename T, typename U,
-          FMT_ENABLE_IF(
-              std::is_same<remove_const_t<T>, U>::value&& is_char<U>::value)>
-FMT_CONSTEXPR auto copy_str(T* begin, T* end, U* out) -> U* {
-  if (is_constant_evaluated()) return copy_str<Char, T*, U*>(begin, end, out);
-  auto size = to_unsigned(end - begin);
-  if (size > 0) memcpy(out, begin, size * sizeof(U));
-  return out + size;
-}
-
 /**
   \rst
   A contiguous memory buffer with an optional growing ability. It is an internal
@@ -954,7 +934,9 @@ class iterator_buffer final : public Traits, public buffer<T> {
   void flush() {
     auto size = this->size();
     this->clear();
-    out_ = copy_str<T>(data_, data_ + this->limit(size), out_);
+    const T* begin = data_;
+    const T* end = begin + this->limit(size);
+    while (begin != end) *out_++ = *begin++;
   }
 
  public:
@@ -1001,7 +983,7 @@ class iterator_buffer<T*, T, fixed_buffer_traits> final
       : fixed_buffer_traits(n), buffer<T>(grow, out, 0, n), out_(out) {}
   iterator_buffer(iterator_buffer&& other)
       : fixed_buffer_traits(other),
-        buffer<T>(std::move(other)),
+        buffer<T>(static_cast<iterator_buffer&&>(other)),
         out_(other.out_) {
     if (this->data() != out_) {
       this->set(data_, buffer_size);
@@ -1542,33 +1524,6 @@ enum { max_packed_args = 62 / packed_arg_bits };
 enum : unsigned long long { is_unpacked_bit = 1ULL << 63 };
 enum : unsigned long long { has_named_args_bit = 1ULL << 62 };
 
-template <typename Char, typename InputIt>
-auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
-  get_container(out).append(begin, end);
-  return out;
-}
-template <typename Char, typename InputIt>
-auto copy_str(InputIt begin, InputIt end, back_insert_iterator<std::string> out)
-    -> back_insert_iterator<std::string> {
-  get_container(out).append(begin, end);
-  return out;
-}
-
-template <typename Char, typename R, typename OutputIt>
-FMT_CONSTEXPR auto copy_str(R&& rng, OutputIt out) -> OutputIt {
-  return detail::copy_str<Char>(rng.begin(), rng.end(), out);
-}
-
-#if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
-// A workaround for gcc 4.8 to make void_t work in a SFINAE context.
-template <typename...> struct void_t_impl {
-  using type = void;
-};
-template <typename... T> using void_t = typename void_t_impl<T...>::type;
-#else
-template <typename...> using void_t = void;
-#endif
-
 template <typename It, typename T, typename Enable = void>
 struct is_output_iterator : std::false_type {};
 
@@ -1576,8 +1531,7 @@ template <> struct is_output_iterator<appender, char> : std::true_type {};
 
 template <typename It, typename T>
 struct is_output_iterator<
-    It, T,
-    void_t<decltype(*std::declval<It&>()++ = std::declval<T>())>>
+    It, T, void_t<decltype(*std::declval<It&>()++ = std::declval<T>())>>
     : std::true_type {};
 
 template <typename It> struct is_back_insert_iterator : std::false_type {};
@@ -2212,11 +2166,11 @@ FMT_CONSTEXPR auto parse_nonnegative_int(const Char*& begin, const Char* end,
   } while (p != end && '0' <= *p && *p <= '9');
   auto num_digits = p - begin;
   begin = p;
-  if (num_digits <= std::numeric_limits<int>::digits10)
-    return static_cast<int>(value);
+  int digits10 = static_cast<int>(sizeof(int) * CHAR_BIT * 3 / 10);
+  if (num_digits <= digits10) return static_cast<int>(value);
   // Check for overflow.
-  const unsigned max = to_unsigned((std::numeric_limits<int>::max)());
-  return num_digits == std::numeric_limits<int>::digits10 + 1 &&
+  unsigned max = INT_MAX;
+  return num_digits == digits10 + 1 &&
                  prev * 10ull + unsigned(p[-1] - '0') <= max
              ? static_cast<int>(value)
              : error_value;
@@ -2244,9 +2198,8 @@ FMT_CONSTEXPR auto do_parse_arg_id(const Char* begin, const Char* end,
   Char c = *begin;
   if (c >= '0' && c <= '9') {
     int index = 0;
-    constexpr int max = (std::numeric_limits<int>::max)();
     if (c != '0')
-      index = parse_nonnegative_int(begin, end, max);
+      index = parse_nonnegative_int(begin, end, INT_MAX);
     else
       ++begin;
     if (begin == end || (*begin != '}' && *begin != ':'))
@@ -2847,7 +2800,7 @@ using format_string = basic_format_string<char, type_identity_t<Args>...>;
 inline auto runtime(string_view s) -> runtime_format_string<> { return {{s}}; }
 #endif
 
-FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
+FMT_API auto vformat(string_view fmt, format_args args) -> basic_string<char>;
 
 /**
   \rst
@@ -2862,7 +2815,7 @@ FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
 */
 template <typename... T>
 FMT_NODISCARD FMT_INLINE auto format(format_string<T...> fmt, T&&... args)
-    -> std::string {
+    -> basic_string<char> {
   return vformat(fmt, fmt::make_format_args(args...));
 }
 

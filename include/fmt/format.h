@@ -38,16 +38,26 @@
 #include <cstring>           // std::memcpy
 #include <initializer_list>  // std::initializer_list
 #include <iterator>
-#include <limits>            // std::numeric_limits
-#include <memory>            // std::uninitialized_copy
-#include <stdexcept>         // std::runtime_error
-#include <system_error>      // std::system_error
+#include <limits>        // std::numeric_limits
+#include <memory>        // std::uninitialized_copy
+#include <stdexcept>     // std::runtime_error
+#include <system_error>  // std::system_error
 
 #ifdef __cpp_lib_bit_cast
 #  include <bit>  // std::bit_cast
 #endif
 
 #include "core.h"
+
+// libc++ supports string_view in pre-c++17.
+#if FMT_HAS_INCLUDE(<string_view>) && \
+    (FMT_CPLUSPLUS >= 201703L || defined(_LIBCPP_VERSION))
+#  include <string_view>
+#  define FMT_USE_STRING_VIEW
+#elif FMT_HAS_INCLUDE("experimental/string_view") && FMT_CPLUSPLUS >= 201402L
+#  include <experimental/string_view>
+#  define FMT_USE_EXPERIMENTAL_STRING_VIEW
+#endif
 
 #if defined __cpp_inline_variables && __cpp_inline_variables >= 201606L
 #  define FMT_INLINE_VARIABLE inline
@@ -285,6 +295,15 @@ FMT_CONSTEXPR inline void abort_fuzzing_if(bool condition) {
 #endif
 }
 
+#if defined(FMT_USE_STRING_VIEW)
+template <typename Char> using std_string_view = std::basic_string_view<Char>;
+#elif defined(FMT_USE_EXPERIMENTAL_STRING_VIEW)
+template <typename Char>
+using std_string_view = std::experimental::basic_string_view<Char>;
+#else
+template <typename T> struct std_string_view {};
+#endif
+
 template <typename CharT, CharT... C> struct string_literal {
   static constexpr CharT value[sizeof...(C)] = {C...};
   constexpr operator basic_string_view<CharT>() const {
@@ -515,6 +534,40 @@ inline auto get_container(std::back_insert_iterator<Container> it)
     using base::container;
   };
   return *accessor(it).container;
+}
+
+template <typename Char, typename InputIt, typename OutputIt>
+FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
+    -> OutputIt {
+  while (begin != end) *out++ = static_cast<Char>(*begin++);
+  return out;
+}
+
+template <typename Char, typename T, typename U,
+          FMT_ENABLE_IF(
+              std::is_same<remove_const_t<T>, U>::value&& is_char<U>::value)>
+FMT_CONSTEXPR auto copy_str(T* begin, T* end, U* out) -> U* {
+  if (is_constant_evaluated()) return copy_str<Char, T*, U*>(begin, end, out);
+  auto size = to_unsigned(end - begin);
+  if (size > 0) memcpy(out, begin, size * sizeof(U));
+  return out + size;
+}
+
+template <typename Char, typename InputIt>
+auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
+  get_container(out).append(begin, end);
+  return out;
+}
+template <typename Char, typename InputIt>
+auto copy_str(InputIt begin, InputIt end, back_insert_iterator<std::string> out)
+    -> back_insert_iterator<std::string> {
+  get_container(out).append(begin, end);
+  return out;
+}
+
+template <typename Char, typename R, typename OutputIt>
+FMT_CONSTEXPR auto copy_str(R&& rng, OutputIt out) -> OutputIt {
+  return detail::copy_str<Char>(rng.begin(), rng.end(), out);
 }
 
 // An approximation of iterator_t for pre-C++20 systems.
@@ -3733,8 +3786,7 @@ FMT_CONSTEXPR auto write(OutputIt out, Char value) -> OutputIt {
 }
 
 template <typename Char, typename OutputIt>
-FMT_CONSTEXPR_CHAR_TRAITS auto write(OutputIt out, const Char* value)
-    -> OutputIt {
+FMT_CONSTEXPR20 auto write(OutputIt out, const Char* value) -> OutputIt {
   if (value) return write(out, basic_string_view<Char>(value));
   throw_format_error("string pointer is null");
   return out;
