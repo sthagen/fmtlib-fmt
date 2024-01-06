@@ -412,19 +412,18 @@ FMT_CONSTEXPR auto to_unsigned(Int value) ->
   return static_cast<typename std::make_unsigned<Int>::type>(value);
 }
 
+// A heuristic to detect std::string and std::[experimental::]string_view.
+// It is mainly used to avoid dependency on <[experimental/]string_view>.
 template <typename T, typename Enable = void>
-struct is_string_like : std::false_type {};
-
-// A heuristic to detect std::string and std::string_view.
+struct is_std_string_like : std::false_type {};
 template <typename T>
-struct is_string_like<T, void_t<decltype(std::declval<T>().find_first_of(
-                             typename T::value_type(), 0))>> : std::true_type {
-};
+struct is_std_string_like<T, void_t<decltype(std::declval<T>().find_first_of(
+                                 typename T::value_type(), 0))>>
+    : std::true_type {};
 
 FMT_CONSTEXPR inline auto is_utf8() -> bool {
   FMT_MSC_WARNING(suppress : 4566) constexpr unsigned char section[] = "\u00A7";
-
-  // Avoid buggy sign extensions in MSVC's constant evaluation mode (#2297).
+  // Avoid an MSVC sign extension bug: https://github.com/fmtlib/fmt/pull/2297.
   using uchar = unsigned char;
   return FMT_UNICODE || (sizeof(section) == 3 && uchar(section[0]) == 0xC2 &&
                          uchar(section[1]) == 0xA7);
@@ -496,7 +495,7 @@ template <typename Char> class basic_string_view {
     ``std::basic_string_view`` object.
   */
   template <typename S,
-            FMT_ENABLE_IF(detail::is_string_like<S>::value&& std::is_same<
+            FMT_ENABLE_IF(detail::is_std_string_like<S>::value&& std::is_same<
                           typename S::value_type, Char>::value)>
   FMT_CONSTEXPR basic_string_view(const S& s) noexcept
       : data_(s.data()), size_(s.size()) {}
@@ -570,16 +569,16 @@ template <> struct is_char<char> : std::true_type {};
 
 namespace detail {
 
-// Constructs fmt::basic_string_view<Char> from types **implicitly** convertible
-// to it, deducing Char. Explicitly convertible types such as compile-time
-// strings are intentionally excluded.
+// Constructs fmt::basic_string_view<Char> from types implicitly convertible
+// to it, deducing Char. Explicitly convertible types such as the ones returned
+// from FMT_STRING are intentionally excluded.
 template <typename Char, FMT_ENABLE_IF(is_char<Char>::value)>
 FMT_INLINE auto to_string_view(const Char* s) -> basic_string_view<Char> {
   return s;
 }
-template <typename S, FMT_ENABLE_IF(is_string_like<S>::value)>
-inline auto to_string_view(const S& s)
-    -> basic_string_view<typename S::value_type> {
+template <typename T, FMT_ENABLE_IF(is_std_string_like<T>::value)>
+inline auto to_string_view(const T& s)
+    -> basic_string_view<typename T::value_type> {
   return s;
 }
 template <typename Char>
@@ -587,21 +586,14 @@ constexpr auto to_string_view(basic_string_view<Char> s)
     -> basic_string_view<Char> {
   return s;
 }
-void to_string_view(...);
 
-// Specifies whether S is a string type convertible to fmt::basic_string_view.
-// It should be a constexpr function but MSVC 2017 fails to compile it in
-// enable_if and MSVC 2015 fails to compile it as an alias template.
-// ADL is intentionally disabled as to_string_view is not an extension point.
-template <typename S, typename = void>
-struct is_string
-    : std::is_class<decltype(detail::to_string_view(std::declval<S>()))> {};
-
-template <typename S, typename = void> struct char_t_impl {};
-template <typename S> struct char_t_impl<S, enable_if_t<is_string<S>::value>> {
-  using result = decltype(to_string_view(std::declval<S>()));
-  using type = typename result::value_type;
-};
+template <typename T, typename Enable = void>
+struct has_to_string_view : std::false_type {};
+// detail:: is intentional since to_string_view is not an extension point.
+template <typename T>
+struct has_to_string_view<
+    T, void_t<decltype(detail::to_string_view(std::declval<T>()))>>
+    : std::true_type {};
 
 enum class type {
   none_type,
@@ -681,8 +673,10 @@ enum {
 /** Throws ``format_error`` with a given message. */
 FMT_NORETURN FMT_API void throw_format_error(const char* message);
 
-/** String's character type. */
-template <typename S> using char_t = typename detail::char_t_impl<S>::type;
+/** String's character (code unit) type. */
+template <typename S,
+          typename V = decltype(detail::to_string_view(std::declval<S>()))>
+using char_t = typename V::value_type;
 
 /**
   \rst
@@ -1422,16 +1416,15 @@ template <typename Context> struct arg_mapper {
   FMT_CONSTEXPR FMT_INLINE auto map(const char_type* val) -> const char_type* {
     return val;
   }
-  template <typename T,
-            FMT_ENABLE_IF(is_string<T>::value && !std::is_pointer<T>::value &&
-                          std::is_same<char_type, char_t<T>>::value)>
-  FMT_CONSTEXPR FMT_INLINE auto map(const T& val)
-      -> basic_string_view<char_type> {
+  template <typename T, typename Char = char_t<T>,
+            FMT_ENABLE_IF(std::is_same<Char, char_type>::value &&
+                          !std::is_pointer<T>::value)>
+  FMT_CONSTEXPR FMT_INLINE auto map(const T& val) -> basic_string_view<Char> {
     return to_string_view(val);
   }
-  template <typename T,
-            FMT_ENABLE_IF(is_string<T>::value && !std::is_pointer<T>::value &&
-                          !std::is_same<char_type, char_t<T>>::value)>
+  template <typename T, typename Char = char_t<T>,
+            FMT_ENABLE_IF(!std::is_same<Char, char_type>::value &&
+                          !std::is_pointer<T>::value)>
   FMT_CONSTEXPR FMT_INLINE auto map(const T&) -> unformattable_char {
     return {};
   }
@@ -1488,7 +1481,7 @@ template <typename Context> struct arg_mapper {
   template <typename T, typename U = remove_const_t<T>,
             FMT_ENABLE_IF((std::is_class<U>::value || std::is_enum<U>::value ||
                            std::is_union<U>::value) &&
-                          !is_string<U>::value && !is_char<U>::value &&
+                          !has_to_string_view<U>::value && !is_char<U>::value &&
                           !is_named_arg<U>::value &&
                           !std::is_arithmetic<format_as_t<U>>::value)>
   FMT_CONSTEXPR FMT_INLINE auto map(T& val)
