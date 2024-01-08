@@ -137,14 +137,6 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
-#if FMT_EXCEPTIONS
-#  define FMT_TRY try
-#  define FMT_CATCH(x) catch (x)
-#else
-#  define FMT_TRY if (true)
-#  define FMT_CATCH(x) if (false)
-#endif
-
 #ifndef FMT_MAYBE_UNUSED
 #  if FMT_HAS_CPP17_ATTRIBUTE(maybe_unused)
 #    define FMT_MAYBE_UNUSED [[maybe_unused]]
@@ -279,12 +271,7 @@ FMT_END_NAMESPACE
 #endif
 
 namespace std {
-template <> struct iterator_traits<fmt::appender> {
-  using value_type = void;
-  using iterator_category = std::output_iterator_tag;
-};
-template <typename Container>
-struct iterator_traits<fmt::back_insert_iterator<Container>> {
+template <typename T> struct iterator_traits<fmt::basic_appender<T>> {
   using value_type = void;
   using iterator_category = std::output_iterator_tag;
 };
@@ -529,18 +516,6 @@ FMT_INLINE void assume(bool condition) {
 #endif
 }
 
-// Extracts a reference to the container from back_insert_iterator.
-template <typename Container>
-inline auto get_container(std::back_insert_iterator<Container> it)
-    -> Container& {
-  using base = std::back_insert_iterator<Container>;
-  struct accessor : base {
-    accessor(base b) : base(b) {}
-    using base::container;
-  };
-  return *accessor(it).container;
-}
-
 template <typename Char, typename InputIt, typename OutputIt>
 FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
     -> OutputIt {
@@ -564,8 +539,9 @@ auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
   return out;
 }
 template <typename Char, typename InputIt>
-auto copy_str(InputIt begin, InputIt end, back_insert_iterator<std::string> out)
-    -> back_insert_iterator<std::string> {
+auto copy_str(InputIt begin, InputIt end,
+              std::back_insert_iterator<std::string> out)
+    -> std::back_insert_iterator<std::string> {
   get_container(out).append(begin, end);
   return out;
 }
@@ -932,7 +908,7 @@ enum { inline_buffer_size = 500 };
  */
 template <typename T, size_t SIZE = inline_buffer_size,
           typename Allocator = std::allocator<T>>
-class basic_memory_buffer final : public detail::buffer<T> {
+class basic_memory_buffer : public detail::buffer<T> {
  private:
   T store_[SIZE];
 
@@ -945,7 +921,6 @@ class basic_memory_buffer final : public detail::buffer<T> {
     if (data != store_) alloc_.deallocate(data, this->capacity());
   }
 
- protected:
   static FMT_CONSTEXPR20 void grow(detail::buffer<T>& buf, size_t size) {
     detail::abort_fuzzing_if(size > 5000);
     auto& self = static_cast<basic_memory_buffer&>(buf);
