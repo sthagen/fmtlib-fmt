@@ -2259,3 +2259,63 @@ FMT_END_NAMESPACE
 TEST(format_test, formatter_nonconst_char) {
   EXPECT_EQ(fmt::format("{}", convertible_to_nonconst_cstring()), "bar");
 }
+
+namespace adl_test {
+template <typename... T> void make_format_args(const T&...) = delete;
+
+struct string : std::string {};
+}  // namespace adl_test
+
+// Test that formatting functions compile when make_format_args is found by ADL.
+TEST(format_test, adl) {
+  // Only check compilation and don't run the code to avoid polluting the output
+  // and since the output is tested elsewhere.
+  if (fmt::detail::const_check(true)) return;
+  auto s = adl_test::string();
+  char buf[10];
+  (void)fmt::format("{}", s);
+  fmt::format_to(buf, "{}", s);
+  fmt::format_to_n(buf, 10, "{}", s);
+  (void)fmt::formatted_size("{}", s);
+  fmt::print("{}", s);
+  fmt::print(stdout, "{}", s);
+}
+
+struct convertible_to_int {
+  operator int() const { return 42; }
+};
+
+struct convertible_to_cstring {
+  operator const char*() const { return "foo"; }
+};
+
+FMT_BEGIN_NAMESPACE
+template <> struct formatter<convertible_to_int> {
+  FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> decltype(ctx.begin()) {
+    return ctx.begin();
+  }
+  auto format(convertible_to_int, format_context& ctx) const
+      -> decltype(ctx.out()) {
+    auto out = ctx.out();
+    *out++ = 'x';
+    return out;
+  }
+};
+
+template <> struct formatter<convertible_to_cstring> {
+  FMT_CONSTEXPR auto parse(format_parse_context& ctx) -> decltype(ctx.begin()) {
+    return ctx.begin();
+  }
+  auto format(convertible_to_cstring, format_context& ctx) const
+      -> decltype(ctx.out()) {
+    auto out = ctx.out();
+    *out++ = 'y';
+    return out;
+  }
+};
+FMT_END_NAMESPACE
+
+TEST(format_test, formatter_overrides_implicit_conversion) {
+  EXPECT_EQ(fmt::format("{}", convertible_to_int()), "x");
+  EXPECT_EQ(fmt::format("{}", convertible_to_cstring()), "y");
+}

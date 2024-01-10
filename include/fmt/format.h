@@ -46,6 +46,7 @@
 #include <limits>        // std::numeric_limits
 #include <memory>        // std::uninitialized_copy
 #include <stdexcept>     // std::runtime_error
+#include <string>        // std::basic_string
 #include <system_error>  // std::system_error
 
 #ifdef __cpp_lib_bit_cast
@@ -278,6 +279,11 @@ template <typename T> struct iterator_traits<fmt::basic_appender<T>> {
 }  // namespace std
 
 FMT_BEGIN_NAMESPACE
+
+template <typename Char, typename Traits, typename Allocator>
+struct is_contiguous<std::basic_string<Char, Traits, Allocator>>
+    : std::true_type {};
+
 namespace detail {
 
 FMT_CONSTEXPR inline void abort_fuzzing_if(bool condition) {
@@ -464,7 +470,7 @@ template <typename T> constexpr auto num_bits() -> int {
 }
 // std::numeric_limits<T>::digits may return 0 for 128-bit ints.
 template <> constexpr auto num_bits<int128_opt>() -> int { return 128; }
-template <> constexpr auto num_bits<uint128_t>() -> int { return 128; }
+template <> constexpr auto num_bits<uint128_fallback>() -> int { return 128; }
 
 // A heterogeneous bit_cast used for converting 96-bit long double to uint128_t
 // and 128-bit pointers to uint128_fallback.
@@ -2388,9 +2394,12 @@ FMT_CONSTEXPR auto write(OutputIt out, basic_string_view<Char> s,
     size = code_point_index(s, to_unsigned(specs.precision));
   bool is_debug = specs.type == presentation_type::debug;
   size_t width = 0;
+
+  if (is_debug) size = write_escaped_string(counting_iterator{}, s).count();
+
   if (specs.width != 0) {
     if (is_debug)
-      width = write_escaped_string(counting_iterator{}, s).count();
+      width = size;
     else
       width = compute_width(basic_string_view<Char>(data, size));
   }
@@ -4447,6 +4456,25 @@ constexpr auto operator""_a(const char* s, size_t) -> detail::udl_arg<char> {
 #  endif
 }  // namespace literals
 #endif  // FMT_USE_USER_DEFINED_LITERALS
+
+FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
+
+/**
+  \rst
+  Formats ``args`` according to specifications in ``fmt`` and returns the result
+  as a string.
+
+  **Example**::
+
+    #include <fmt/core.h>
+    std::string message = fmt::format("The answer is {}.", 42);
+  \endrst
+*/
+template <typename... T>
+FMT_NODISCARD FMT_INLINE auto format(format_string<T...> fmt, T&&... args)
+    -> std::string {
+  return vformat(fmt, fmt::make_format_args(args...));
+}
 
 template <typename Locale, FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
 inline auto vformat(const Locale& loc, string_view fmt, format_args args)
