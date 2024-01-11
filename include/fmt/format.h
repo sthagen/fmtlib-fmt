@@ -42,18 +42,17 @@
 #include <cstdint>           // uint32_t
 #include <cstring>           // std::memcpy
 #include <initializer_list>  // std::initializer_list
-#include <iterator>
-#include <limits>        // std::numeric_limits
-#include <memory>        // std::uninitialized_copy
-#include <stdexcept>     // std::runtime_error
-#include <string>        // std::basic_string
-#include <system_error>  // std::system_error
-
-#ifdef __cpp_lib_bit_cast
-#  include <bit>  // std::bit_cast
-#endif
+#include <limits>            // std::numeric_limits
+#include <memory>            // std::allocator_traits
+#include <stdexcept>         // std::runtime_error
+#include <string>            // std::string
+#include <system_error>      // std::system_error
 
 #include "base.h"
+
+#if FMT_HAS_INCLUDE(<bit>)
+#  include <bit>  // std::bit_cast
+#endif
 
 // libc++ supports string_view in pre-c++17.
 #if FMT_HAS_INCLUDE(<string_view>) && \
@@ -270,13 +269,6 @@ inline auto ctzll(uint64_t x) -> int {
 }  // namespace detail
 FMT_END_NAMESPACE
 #endif
-
-namespace std {
-template <typename T> struct iterator_traits<fmt::basic_appender<T>> {
-  using value_type = void;
-  using iterator_category = std::output_iterator_tag;
-};
-}  // namespace std
 
 FMT_BEGIN_NAMESPACE
 
@@ -522,7 +514,21 @@ FMT_INLINE void assume(bool condition) {
 #endif
 }
 
-template <typename Char, typename InputIt, typename OutputIt>
+template <typename Char, typename InputIt>
+auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
+  get_container(out).append(begin, end);
+  return out;
+}
+
+template <typename Char, typename InputIt, typename OutputIt,
+          FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value)>
+auto copy_str(InputIt begin, InputIt end, OutputIt out) -> OutputIt {
+  get_container(out).append(begin, end);
+  return out;
+}
+
+template <typename Char, typename InputIt, typename OutputIt,
+          FMT_ENABLE_IF(!is_back_insert_iterator<OutputIt>::value)>
 FMT_CONSTEXPR auto copy_str(InputIt begin, InputIt end, OutputIt out)
     -> OutputIt {
   while (begin != end) *out++ = static_cast<Char>(*begin++);
@@ -537,19 +543,6 @@ FMT_CONSTEXPR auto copy_str(T* begin, T* end, U* out) -> U* {
   auto size = to_unsigned(end - begin);
   if (size > 0) memcpy(out, begin, size * sizeof(U));
   return out + size;
-}
-
-template <typename Char, typename InputIt>
-auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
-  get_container(out).append(begin, end);
-  return out;
-}
-template <typename Char, typename InputIt>
-auto copy_str(InputIt begin, InputIt end,
-              std::back_insert_iterator<std::string> out)
-    -> std::back_insert_iterator<std::string> {
-  get_container(out).append(begin, end);
-  return out;
 }
 
 template <typename Char, typename R, typename OutputIt>
@@ -574,14 +567,15 @@ inline auto get_data(Container& c) -> typename Container::value_type* {
 
 // Attempts to reserve space for n extra characters in the output range.
 // Returns a pointer to the reserved range or a reference to it.
-template <typename Container, FMT_ENABLE_IF(is_contiguous<Container>::value)>
+template <typename OutputIt,
+          FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value&&
+                            is_contiguous<typename OutputIt::container>::value)>
 #if FMT_CLANG_VERSION >= 307 && !FMT_ICC_VERSION
 __attribute__((no_sanitize("undefined")))
 #endif
 inline auto
-reserve(std::back_insert_iterator<Container> it, size_t n) ->
-    typename Container::value_type* {
-  Container& c = get_container(it);
+reserve(OutputIt it, size_t n) -> typename OutputIt::value_type* {
+  auto& c = get_container(it);
   size_t size = c.size();
   c.resize(size + n);
   return get_data(c) + size;
@@ -615,10 +609,12 @@ template <typename T> auto to_pointer(basic_appender<T> it, size_t n) -> T* {
   return buf.data() + size;
 }
 
-template <typename Container, FMT_ENABLE_IF(is_contiguous<Container>::value)>
-inline auto base_iterator(std::back_insert_iterator<Container> it,
-                          typename Container::value_type*)
-    -> std::back_insert_iterator<Container> {
+template <typename OutputIt,
+          FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value&&
+                            is_contiguous<typename OutputIt::container>::value)>
+inline auto base_iterator(OutputIt it,
+                          typename OutputIt::containter_type::value_type*)
+    -> OutputIt {
   return it;
 }
 
@@ -865,20 +861,6 @@ using is_double_double = bool_constant<std::numeric_limits<T>::digits == 106>;
 #  define FMT_USE_FULL_CACHE_DRAGONBOX 0
 #endif
 
-template <typename T>
-template <typename U>
-void buffer<T>::append(const U* begin, const U* end) {
-  while (begin != end) {
-    auto count = to_unsigned(end - begin);
-    try_reserve(size_ + count);
-    auto free_cap = capacity_ - size_;
-    if (free_cap < count) count = free_cap;
-    std::uninitialized_copy_n(begin, count, ptr_ + size_);
-    size_ += count;
-    begin += count;
-  }
-}
-
 template <typename T, typename Enable = void>
 struct is_locale : std::false_type {};
 template <typename T>
@@ -944,7 +926,7 @@ class basic_memory_buffer : public detail::buffer<T> {
     // Suppress a bogus -Wstringop-overflow in gcc 13.1 (#3481).
     detail::assume(buf.size() <= new_capacity);
     // The following code doesn't throw, so the raw pointer above doesn't leak.
-    std::uninitialized_copy_n(old_data, buf.size(), new_data);
+    memcpy(new_data, old_data, buf.size() * sizeof(T));
     self.set(new_data, new_capacity);
     // deallocate must not throw according to the standard, but even if it does,
     // the buffer already uses the new storage and will deallocate it in
@@ -3092,7 +3074,7 @@ class bigint {
     bigits_.resize(to_unsigned(num_bigits + exp_difference));
     for (int i = num_bigits - 1, j = i + exp_difference; i >= 0; --i, --j)
       bigits_[j] = bigits_[i];
-    std::uninitialized_fill_n(bigits_.data(), exp_difference, 0u);
+    memset(bigits_.data(), 0, to_unsigned(exp_difference) * sizeof(bigit));
     exp_ -= exp_difference;
   }
 
@@ -3843,7 +3825,7 @@ FMT_CONSTEXPR auto write(OutputIt out, const T& value)
 // iterator. It's a class and not a generic lambda for compatibility with C++11.
 template <typename Char> struct default_arg_formatter {
   using iterator = basic_appender<Char>;
-  using context = buffer_context<Char>;
+  using context = buffered_context<Char>;
 
   iterator out;
   basic_format_args<context> args;
@@ -3862,7 +3844,7 @@ template <typename Char> struct default_arg_formatter {
 
 template <typename Char> struct arg_formatter {
   using iterator = basic_appender<Char>;
-  using context = buffer_context<Char>;
+  using context = buffered_context<Char>;
 
   iterator out;
   const format_specs<Char>& specs;
@@ -4145,13 +4127,6 @@ template <typename T> auto ptr(T p) -> const void* {
   static_assert(std::is_pointer<T>::value, "");
   return detail::bit_cast<const void*>(p);
 }
-template <typename T, typename Deleter>
-auto ptr(const std::unique_ptr<T, Deleter>& p) -> const void* {
-  return p.get();
-}
-template <typename T> auto ptr(const std::shared_ptr<T>& p) -> const void* {
-  return p.get();
-}
 
 /**
   \rst
@@ -4289,7 +4264,7 @@ template <typename T> struct nested_formatter {
   auto write_padded(format_context& ctx, F write) const -> decltype(ctx.out()) {
     if (width_ == 0) return write(ctx.out());
     auto buf = memory_buffer();
-    write(std::back_inserter(buf));
+    write(appender(buf));
     auto specs = format_specs<>();
     specs.width = width_;
     specs.fill = fill_;
@@ -4362,10 +4337,10 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
 
   struct format_handler {
     basic_format_parse_context<Char> parse_context;
-    buffer_context<Char> context;
+    buffered_context<Char> context;
 
     format_handler(basic_appender<Char> p_out, basic_string_view<Char> str,
-                   basic_format_args<buffer_context<Char>> p_args,
+                   basic_format_args<buffered_context<Char>> p_args,
                    locale_ref p_loc)
         : parse_context(str), context(p_out, p_args, p_loc) {}
 
