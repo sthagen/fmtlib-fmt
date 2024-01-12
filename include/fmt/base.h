@@ -18,48 +18,58 @@
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
 #define FMT_VERSION 100202
 
+// Detect compiler versions.
 #if defined(__clang__) && !defined(__ibmxl__)
 #  define FMT_CLANG_VERSION (__clang_major__ * 100 + __clang_minor__)
 #else
 #  define FMT_CLANG_VERSION 0
 #endif
-
-#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_COMPILER) && \
-    !defined(__NVCOMPILER)
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_COMPILER)
 #  define FMT_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
 #else
 #  define FMT_GCC_VERSION 0
 #endif
-
-#ifndef FMT_GCC_PRAGMA
-// Workaround _Pragma bug https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59884.
-#  if FMT_GCC_VERSION >= 504
-#    define FMT_GCC_PRAGMA(arg) _Pragma(arg)
-#  else
-#    define FMT_GCC_PRAGMA(arg)
-#  endif
-#endif
-
-#ifdef __ICL
+#if defined(__ICL)
 #  define FMT_ICC_VERSION __ICL
 #elif defined(__INTEL_COMPILER)
 #  define FMT_ICC_VERSION __INTEL_COMPILER
 #else
 #  define FMT_ICC_VERSION 0
 #endif
-
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #  define FMT_MSC_VERSION _MSC_VER
-#  define FMT_MSC_WARNING(...) __pragma(warning(__VA_ARGS__))
 #else
 #  define FMT_MSC_VERSION 0
-#  define FMT_MSC_WARNING(...)
 #endif
 
+// Detect standard library versions.
 #ifdef _GLIBCXX_RELEASE
 #  define FMT_GLIBCXX_RELEASE _GLIBCXX_RELEASE
 #else
 #  define FMT_GLIBCXX_RELEASE 0
+#endif
+#ifdef _LIBCPP_VERSION
+#  define FMT_LIBCPP_VERSION _LIBCPP_VERSION
+#else
+#  define FMT_LIBCPP_VERSION 0
+#endif
+
+// Check if exceptions are disabled.
+#ifdef FMT_EXCEPTIONS
+// Use the provided definition.
+#elif defined(__GNUC__) && !defined(__EXCEPTIONS)
+#  define FMT_EXCEPTIONS 0
+#elif FMT_MSC_VERSION && !_HAS_EXCEPTIONS
+#  define FMT_EXCEPTIONS 0
+#else
+#  define FMT_EXCEPTIONS 1
+#endif
+#if FMT_EXCEPTIONS
+#  define FMT_TRY try
+#  define FMT_CATCH(x) catch (x)
+#else
+#  define FMT_TRY if (true)
+#  define FMT_CATCH(x) if (false)
 #endif
 
 #ifdef _MSVC_LANG
@@ -68,18 +78,17 @@
 #  define FMT_CPLUSPLUS __cplusplus
 #endif
 
+// Detect __has_*.
 #ifdef __has_feature
 #  define FMT_HAS_FEATURE(x) __has_feature(x)
 #else
 #  define FMT_HAS_FEATURE(x) 0
 #endif
-
-#if defined(__has_include) || FMT_ICC_VERSION >= 1600 || FMT_MSC_VERSION > 1900
+#ifdef __has_include
 #  define FMT_HAS_INCLUDE(x) __has_include(x)
 #else
 #  define FMT_HAS_INCLUDE(x) 0
 #endif
-
 #ifdef __has_cpp_attribute
 #  define FMT_HAS_CPP_ATTRIBUTE(x) __has_cpp_attribute(x)
 #else
@@ -92,30 +101,19 @@
 #define FMT_HAS_CPP17_ATTRIBUTE(attribute) \
   (FMT_CPLUSPLUS >= 201703L && FMT_HAS_CPP_ATTRIBUTE(attribute))
 
-#ifndef FMT_DEPRECATED
-#  if FMT_HAS_CPP14_ATTRIBUTE(deprecated) || FMT_MSC_VERSION >= 1900
-#    define FMT_DEPRECATED [[deprecated]]
-#  else
-#    if (defined(__GNUC__) && !defined(__LCC__)) || defined(__clang__)
-#      define FMT_DEPRECATED __attribute__((deprecated))
-#    elif FMT_MSC_VERSION
-#      define FMT_DEPRECATED __declspec(deprecated)
-#    else
-#      define FMT_DEPRECATED /* deprecated */
-#    endif
-#  endif
-#endif
-
-// Check if relaxed C++14 constexpr is supported.
-// GCC doesn't allow throw in constexpr until version 6 (bug 67371).
-#ifndef FMT_USE_CONSTEXPR
-#  if (FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VERSION >= 1912 || \
-       (FMT_GCC_VERSION >= 600 && FMT_CPLUSPLUS >= 201402L)) &&             \
-      !FMT_ICC_VERSION && (!defined(__NVCC__) || FMT_CPLUSPLUS >= 202002L)
-#    define FMT_USE_CONSTEXPR 1
-#  else
-#    define FMT_USE_CONSTEXPR 0
-#  endif
+// Detect C++14 relaxed constexpr.
+#ifdef FMT_USE_CONSTEXPR
+// Use the provided definition.
+#elif FMT_GCC_VERSION >= 600 && FMT_CPLUSPLUS >= 201402L
+// GCC only allows throw in constexpr since version 6:
+// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67371.
+#  define FMT_USE_CONSTEXPR 1
+#elif FMT_ICC_VERSION
+#  define FMT_USE_CONSTEXPR 0  // https://github.com/fmtlib/fmt/issues/1628
+#elif FMT_HAS_FEATURE(cxx_relaxed_constexpr) || FMT_MSC_VERSION >= 1912
+#  define FMT_USE_CONSTEXPR 1
+#else
+#  define FMT_USE_CONSTEXPR 0
 #endif
 #if FMT_USE_CONSTEXPR
 #  define FMT_CONSTEXPR constexpr
@@ -123,32 +121,45 @@
 #  define FMT_CONSTEXPR
 #endif
 
-#if (FMT_CPLUSPLUS >= 202002L ||                                \
-     (FMT_CPLUSPLUS >= 201709L && FMT_GCC_VERSION >= 1002)) &&  \
-    ((!FMT_GLIBCXX_RELEASE || FMT_GLIBCXX_RELEASE >= 10) &&     \
-     (!defined(_LIBCPP_VERSION) || _LIBCPP_VERSION >= 10000) && \
-     (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1928)) &&          \
-    defined(__cpp_lib_is_constant_evaluated)
+// Detect C++20 extensions to constexpr and std::is_constant_evaluated.
+#ifndef __cpp_lib_is_constant_evaluated
+#  define FMT_CONSTEXPR20
+#elif FMT_GLIBCXX_RELEASE && FMT_GLIBCXX_RELEASE < 10
+#  define FMT_CONSTEXPR20
+#elif FMT_LIBCPP_VERSION && FMT_LIBCPP_VERSION < 10000
+#  define FMT_CONSTEXPR20
+#elif FMT_MSC_VERSION && FMT_MSC_VERSION < 1928
+#  define FMT_CONSTEXPR20
+#elif FMT_CPLUSPLUS >= 202002L
+#  define FMT_CONSTEXPR20 constexpr
+#elif FMT_CPLUSPLUS >= 201709L && FMT_GCC_VERSION >= 1002
 #  define FMT_CONSTEXPR20 constexpr
 #else
 #  define FMT_CONSTEXPR20
 #endif
 
-// Check if exceptions are disabled.
-#ifndef FMT_EXCEPTIONS
-#  if (defined(__GNUC__) && !defined(__EXCEPTIONS)) || \
-      (FMT_MSC_VERSION && !_HAS_EXCEPTIONS)
-#    define FMT_EXCEPTIONS 0
+#ifndef FMT_CONSTEVAL
+#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) && \
+       (!defined(__apple_build_version__) ||                     \
+        __apple_build_version__ >= 14000029L) &&                 \
+       FMT_CPLUSPLUS >= 202002L) ||                              \
+      (defined(__cpp_consteval) &&                               \
+       (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1929))
+// consteval is broken in MSVC before VS2019 version 16.10 and Apple clang
+// before 14.
+#    define FMT_CONSTEVAL consteval
+#    define FMT_HAS_CONSTEVAL
 #  else
-#    define FMT_EXCEPTIONS 1
+#    define FMT_CONSTEVAL
 #  endif
 #endif
-#if FMT_EXCEPTIONS
-#  define FMT_TRY try
-#  define FMT_CATCH(x) catch (x)
+
+#ifdef FMT_DEPRECATED
+// Use the provided definition.
+#elif FMT_HAS_CPP14_ATTRIBUTE(deprecated)
+#  define FMT_DEPRECATED [[deprecated]]
 #else
-#  define FMT_TRY if (true)
-#  define FMT_CATCH(x) if (false)
+#  define FMT_DEPRECATED /* deprecated */
 #endif
 
 // Disable [[noreturn]] on MSVC/NVCC because of bogus unreachable code warnings.
@@ -173,6 +184,21 @@
 #  define FMT_INLINE inline __attribute__((always_inline))
 #else
 #  define FMT_INLINE inline
+#endif
+
+#ifndef FMT_GCC_PRAGMA
+// Workaround a _Pragma bug https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59884
+// and an nvhpc warning: https://github.com/fmtlib/fmt/pull/2582.
+#  if FMT_GCC_VERSION >= 504 && !defined(__NVCOMPILER)
+#    define FMT_GCC_PRAGMA(arg) _Pragma(arg)
+#  else
+#    define FMT_GCC_PRAGMA(arg)
+#  endif
+#endif
+#if FMT_MSC_VERSION
+#  define FMT_MSC_WARNING(...) __pragma(warning(__VA_ARGS__))
+#else
+#  define FMT_MSC_WARNING(...)
 #endif
 
 #ifdef _MSC_VER
@@ -218,22 +244,6 @@
 
 #ifndef FMT_UNICODE
 #  define FMT_UNICODE !FMT_MSC_VERSION
-#endif
-
-#ifndef FMT_CONSTEVAL
-#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) && \
-       (!defined(__apple_build_version__) ||                     \
-        __apple_build_version__ >= 14000029L) &&                 \
-       FMT_CPLUSPLUS >= 202002L) ||                              \
-      (defined(__cpp_consteval) &&                               \
-       (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1929))
-// consteval is broken in MSVC before VS2019 version 16.10 and Apple clang
-// before 14.
-#    define FMT_CONSTEVAL consteval
-#    define FMT_HAS_CONSTEVAL
-#  else
-#    define FMT_CONSTEVAL
-#  endif
 #endif
 
 #ifndef FMT_USE_NONTYPE_TEMPLATE_ARGS
@@ -800,11 +810,11 @@ template <typename T> class buffer {
  protected:
   // Don't initialize ptr_ since it is not accessed to save a few cycles.
   FMT_MSC_WARNING(suppress : 26495)
-  FMT_CONSTEXPR buffer(grow_fun grow, size_t sz) noexcept
+  FMT_CONSTEXPR20 buffer(grow_fun grow, size_t sz) noexcept
       : size_(sz), capacity_(sz), grow_(grow) {}
 
-  FMT_CONSTEXPR20 buffer(grow_fun grow, T* p = nullptr, size_t sz = 0,
-                         size_t cap = 0) noexcept
+  constexpr buffer(grow_fun grow, T* p = nullptr, size_t sz = 0,
+                   size_t cap = 0) noexcept
       : ptr_(p), size_(sz), capacity_(cap), grow_(grow) {}
 
   FMT_CONSTEXPR20 ~buffer() = default;
@@ -844,7 +854,7 @@ template <typename T> class buffer {
 
   // Tries resizing the buffer to contain *count* elements. If T is a POD type
   // the new elements may not be initialized.
-  FMT_CONSTEXPR20 void try_resize(size_t count) {
+  FMT_CONSTEXPR void try_resize(size_t count) {
     try_reserve(count);
     size_ = count <= capacity_ ? count : capacity_;
   }
@@ -853,11 +863,11 @@ template <typename T> class buffer {
   // capacity by a smaller amount than requested but guarantees there is space
   // for at least one additional element either by increasing the capacity or by
   // flushing the buffer if it is full.
-  FMT_CONSTEXPR20 void try_reserve(size_t new_capacity) {
+  FMT_CONSTEXPR void try_reserve(size_t new_capacity) {
     if (new_capacity > capacity_) grow_(*this, new_capacity);
   }
 
-  FMT_CONSTEXPR20 void push_back(const T& value) {
+  FMT_CONSTEXPR void push_back(const T& value) {
     try_reserve(size_ + 1);
     ptr_[size_++] = value;
   }
@@ -918,7 +928,7 @@ class iterator_buffer : public Traits, public buffer<T> {
   enum { buffer_size = 256 };
   T data_[buffer_size];
 
-  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+  static FMT_CONSTEXPR void grow(buffer<T>& buf, size_t) {
     if (buf.size() == buffer_size) static_cast<iterator_buffer&>(buf).flush();
   }
 
@@ -958,7 +968,7 @@ class iterator_buffer<T*, T, fixed_buffer_traits> : public fixed_buffer_traits,
   enum { buffer_size = 256 };
   T data_[buffer_size];
 
-  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+  static FMT_CONSTEXPR void grow(buffer<T>& buf, size_t) {
     if (buf.size() == buf.capacity())
       static_cast<iterator_buffer&>(buf).flush();
   }
@@ -1016,7 +1026,7 @@ class iterator_buffer<
   using value_type = typename container_type::value_type;
   container_type& container_;
 
-  static FMT_CONSTEXPR20 void grow(buffer<value_type>& buf, size_t capacity) {
+  static FMT_CONSTEXPR void grow(buffer<value_type>& buf, size_t capacity) {
     auto& self = static_cast<iterator_buffer&>(buf);
     self.container_.resize(capacity);
     self.set(&self.container_[0], capacity);
@@ -1038,7 +1048,7 @@ template <typename T = char> class counting_buffer : public buffer<T> {
   T data_[buffer_size];
   size_t count_ = 0;
 
-  static FMT_CONSTEXPR20 void grow(buffer<T>& buf, size_t) {
+  static FMT_CONSTEXPR void grow(buffer<T>& buf, size_t) {
     if (buf.size() != buffer_size) return;
     static_cast<counting_buffer&>(buf).count_ += buf.size();
     buf.clear();
