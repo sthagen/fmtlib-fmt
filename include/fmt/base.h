@@ -585,6 +585,17 @@ struct has_to_string_view<
     T, void_t<decltype(detail::to_string_view(std::declval<T>()))>>
     : std::true_type {};
 
+template <typename CharT, CharT... C> struct string_literal {
+  static constexpr CharT value[sizeof...(C)] = {C...};
+  constexpr operator basic_string_view<CharT>() const {
+    return {value, sizeof...(C)};
+  }
+};
+#if FMT_CPLUSPLUS < 201703L
+template <typename CharT, CharT... C>
+constexpr CharT string_literal<CharT, C...>::value[sizeof...(C)];
+#endif
+
 enum class type {
   none_type,
   // Integer types should go first,
@@ -1122,6 +1133,40 @@ template <typename T> class basic_appender {
 using appender = basic_appender<char>;
 
 namespace detail {
+
+// An optimized version of std::copy with the output value type (T).
+template <typename T, typename InputIt>
+auto copy(InputIt begin, InputIt end, appender out) -> appender {
+  get_container(out).append(begin, end);
+  return out;
+}
+
+template <typename T, typename InputIt, typename OutputIt,
+          FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value)>
+auto copy(InputIt begin, InputIt end, OutputIt out) -> OutputIt {
+  get_container(out).append(begin, end);
+  return out;
+}
+
+template <typename T, typename InputIt, typename OutputIt,
+          FMT_ENABLE_IF(!is_back_insert_iterator<OutputIt>::value)>
+FMT_CONSTEXPR auto copy(InputIt begin, InputIt end, OutputIt out) -> OutputIt {
+  while (begin != end) *out++ = static_cast<T>(*begin++);
+  return out;
+}
+
+template <typename T>
+FMT_CONSTEXPR auto copy(const T* begin, const T* end, T* out) -> T* {
+  if (is_constant_evaluated()) return copy<T, const T*, T*>(begin, end, out);
+  auto size = to_unsigned(end - begin);
+  if (size > 0) memcpy(out, begin, size * sizeof(T));
+  return out + size;
+}
+
+template <typename T, typename V, typename OutputIt>
+FMT_CONSTEXPR auto copy(basic_string_view<V> s, OutputIt out) -> OutputIt {
+  return copy<T>(s.begin(), s.end(), out);
+}
 
 template <typename Context, typename T>
 constexpr auto has_const_formatter_impl(T*)

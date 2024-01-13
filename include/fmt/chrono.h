@@ -18,7 +18,7 @@
 #include <ostream>
 #include <type_traits>
 
-#include "ostream.h"  // formatbuf
+#include "format.h"
 
 FMT_BEGIN_NAMESPACE
 
@@ -329,6 +329,39 @@ inline auto localtime_s(...) -> null<> { return null<>(); }
 inline auto gmtime_r(...) -> null<> { return null<>(); }
 inline auto gmtime_s(...) -> null<> { return null<>(); }
 
+// It is defined here and not in ostream.h because the latter has expensive
+// includes.
+template <typename Streambuf> class formatbuf : public Streambuf {
+ private:
+  using char_type = typename Streambuf::char_type;
+  using streamsize = decltype(std::declval<Streambuf>().sputn(nullptr, 0));
+  using int_type = typename Streambuf::int_type;
+  using traits_type = typename Streambuf::traits_type;
+
+  buffer<char_type>& buffer_;
+
+ public:
+  explicit formatbuf(buffer<char_type>& buf) : buffer_(buf) {}
+
+ protected:
+  // The put area is always empty. This makes the implementation simpler and has
+  // the advantage that the streambuf and the buffer are always in sync and
+  // sputc never writes into uninitialized memory. A disadvantage is that each
+  // call to sputc always results in a (virtual) call to overflow. There is no
+  // disadvantage here for sputn since this always results in a call to xsputn.
+
+  auto overflow(int_type ch) -> int_type override {
+    if (!traits_type::eq_int_type(ch, traits_type::eof()))
+      buffer_.push_back(static_cast<char_type>(ch));
+    return ch;
+  }
+
+  auto xsputn(const char_type* s, streamsize count) -> streamsize override {
+    buffer_.append(s, s + count);
+    return count;
+  }
+};
+
 inline auto get_classic_locale() -> const std::locale& {
   static const auto& locale = std::locale::classic();
   return locale;
@@ -382,9 +415,9 @@ auto write_encoded_tm_str(OutputIt out, string_view in, const std::locale& loc)
         to_utf8<code_unit, basic_memory_buffer<char, unit_t::max_size * 4>>();
     if (!u.convert({unit.buf, to_unsigned(unit.end - unit.buf)}))
       FMT_THROW(format_error("failed to format time"));
-    return copy_str<char>(u.c_str(), u.c_str() + u.size(), out);
+    return copy<char>(u.c_str(), u.c_str() + u.size(), out);
   }
-  return copy_str<char>(in.data(), in.data() + in.size(), out);
+  return copy<char>(in.data(), in.data() + in.size(), out);
 }
 
 template <typename Char, typename OutputIt,
@@ -393,7 +426,7 @@ auto write_tm_str(OutputIt out, string_view sv, const std::locale& loc)
     -> OutputIt {
   codecvt_result<Char> unit;
   write_codecvt(unit, sv, loc);
-  return copy_str<Char>(unit.buf, unit.end, out);
+  return copy<Char>(unit.buf, unit.end, out);
 }
 
 template <typename Char, typename OutputIt,
@@ -1364,7 +1397,7 @@ class tm_writer {
   auto out() const -> OutputIt { return out_; }
 
   FMT_CONSTEXPR void on_text(const Char* begin, const Char* end) {
-    out_ = copy_str<Char>(begin, end, out_);
+    out_ = copy<Char>(begin, end, out_);
   }
 
   void on_abbr_weekday() {
@@ -1437,7 +1470,7 @@ class tm_writer {
     write_digit2_separated(buf, to_unsigned(tm_mon() + 1),
                            to_unsigned(tm_mday()),
                            to_unsigned(split_year_lower(tm_year())), '/');
-    out_ = copy_str<Char>(std::begin(buf), std::end(buf), out_);
+    out_ = copy<Char>(std::begin(buf), std::end(buf), out_);
   }
   void on_iso_date() {
     auto year = tm_year();
@@ -1453,7 +1486,7 @@ class tm_writer {
     write_digit2_separated(buf + 2, static_cast<unsigned>(year % 100),
                            to_unsigned(tm_mon() + 1), to_unsigned(tm_mday()),
                            '-');
-    out_ = copy_str<Char>(std::begin(buf) + offset, std::end(buf), out_);
+    out_ = copy<Char>(std::begin(buf) + offset, std::end(buf), out_);
   }
 
   void on_utc_offset(numeric_system ns) { format_utc_offset_impl(tm_, ns); }
@@ -1586,7 +1619,7 @@ class tm_writer {
       char buf[8];
       write_digit2_separated(buf, to_unsigned(tm_hour12()),
                              to_unsigned(tm_min()), to_unsigned(tm_sec()), ':');
-      out_ = copy_str<Char>(std::begin(buf), std::end(buf), out_);
+      out_ = copy<Char>(std::begin(buf), std::end(buf), out_);
       *out_++ = ' ';
       on_am_pm();
     } else {
