@@ -6,7 +6,7 @@ API Reference
 
 The {fmt} library API consists of the following parts:
 
-* :ref:`fmt/core.h <core-api>`: the core API providing main formatting functions
+* :ref:`fmt/base.h <base-api>`: the base API providing main formatting functions
   for ``char``/UTF-8 with C++20 compile-time checks and minimal dependencies
 * :ref:`fmt/format.h <format-api>`: the full format API providing additional
   formatting functions and locale support
@@ -24,12 +24,12 @@ The {fmt} library API consists of the following parts:
 All functions and types provided by the library reside in namespace ``fmt`` and
 macros have prefix ``FMT_``.
 
-.. _core-api:
+.. _base-api:
 
-Core API
+Base API
 ========
 
-``fmt/core.h`` defines the core API which provides main formatting functions
+``fmt/base.h`` defines the base API which provides main formatting functions
 for ``char``/UTF-8 with C++20 compile-time checks. It has minimal include
 dependencies for better compile times. This header is only beneficial when
 using {fmt} as a library (the default) and not in the header-only mode.
@@ -53,10 +53,15 @@ I/O errors are reported as `std::system_error
 <https://en.cppreference.com/w/cpp/error/system_error>`_ exceptions unless
 specified otherwise.
 
-.. _format:
+.. _print:
 
-.. doxygenfunction:: format(format_string<T...> fmt, T&&... args) -> std::string
-.. doxygenfunction:: vformat(string_view fmt, format_args args) -> std::string
+.. doxygenfunction:: fmt::print(format_string<T...> fmt, T&&... args)
+.. doxygenfunction:: fmt::vprint(string_view fmt, format_args args)
+
+.. doxygenfunction:: print(FILE *f, format_string<T...> fmt, T&&... args)
+.. doxygenfunction:: vprint(FILE *f, string_view fmt, format_args args)
+
+.. _format:
 
 .. doxygenfunction:: format_to(OutputIt out, format_string<T...> fmt, T&&... args) -> OutputIt
 .. doxygenfunction:: format_to_n(OutputIt out, size_t n, format_string<T...> fmt, T&&... args) -> format_to_n_result<OutputIt>
@@ -64,14 +69,6 @@ specified otherwise.
 
 .. doxygenstruct:: fmt::format_to_n_result
    :members:
-
-.. _print:
-
-.. doxygenfunction:: fmt::print(format_string<T...> fmt, T&&... args)
-.. doxygenfunction:: fmt::vprint(string_view fmt, format_args args)
-
-.. doxygenfunction:: print(std::FILE *f, format_string<T...> fmt, T&&... args)
-.. doxygenfunction:: vprint(std::FILE *f, string_view fmt, format_args args)
 
 Compile-Time Format String Checks
 ---------------------------------
@@ -132,7 +129,7 @@ inheritance or composition. This way you can support standard format specifiers
 without implementing them yourself. For example::
 
   // color.h:
-  #include <fmt/core.h>
+  #include <fmt/base.h>
 
   enum class color {red, green, blue};
 
@@ -276,7 +273,7 @@ binary footprint, for example (https://godbolt.org/z/vajfWEG4b):
 
 .. code:: c++
 
-    #include <fmt/core.h>
+    #include <fmt/base.h>
 
     void vlog(const char* file, int line, fmt::string_view format,
               fmt::format_args args) {
@@ -296,7 +293,7 @@ binary footprint, for example (https://godbolt.org/z/vajfWEG4b):
 Note that ``vlog`` is not parameterized on argument types which improves compile
 times and reduces binary code size compared to a fully parameterized version.
 
-.. doxygenfunction:: fmt::make_format_args(const Args&...)
+.. doxygenfunction:: fmt::make_format_args(T&... args) -> detail::format_arg_store<Context, NUM_ARGS, 0, DESC>
 
 .. doxygenclass:: fmt::format_arg_store
    :members:
@@ -312,7 +309,7 @@ times and reduces binary code size compared to a fully parameterized version.
 .. doxygenclass:: fmt::basic_format_parse_context
    :members:
 
-.. doxygenclass:: fmt::basic_format_context
+.. doxygenclass:: fmt::context
    :members:
 
 .. doxygentypedef:: fmt::format_context
@@ -343,6 +340,9 @@ Format API
 
 ``fmt/format.h`` defines the full format API providing additional formatting
 functions and locale support.
+
+.. doxygenfunction:: format(format_string<T...> fmt, T&&... args) -> std::string
+.. doxygenfunction:: vformat(string_view fmt, format_args args) -> std::string
 
 Literal-Based API
 -----------------
@@ -473,7 +473,7 @@ Using ``fmt::join``, you can separate tuple elements with a custom separator::
   // Prints "1, a"
   fmt::print("{}", fmt::join(t, ", "));
 
-.. doxygenfunction:: fmt::join(Range &&range, string_view sep) -> join_view<detail::iterator_t<Range>, detail::sentinel_t<Range>>
+.. doxygenfunction:: fmt::join(Range &&range, string_view sep) -> join_view<decltype(std::begin(range)), decltype(std::end(range))>
 .. doxygenfunction:: fmt::join(It begin, Sentinel end, string_view sep) -> join_view<It, Sentinel>
 
 .. _chrono-api:

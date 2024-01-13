@@ -43,7 +43,6 @@
 #include <cstring>           // std::memcpy
 #include <initializer_list>  // std::initializer_list
 #include <limits>            // std::numeric_limits
-#include <memory>            // std::allocator_traits
 #include <stdexcept>         // std::runtime_error
 #include <string>            // std::string
 #include <system_error>      // std::system_error
@@ -59,9 +58,6 @@
     (FMT_CPLUSPLUS >= 201703L || defined(_LIBCPP_VERSION))
 #  include <string_view>
 #  define FMT_USE_STRING_VIEW
-#elif FMT_HAS_INCLUDE("experimental/string_view") && FMT_CPLUSPLUS >= 201402L
-#  include <experimental/string_view>
-#  define FMT_USE_EXPERIMENTAL_STRING_VIEW
 #endif
 
 #if defined __cpp_inline_variables && __cpp_inline_variables >= 201606L
@@ -287,9 +283,6 @@ FMT_CONSTEXPR inline void abort_fuzzing_if(bool condition) {
 
 #if defined(FMT_USE_STRING_VIEW)
 template <typename Char> using std_string_view = std::basic_string_view<Char>;
-#elif defined(FMT_USE_EXPERIMENTAL_STRING_VIEW)
-template <typename Char>
-using std_string_view = std::experimental::basic_string_view<Char>;
 #else
 template <typename T> struct std_string_view {};
 #endif
@@ -462,6 +455,7 @@ template <typename T> constexpr auto num_bits() -> int {
 }
 // std::numeric_limits<T>::digits may return 0 for 128-bit ints.
 template <> constexpr auto num_bits<int128_opt>() -> int { return 128; }
+template <> constexpr auto num_bits<uint128_opt>() -> int { return 128; }
 template <> constexpr auto num_bits<uint128_fallback>() -> int { return 128; }
 
 // A heterogeneous bit_cast used for converting 96-bit long double to uint128_t
@@ -513,6 +507,14 @@ FMT_INLINE void assume(bool condition) {
   if (!condition) __builtin_unreachable();
 #endif
 }
+
+template <typename Allocator, typename Enable = void> struct allocator_size {
+  using type = size_t;
+};
+template <typename Allocator>
+struct allocator_size<Allocator, void_t<typename Allocator::size_type>> {
+  using type = typename Allocator::size_type;
+};
 
 template <typename Char, typename InputIt>
 auto copy_str(InputIt begin, InputIt end, appender out) -> appender {
@@ -912,8 +914,9 @@ class basic_memory_buffer : public detail::buffer<T> {
   static FMT_CONSTEXPR20 void grow(detail::buffer<T>& buf, size_t size) {
     detail::abort_fuzzing_if(size > 5000);
     auto& self = static_cast<basic_memory_buffer&>(buf);
-    const size_t max_size =
-        std::allocator_traits<Allocator>::max_size(self.alloc_);
+    constexpr size_t max_size =
+        detail::max_value<typename detail::allocator_size<Allocator>::type>() /
+        sizeof(T);
     size_t old_capacity = buf.capacity();
     size_t new_capacity = old_capacity + old_capacity / 2;
     if (size > new_capacity)
@@ -921,8 +924,7 @@ class basic_memory_buffer : public detail::buffer<T> {
     else if (new_capacity > max_size)
       new_capacity = size > max_size ? size : max_size;
     T* old_data = buf.data();
-    T* new_data =
-        std::allocator_traits<Allocator>::allocate(self.alloc_, new_capacity);
+    T* new_data = self.alloc_.allocate(new_capacity);
     // Suppress a bogus -Wstringop-overflow in gcc 13.1 (#3481).
     detail::assume(buf.size() <= new_capacity);
     // The following code doesn't throw, so the raw pointer above doesn't leak.
@@ -1053,9 +1055,9 @@ constexpr auto compile_string_to_view(const Char (&s)[N])
   return {s, N - (std::char_traits<Char>::to_int_type(s[N - 1]) == 0 ? 1 : 0)};
 }
 template <typename Char>
-constexpr auto compile_string_to_view(detail::std_string_view<Char> s)
+constexpr auto compile_string_to_view(basic_string_view<Char> s)
     -> basic_string_view<Char> {
-  return {s.data(), s.size()};
+  return s;
 }
 }  // namespace detail_exported
 
