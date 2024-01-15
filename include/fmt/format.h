@@ -71,17 +71,6 @@
 #  define FMT_INLINE_VARIABLE
 #endif
 
-#if FMT_HAS_CPP17_ATTRIBUTE(fallthrough)
-#  define FMT_FALLTHROUGH [[fallthrough]]
-#elif defined(__clang__)
-#  define FMT_FALLTHROUGH [[clang::fallthrough]]
-#elif FMT_GCC_VERSION >= 700 && \
-    (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= 520)
-#  define FMT_FALLTHROUGH [[gnu::fallthrough]]
-#else
-#  define FMT_FALLTHROUGH
-#endif
-
 #ifndef FMT_NO_UNIQUE_ADDRESS
 #  if FMT_CPLUSPLUS >= 202002L
 #    if FMT_HAS_CPP_ATTRIBUTE(no_unique_address)
@@ -1043,8 +1032,6 @@ template <typename OutputIt, typename Char> class generic_context {
   auto args() const -> const basic_format_args<generic_context>& {
     return args_;
   }
-
-  void on_error(const char* message) { throw_format_error(message); }
 
   FMT_CONSTEXPR auto out() -> iterator { return out_; }
 
@@ -2096,30 +2083,17 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
     FMT_ASSERT(false, "");
     FMT_FALLTHROUGH;
   case presentation_type::none:
-  case presentation_type::dec: {
+  case presentation_type::dec:
     num_digits = count_digits(value);
     format_decimal<char>(appender(buffer), value, num_digits);
     break;
-  }
-  case presentation_type::hex_lower:
-  case presentation_type::hex_upper: {
-    bool upper = specs.type == presentation_type::hex_upper;
+  case presentation_type::hex:
     if (specs.alt)
-      prefix_append(prefix, unsigned(upper ? 'X' : 'x') << 8 | '0');
+      prefix_append(prefix, unsigned(specs.upper ? 'X' : 'x') << 8 | '0');
     num_digits = count_digits<4>(value);
-    format_uint<4, char>(appender(buffer), value, num_digits, upper);
+    format_uint<4, char>(appender(buffer), value, num_digits, specs.upper);
     break;
-  }
-  case presentation_type::bin_lower:
-  case presentation_type::bin_upper: {
-    bool upper = specs.type == presentation_type::bin_upper;
-    if (specs.alt)
-      prefix_append(prefix, unsigned(upper ? 'B' : 'b') << 8 | '0');
-    num_digits = count_digits<1>(value);
-    format_uint<1, char>(appender(buffer), value, num_digits);
-    break;
-  }
-  case presentation_type::oct: {
+  case presentation_type::oct:
     num_digits = count_digits<3>(value);
     // Octal prefix '0' is counted as a digit, so only add it if precision
     // is not greater than the number of digits.
@@ -2127,7 +2101,12 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
       prefix_append(prefix, '0');
     format_uint<3, char>(appender(buffer), value, num_digits);
     break;
-  }
+  case presentation_type::bin:
+    if (specs.alt)
+      prefix_append(prefix, unsigned(specs.upper ? 'B' : 'b') << 8 | '0');
+    num_digits = count_digits<1>(value);
+    format_uint<1, char>(appender(buffer), value, num_digits);
+    break;
   case presentation_type::chr:
     return write_char(out, static_cast<Char>(value), specs);
   }
@@ -2206,33 +2185,20 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
     FMT_FALLTHROUGH;
   case presentation_type::none:
   case presentation_type::dec: {
-    auto num_digits = count_digits(abs_value);
+    int num_digits = count_digits(abs_value);
     return write_int(
         out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
           return format_decimal<Char>(it, abs_value, num_digits).end;
         });
   }
-  case presentation_type::hex_lower:
-  case presentation_type::hex_upper: {
-    bool upper = specs.type == presentation_type::hex_upper;
+  case presentation_type::hex: {
     if (specs.alt)
-      prefix_append(prefix, unsigned(upper ? 'X' : 'x') << 8 | '0');
+      prefix_append(prefix, unsigned(specs.upper ? 'X' : 'x') << 8 | '0');
     int num_digits = count_digits<4>(abs_value);
     return write_int(
         out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
-          return format_uint<4, Char>(it, abs_value, num_digits, upper);
+          return format_uint<4, Char>(it, abs_value, num_digits, specs.upper);
         });
-  }
-  case presentation_type::bin_lower:
-  case presentation_type::bin_upper: {
-    bool upper = specs.type == presentation_type::bin_upper;
-    if (specs.alt)
-      prefix_append(prefix, unsigned(upper ? 'B' : 'b') << 8 | '0');
-    int num_digits = count_digits<1>(abs_value);
-    return write_int(out, num_digits, prefix, specs,
-                     [=](reserve_iterator<OutputIt> it) {
-                       return format_uint<1, Char>(it, abs_value, num_digits);
-                     });
   }
   case presentation_type::oct: {
     int num_digits = count_digits<3>(abs_value);
@@ -2243,6 +2209,15 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
     return write_int(out, num_digits, prefix, specs,
                      [=](reserve_iterator<OutputIt> it) {
                        return format_uint<3, Char>(it, abs_value, num_digits);
+                     });
+  }
+  case presentation_type::bin: {
+    if (specs.alt)
+      prefix_append(prefix, unsigned(specs.upper ? 'B' : 'b') << 8 | '0');
+    int num_digits = count_digits<1>(abs_value);
+    return write_int(out, num_digits, prefix, specs,
+                     [=](reserve_iterator<OutputIt> it) {
+                       return format_uint<1, Char>(it, abs_value, num_digits);
                      });
   }
   case presentation_type::chr:
@@ -2356,7 +2331,7 @@ FMT_CONSTEXPR auto write(OutputIt out, const Char* s,
     -> OutputIt {
   if (specs.type == presentation_type::pointer)
     return write_ptr<Char>(out, bit_cast<uintptr_t>(s), &specs);
-  if (!s) throw_format_error("string pointer is null");
+  if (!s) report_error("string pointer is null");
   return write(out, basic_string_view<Char>(s), specs, {});
 }
 
@@ -2407,7 +2382,7 @@ FMT_CONSTEXPR auto parse_align(const Char* begin, const Char* end,
         auto c = *begin;
         if (c == '}') return begin;
         if (c == '{') {
-          throw_format_error("invalid fill character '{'");
+          report_error("invalid fill character '{'");
           return begin;
         }
         specs.fill = {begin, to_unsigned(p - begin)};
@@ -2456,31 +2431,23 @@ FMT_CONSTEXPR auto parse_float_type_spec(const format_specs<Char>& specs)
   case presentation_type::none:
     result.format = float_format::general;
     break;
-  case presentation_type::general_upper:
-    result.upper = true;
-    FMT_FALLTHROUGH;
-  case presentation_type::general_lower:
+  case presentation_type::exp:
+    result.format = float_format::exp;
+    result.upper = specs.upper;
+    result.showpoint |= specs.precision != 0;
+    break;
+  case presentation_type::fixed:
+    result.format = float_format::fixed;
+    result.upper = specs.upper;
+    result.showpoint |= specs.precision != 0;
+    break;
+  case presentation_type::general:
+    result.upper = specs.upper;
     result.format = float_format::general;
     break;
-  case presentation_type::exp_upper:
-    result.upper = true;
-    FMT_FALLTHROUGH;
-  case presentation_type::exp_lower:
-    result.format = float_format::exp;
-    result.showpoint |= specs.precision != 0;
-    break;
-  case presentation_type::fixed_upper:
-    result.upper = true;
-    FMT_FALLTHROUGH;
-  case presentation_type::fixed_lower:
-    result.format = float_format::fixed;
-    result.showpoint |= specs.precision != 0;
-    break;
-  case presentation_type::hexfloat_upper:
-    result.upper = true;
-    FMT_FALLTHROUGH;
-  case presentation_type::hexfloat_lower:
+  case presentation_type::hexfloat:
     result.format = float_format::hex;
+    result.upper = specs.upper;
     break;
   }
   return result;
@@ -3631,7 +3598,7 @@ FMT_CONSTEXPR20 auto write_float(OutputIt out, T value,
                       : 6;
   if (fspecs.format == float_format::exp) {
     if (precision == max_value<int>())
-      throw_format_error("number is too big");
+      report_error("number is too big");
     else
       ++precision;
   } else if (fspecs.format != float_format::fixed && precision == 0) {
@@ -3738,7 +3705,7 @@ FMT_CONSTEXPR auto write(OutputIt out, Char value) -> OutputIt {
 template <typename Char, typename OutputIt>
 FMT_CONSTEXPR20 auto write(OutputIt out, const Char* value) -> OutputIt {
   if (value) return write(out, basic_string_view<Char>(value));
-  throw_format_error("string pointer is null");
+  report_error("string pointer is null");
   return out;
 }
 
@@ -3816,13 +3783,13 @@ template <typename Char> struct arg_formatter {
 struct width_checker {
   template <typename T, FMT_ENABLE_IF(is_integer<T>::value)>
   FMT_CONSTEXPR auto operator()(T value) -> unsigned long long {
-    if (is_negative(value)) throw_format_error("negative width");
+    if (is_negative(value)) report_error("negative width");
     return static_cast<unsigned long long>(value);
   }
 
   template <typename T, FMT_ENABLE_IF(!is_integer<T>::value)>
   FMT_CONSTEXPR auto operator()(T) -> unsigned long long {
-    throw_format_error("width is not integer");
+    report_error("width is not integer");
     return 0;
   }
 };
@@ -3830,13 +3797,13 @@ struct width_checker {
 struct precision_checker {
   template <typename T, FMT_ENABLE_IF(is_integer<T>::value)>
   FMT_CONSTEXPR auto operator()(T value) -> unsigned long long {
-    if (is_negative(value)) throw_format_error("negative precision");
+    if (is_negative(value)) report_error("negative precision");
     return static_cast<unsigned long long>(value);
   }
 
   template <typename T, FMT_ENABLE_IF(!is_integer<T>::value)>
   FMT_CONSTEXPR auto operator()(T) -> unsigned long long {
-    throw_format_error("precision is not integer");
+    report_error("precision is not integer");
     return 0;
   }
 };
@@ -3844,15 +3811,14 @@ struct precision_checker {
 template <typename Handler, typename FormatArg>
 FMT_CONSTEXPR auto get_dynamic_spec(FormatArg arg) -> int {
   unsigned long long value = arg.visit(Handler());
-  if (value > to_unsigned(max_value<int>()))
-    throw_format_error("number is too big");
+  if (value > to_unsigned(max_value<int>())) report_error("number is too big");
   return static_cast<int>(value);
 }
 
 template <typename Context, typename ID>
 FMT_CONSTEXPR auto get_arg(Context& ctx, ID id) -> decltype(ctx.arg(id)) {
   auto arg = ctx.arg(id);
-  if (!arg) ctx.on_error("argument not found");
+  if (!arg) report_error("argument not found");
   return arg;
 }
 
@@ -3924,6 +3890,7 @@ using format_func = void (*)(detail::buffer<char>&, int, const char*);
 FMT_API void format_error_code(buffer<char>& out, int error_code,
                                string_view message) noexcept;
 
+using fmt::report_error;
 FMT_API void report_error(format_func func, int error_code,
                           const char* message) noexcept;
 }  // namespace detail
@@ -4284,7 +4251,7 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
   auto out = basic_appender<Char>(buf);
   if (fmt.size() == 2 && equal2(fmt.data(), "{}")) {
     auto arg = args.get(0);
-    if (!arg) throw_format_error("argument not found");
+    if (!arg) report_error("argument not found");
     arg.visit(default_arg_formatter<Char>{out, args, loc});
     return;
   }
@@ -4311,7 +4278,7 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
     }
     FMT_CONSTEXPR auto on_arg_id(basic_string_view<Char> id) -> int {
       int arg_id = context.arg_id(id);
-      if (arg_id < 0) throw_format_error("argument not found");
+      if (arg_id < 0) report_error("argument not found");
       return arg_id;
     }
 
@@ -4334,13 +4301,13 @@ void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
       detail::handle_dynamic_spec<detail::precision_checker>(
           specs.precision, specs.precision_ref, context);
       if (begin == end || *begin != '}')
-        throw_format_error("missing '}' in format string");
+        report_error("missing '}' in format string");
       context.advance_to(arg.visit(
           arg_formatter<Char>{context.out(), specs, context.locale()}));
       return begin;
     }
 
-    void on_error(const char* message) { throw_format_error(message); }
+    void on_error(const char* message) { report_error(message); }
   };
   detail::parse_format_string<false>(fmt, format_handler(out, fmt, args, loc));
 }
