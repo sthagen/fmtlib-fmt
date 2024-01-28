@@ -1467,32 +1467,76 @@ template <typename F> class file_base {
     if (ungetc(c, file_) == EOF)
       FMT_THROW(system_error(errno, FMT_STRING("ungetc failed")));
   }
+
+  void flush() { fflush(this->file_); }
 };
 
 // A FILE wrapper for glibc.
 template <typename F> class glibc_file : public file_base<F> {
- public:
-  using file_base<F>::file_base;
-
-  // Returns the file's read buffer as a string_view.
-  auto get_read_buffer() const -> span<const char> {
-    return {this->file_->_IO_read_ptr,
-            to_unsigned(this->file_->_IO_read_end - this->file_->_IO_read_ptr)};
-  }
-};
-
-// A FILE wrapper for Apple's libc.
-template <typename F> class apple_file : public file_base<F> {
  private:
-  auto offset() const -> ptrdiff_t {
-    return this->file_->_p - this->file_->_bf._base;
-  }
+  enum {
+    line_buffered = 0x200,  // _IO_LINE_BUF
+    unbuffered = 2          // _IO_UNBUFFERED
+  };
 
  public:
   using file_base<F>::file_base;
 
   auto is_buffered() const -> bool {
-    return (this->file_->_flags & 2) == 0;  // 2 is __SNBF.
+    return (this->file_->_flags & unbuffered) == 0;
+  }
+
+  void init_buffer() {
+    if (this->file_->_IO_write_ptr) return;
+    // Force buffer initialization by placing and removing a char in a buffer.
+    putc_unlocked(0, this->file_);
+    --this->file_->_IO_write_ptr;
+  }
+
+  // Returns the file's read buffer.
+  auto get_read_buffer() const -> span<const char> {
+    auto ptr = this->file_->_IO_read_ptr;
+    return {ptr, to_unsigned(this->file_->_IO_read_end - ptr)};
+  }
+
+  // Returns the file's write buffer.
+  auto get_write_buffer() const -> span<char> {
+    auto ptr = this->file_->_IO_write_ptr;
+    return {ptr, to_unsigned(this->file_->_IO_buf_end - ptr)};
+  }
+
+  void advance_write_buffer(size_t size) { this->file_->_IO_write_ptr += size; }
+
+  bool needs_flush() const {
+    if ((this->file_->_flags & line_buffered) == 0) return false;
+    char* end = this->file_->_IO_write_end;
+    return memchr(end, '\n', to_unsigned(this->file_->_IO_write_ptr - end));
+  }
+
+  void flush() { fflush_unlocked(this->file_); }
+};
+
+// A FILE wrapper for Apple's libc.
+template <typename F> class apple_file : public file_base<F> {
+ private:
+  enum {
+    line_buffered = 1,  // __SNBF
+    unbuffered = 2      // __SLBF
+  };
+
+ public:
+  using file_base<F>::file_base;
+
+  auto is_buffered() const -> bool {
+    return (this->file_->_flags & unbuffered) == 0;
+  }
+
+  void init_buffer() {
+    if (this->file_->_p) return;
+    // Force buffer initialization by placing and removing a char in a buffer.
+    putc_unlocked(0, this->file_);
+    --this->file_->_p;
+    ++this->file_->_w;
   }
 
   auto get_read_buffer() const -> span<const char> {
@@ -1501,21 +1545,20 @@ template <typename F> class apple_file : public file_base<F> {
   }
 
   auto get_write_buffer() const -> span<char> {
-    if (!this->file_->_p || offset() == this->file_->_bf._size) {
-      // Force buffer initialization by placing and removing a char in a buffer.
-      putc_unlocked(0, this->file_);
-      --this->file_->_p;
-      ++this->file_->_w;
-    }
-    auto size = this->file_->_bf._size;
-    FMT_ASSERT(offset() < size, "");
     return {reinterpret_cast<char*>(this->file_->_p),
-            static_cast<size_t>(size - offset())};
+            to_unsigned(this->file_->_bf._base + this->file_->_bf._size -
+                        this->file_->_p)};
   }
 
   void advance_write_buffer(size_t size) {
     this->file_->_p += size;
     this->file_->_w -= size;
+  }
+
+  bool needs_flush() const {
+    if ((this->file_->_flags & line_buffered) == 0) return false;
+    return memchr(this->file_->_p + this->file_->_w, '\n',
+                  to_unsigned(-this->file_->_w));
   }
 };
 
@@ -1529,12 +1572,16 @@ template <typename F> class fallback_file : public file_base<F> {
   using file_base<F>::file_base;
 
   auto is_buffered() const -> bool { return false; }
+  auto needs_flush() const -> bool { return false; }
+  void init_buffer() {}
 
   auto get_read_buffer() const -> span<const char> {
     return {&next_, has_next_ ? 1u : 0u};
   }
 
   auto get_write_buffer() const -> span<char> { return {nullptr, 0}; }
+
+  void advance_write_buffer(size_t) {}
 
   auto get() -> int {
     has_next_ = false;
@@ -1546,12 +1593,14 @@ template <typename F> class fallback_file : public file_base<F> {
     next_ = c;
     has_next_ = true;
   }
-
-  void advance_write_buffer(size_t) {}
 };
 
 template <typename F, FMT_ENABLE_IF(sizeof(F::_p) != 0)>
 auto get_file(F* f, int) -> apple_file<F> {
+  return f;
+}
+template <typename F, FMT_ENABLE_IF(sizeof(F::_IO_read_ptr) != 0)>
+inline auto get_file(F* f, int) -> glibc_file<F> {
   return f;
 }
 inline auto get_file(FILE* f, ...) -> fallback_file<FILE> { return f; }
@@ -1562,26 +1611,28 @@ class file_print_buffer : public buffer<char> {
  private:
   file_ref file_;
 
-  void set_buffer() {
-    file_.advance_write_buffer(size());
-    auto buf = file_.get_write_buffer();
-    this->set(buf.data, buf.size);
-  }
-
-  static void grow(buffer<char>& buf, size_t) {
-    auto& self = static_cast<file_print_buffer&>(buf);
-    self.set_buffer();
+  static void grow(buffer<char>& base, size_t) {
+    auto& self = static_cast<file_print_buffer&>(base);
+    self.file_.advance_write_buffer(self.size());
+    if (self.file_.get_write_buffer().size == 0) self.file_.flush();
+    auto buf = self.file_.get_write_buffer();
+    FMT_ASSERT(buf.size > 0, "");
+    self.set(buf.data, buf.size);
     self.clear();
   }
 
  public:
   explicit file_print_buffer(FILE* f) : buffer(grow, size_t()), file_(f) {
     flockfile(f);
-    set_buffer();
+    file_.init_buffer();
+    auto buf = file_.get_write_buffer();
+    set(buf.data, buf.size);
   }
   ~file_print_buffer() {
     file_.advance_write_buffer(size());
+    bool flush = file_.needs_flush();
     funlockfile(file_);
+    if (flush) fflush(file_);
   }
 };
 
