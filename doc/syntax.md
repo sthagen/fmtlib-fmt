@@ -91,11 +91,34 @@ the fill character and the alignment option are absent.
 
 The meaning of the various alignment options is as follows:
 
-| Option | Meaning                                                                                                |
-|--------|--------------------------------------------------------------------------------------------------------|
-| `'<'`  | Forces the field to be left-aligned within the available space (this is the default for most objects). |
-| `'>'`  | Forces the field to be right-aligned within the available space (this is the default for numbers).     |
-| `'^'`  | Forces the field to be centered within the available space.                                            |
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>'<'</code></td>
+  <td>
+    Forces the field to be left-aligned within the available space (this is the
+    default for most objects).
+  </td>
+</tr>
+<tr>
+  <td><code>'>'</code></td>
+  <td>
+    Forces the field to be right-aligned within the available space (this is
+    the default for numbers).
+  </td>
+</tr>
+<tr>
+  <td><code>'^'</code></td>
+  <td>Forces the field to be centered within the available space.</td>
+</tr>
+</tbody>
+</table>
 
 Note that unless a minimum field width is defined, the field width will
 always be the same size as the data to fill it, so that the alignment
@@ -267,9 +290,10 @@ as `std::tm` have the following syntax:
 <pre>
 chrono_format_spec ::= [[<a href="#format-spec">fill</a>]<a href="#format-spec">align</a>][<a href="#format-spec">width</a>]["." <a href="#format-spec">precision</a>][chrono_specs]
 chrono_specs       ::= [chrono_specs] conversion_spec | chrono_specs literal_char
-conversion_spec    ::= "%" [modifier] chrono_type
+conversion_spec    ::= "%" [padding_modifier] [locale_modifier] chrono_type
 literal_char       ::= &lt;a character other than '{', '}' or '%'>
-modifier           ::= "E" | "O"
+padding_modifier   ::= "-" | "_"  | "0"
+locale_modifier    ::= "E" | "O"
 chrono_type        ::= "a" | "A" | "b" | "B" | "c" | "C" | "d" | "D" | "e" | "F" |
                        "g" | "G" | "h" | "H" | "I" | "j" | "m" | "M" | "n" | "p" |
                        "q" | "Q" | "r" | "R" | "S" | "t" | "T" | "u" | "U" | "V" |
@@ -326,6 +350,17 @@ The available presentation types (*chrono_type*) are:
 
 Specifiers that have a calendaric component such as `'d'` (the day of
 month) are valid only for `std::tm` and time points but not durations.
+
+The available padding modifiers (*padding_modifier*) are:
+
+| Type  | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `'-'` | Pad a numeric result with spaces.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `'_'` | Do not pad a numeric result string.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `'0'` | Pad a numeric result string with zeros.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+Currently, these modifiers are only supported for the ``'H', 'I', 'M', 'S', 'U', 'V'``
+and ``'W'`` presentation types.
 
 ## Range Format Specifications
 
