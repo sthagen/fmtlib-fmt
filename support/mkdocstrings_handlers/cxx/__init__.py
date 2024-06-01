@@ -7,13 +7,17 @@ from mkdocstrings.handlers.base import BaseHandler
 from typing import Any, Mapping, Optional
 from subprocess import CalledProcessError, PIPE, Popen, STDOUT
 
-class Decl:
+class Definition:
+  '''A definition extracted by Doxygen.'''
   def __init__(self, name: str):
     self.name = name
+    self.params = None
+    self.members = None
 
 # A map from Doxygen to HTML tags.
 tag_map = {
   'bold': 'b',
+  'emphasis': 'em',
   'computeroutput': 'code',
   'para': 'p',
   'programlisting': 'pre',
@@ -27,6 +31,9 @@ tag_text_map = {
   'sp': ' '
 }
 
+def escape_html(s: str) -> str:
+  return s.replace("<", "&lt;")
+
 def doxyxml2html(nodes: list[et.Element]):
   out = ''
   for n in nodes:
@@ -34,9 +41,9 @@ def doxyxml2html(nodes: list[et.Element]):
     if not tag:
       out += tag_text_map[n.tag]
     out += '<' + tag + '>' if tag else ''
-    out += '<code>' if tag == 'pre' else ''
+    out += '<code class="language-cpp">' if tag == 'pre' else ''
     if n.text:
-      out += n.text
+      out += escape_html(n.text)
     out += doxyxml2html(n)
     out += '</code>' if tag == 'pre' else ''
     out += '</' + tag + '>' if tag else ''
@@ -44,8 +51,28 @@ def doxyxml2html(nodes: list[et.Element]):
       out += n.tail
   return out
 
-def convert_param(param: et.Element) -> Decl:
-  d = Decl(param.find('declname').text)
+def get_template_params(node: et.Element) -> Optional[list[Definition]]:
+  templateparamlist = node.find('templateparamlist')
+  if templateparamlist is None:
+    return None
+  params = []
+  for param_node in templateparamlist.findall('param'):
+    name = param_node.find('declname')
+    param = Definition(name.text if name is not None else '')
+    param.type = param_node.find('type').text
+    params.append(param)
+  return params
+
+def get_description(node: et.Element) -> list[et.Element]:
+  return node.findall('briefdescription/para') + \
+         node.findall('detaileddescription/para')
+
+def clean_type(type: str) -> str:
+  type = type.replace('< ', '<').replace(' >', '>')
+  return type.replace(' &', '&').replace(' *', '*')
+
+def convert_param(param: et.Element) -> Definition:
+  d = Definition(param.find('declname').text)
   type = param.find('type')
   type_str = type.text if type.text else ''
   for ref in type:
@@ -53,10 +80,26 @@ def convert_param(param: et.Element) -> Decl:
     if ref.tail:
       type_str += ref.tail
   type_str += type.tail.strip()
-  type_str = type_str.replace('< ', '<').replace(' >', '>')
-  type_str = type_str.replace(' &', '&').replace(' *', '*')
-  d.type = type_str
+  d.type = clean_type(type_str)
   return d
+
+def render_decl(d: Definition) -> None:
+  text = '<pre><code class="language-cpp">'
+  if d.template_params is not None:
+    text += 'template &lt;'
+    text += ', '.join(
+      [f'{p.type} {p.name}'.rstrip() for p in d.template_params])
+    text += '&gt;\n'
+  text += d.type + ' ' + d.name
+  if d.params is not None:
+    params = ', '.join([f'{p.type} {p.name}' for p in d.params])
+    text += '(' + escape_html(params) + ')'
+    if d.trailing_return_type:
+      text += '\n ' if len(d.name) + len(params) > 60 else ''
+      text += ' -> ' + escape_html(d.trailing_return_type)
+  text += ';'
+  text += '</code></pre>\n'
+  return text
 
 class CxxHandler(BaseHandler):
   def __init__(self, **kwargs: Any) -> None:
@@ -76,7 +119,8 @@ class CxxHandler(BaseHandler):
         CASE_SENSE_NAMES  = NO
         INPUT             = {0}/args.h {0}/base.h {0}/chrono.h {0}/color.h \
                             {0}/core.h {0}/compile.h {0}/format.h {0}/os.h \
-                            {0}/ostream.h {0}/printf.h {0}/ranges.h {0}/xchar.h
+                            {0}/ostream.h {0}/printf.h {0}/ranges.h {0}/std.h \
+                            {0}/xchar.h
         QUIET             = YES
         JAVADOC_AUTOBRIEF = NO
         AUTOLINK_SUPPORT  = NO
@@ -111,49 +155,66 @@ class CxxHandler(BaseHandler):
     with open(os.path.join(self._doxyxml_dir, 'namespacefmt.xml')) as f:
       self._doxyxml = et.parse(f)
 
-  def collect(self, identifier: str, config: Mapping[str, Any]) -> Decl:
+  def collect(self, identifier: str, config: Mapping[str, Any]) -> Definition:
     name = identifier
     paren = name.find('(')
     param_str = None
     if paren > 0:
-      name, param_str = name[:paren], name[paren:]
+      name, param_str = name[:paren], name[paren + 1:-1]
       
     nodes = self._doxyxml.findall(
       f"compounddef/sectiondef/memberdef/name[.='{name}']/..")
     candidates = []
     for node in nodes:
+      # Process a function.
       params = [convert_param(p) for p in node.findall('param')]
-      node_param_str = '(' + ', '.join([p.type for p in params]) + ')'
+      node_param_str = ', '.join([p.type for p in params])
       if param_str and param_str != node_param_str:
-        candidates.append(name + node_param_str)
+        candidates.append(f'{name}({node_param_str})')
         continue
-      d = Decl(name)
+      d = Definition(name)
       d.type = node.find('type').text
+      d.template_params = get_template_params(node)
       d.params = params
-      d.desc = node.findall('detaileddescription/para')
+      d.trailing_return_type = None
+      if d.type == 'auto':
+        d.trailing_return_type = clean_type(
+          node.find('argsstring').text.split(' -> ')[1])
+      d.desc = get_description(node)
       return d
+    
+    # Process a compound definition such as a struct.
     cls = self._doxyxml.findall(f"compounddef/innerclass[.='fmt::{name}']")
     if not cls:
       raise Exception(f'Cannot find {identifier}. Candidates: {candidates}')
     with open(os.path.join(self._doxyxml_dir, cls[0].get('refid') + '.xml')) as f:
       xml = et.parse(f)
       node = xml.find('compounddef')
-      d = Decl(name)
+      d = Definition(name)
       d.type = node.get('kind')
-      d.params = None
-      d.desc = node.findall('detaileddescription/para')
+      d.template_params = get_template_params(node)
+      d.desc = get_description(node)
+      d.members = []
+      for m in node.findall('sectiondef[@kind="public-attrib"]/memberdef'):
+        name = m.find('name').text
+        member = Definition(name if name else '')
+        type = m.find('type').text
+        member.type = type if type else ''
+        member.template_params = None
+        member.desc = get_description(m)
+        d.members.append(member)
       return d
 
-  def render(self, d: Decl, config: dict) -> str:
-    text = '<pre><code>'
-    text += d.type + ' ' + d.name
-    if d.params:
-      params = ', '.join([p.type for p in d.params])
-      text += '(' + params + ')'
-    text += ';'
-    text += '</code></pre>\n'
-    desc = doxyxml2html(d.desc)
-    text += desc
+  def render(self, d: Definition, config: dict) -> str:
+    text = '<div class="docblock">\n'
+    text += render_decl(d)
+    text += '<div class="docblock-desc">\n'
+    text += doxyxml2html(d.desc)
+    if d.members is not None:
+      for m in d.members:
+        text += self.render(m, config)
+    text += '</div>\n'
+    text += '</div>\n'
     return text
 
 def get_handler(theme: str, custom_templates: Optional[str] = None,
