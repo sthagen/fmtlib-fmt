@@ -149,7 +149,6 @@ import std;
 #  define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
 #endif
 
-// Detect C++20 concepts
 #ifdef FMT_USE_CONCEPTS
 // Use the provided definition.
 #elif defined(__cpp_concepts)
@@ -834,7 +833,7 @@ class compile_parse_context : public basic_format_parse_context<Char> {
 };
 
 /// A contiguous memory buffer with an optional growing ability. It is an
-// internal class and shouldn't be used directly, only via `memory_buffer`.
+/// internal class and shouldn't be used directly, only via `memory_buffer`.
 template <typename T> class buffer {
  private:
   T* ptr_;
@@ -889,14 +888,14 @@ template <typename T> class buffer {
   /// Clears this buffer.
   void clear() { size_ = 0; }
 
-  // Tries resizing the buffer to contain *count* elements. If T is a POD type
+  // Tries resizing the buffer to contain `count` elements. If T is a POD type
   // the new elements may not be initialized.
   FMT_CONSTEXPR void try_resize(size_t count) {
     try_reserve(count);
     size_ = count <= capacity_ ? count : capacity_;
   }
 
-  // Tries increasing the buffer capacity to *new_capacity*. It can increase the
+  // Tries increasing the buffer capacity to `new_capacity`. It can increase the
   // capacity by a smaller amount than requested but guarantees there is space
   // for at least one additional element either by increasing the capacity or by
   // flushing the buffer if it is full.
@@ -1817,8 +1816,8 @@ FMT_DEPRECATED FMT_CONSTEXPR auto visit_format_arg(
  * should only be used as a parameter type in type-erased functions such as
  * `vformat`:
  *
- *     void vlog(string_view format_str, format_args args);  // OK
- *     format_args args = make_format_args();  // Error: dangling reference
+ *     void vlog(fmt::string_view fmt, fmt::format_args args);  // OK
+ *     fmt::format_args args = fmt::make_format_args();  // Dangling reference
  */
 template <typename Context> class basic_format_args {
  public:
@@ -2029,7 +2028,7 @@ inline auto arg(const Char* name, const T& arg) -> detail::named_arg<Char, T> {
 }
 FMT_END_EXPORT
 
-/// An alias to `basic_format_args<format_context>`.
+/// An alias for `basic_format_args<format_context>`.
 // A separate type would result in shorter symbols but break ABI compatibility
 // between clang and gcc on ARM (#1919).
 FMT_EXPORT using format_args = basic_format_args<format_context>;
@@ -2993,8 +2992,8 @@ FMT_API void vprintln(FILE* f, string_view fmt, format_args args);
  * to `stdout`.
  *
  * **Example**:
- * 
- *     fmt::print("Elapsed time: {0:.2f} seconds", 1.23);
+ *
+ *     fmt::print("The answer is {}.", 42);
  */
 template <typename... T>
 FMT_INLINE void print(format_string<T...> fmt, T&&... args) {

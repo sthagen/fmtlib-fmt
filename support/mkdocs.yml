@@ -1,11 +1,8 @@
 site_name: '{fmt}'
 
-docs_dir: doc
+docs_dir: ../doc
 
 repo_url: https://github.com/fmtlib/fmt
-
-# Make the docs work locally without a server.
-use_directory_urls: false
 
 theme:
   name: material
@@ -37,11 +34,10 @@ plugins:
       default_handler: cxx
 
 nav:
+  - Home: index.md
   - Usage: usage.md
   - API: api.md
   - Syntax: syntax.md
-  # Make the {fmt} link work locally.
-  - '': index.md
 
 extra:
   version:
