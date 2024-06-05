@@ -8,6 +8,7 @@ theme:
   name: material
   features:
     - navigation.tabs
+    - navigation.top
     - toc.integrate
 
 extra_javascript:
@@ -30,12 +31,12 @@ markdown_extensions:
   - pymdownx.snippets
 
 plugins:
+  - search
   - mkdocstrings:
       default_handler: cxx
-
 nav:
   - Home: index.md
-  - Usage: usage.md
+  - Get Started: get-started.md
   - API: api.md
   - Syntax: syntax.md
 

@@ -1,5 +1,5 @@
 :root {
-  --md-primary-fg-color: #0065C9;
+  --md-primary-fg-color: #0050D0;
 }
 
 .md-grid {
@@ -12,6 +12,16 @@
 
 .docblock-desc {
   margin-left: 1em;
+}
+
+pre > code.decl {
+  white-space: pre-wrap;
+}
+
+
+code.decl > div {
+  text-indent: -2ch; /* Negative indent to counteract the indent on the first line */
+  padding-left: 2ch; /* Add padding to the left to create an indent */
 }
 
 .features-container {
