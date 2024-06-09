@@ -63,8 +63,10 @@ function(add_module_library name)
     target_compile_options(${name} PUBLIC -fmodules-ts)
   endif ()
 
+  target_compile_definitions(${name} PRIVATE FMT_MODULE)
+
   if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.28 AND CMAKE_GENERATOR STREQUAL "Ninja")
-    target_sources(${name} PUBLIC FILE_SET CXX_MODULES FILES ${sources})
+    target_sources(${name} PUBLIC FILE_SET fmt TYPE CXX_MODULES FILES ${sources})
   else()
     # `std` is affected by CMake options and may be higher than C++20.
     get_target_property(std ${name} CXX_STANDARD)
@@ -406,6 +408,7 @@ if (FMT_INSTALL)
           LIBRARY DESTINATION ${FMT_LIB_DIR}
           ARCHIVE DESTINATION ${FMT_LIB_DIR}
           PUBLIC_HEADER DESTINATION "${FMT_INC_DIR}/fmt"
+          FILE_SET fmt DESTINATION "${FMT_INC_DIR}/fmt"
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
   # Use a namespace because CMake provides better diagnostics for namespaced
@@ -439,7 +442,7 @@ function(add_doc_target)
   endif ()
 
   set(sources )
-  foreach (source api.md index.md syntax.md usage.md fmt.css fmt.js)
+  foreach (source api.md index.md syntax.md get-started.md fmt.css fmt.js)
     set(sources ${sources} doc/${source})
   endforeach()
 
