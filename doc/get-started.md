@@ -40,7 +40,7 @@ There are three primary ways to use {fmt} with CMake:
         add_subdirectory(fmt)
         target_link_libraries(<your-target> fmt::fmt)
 
-## Install
+## Installation
 
 ### Debian/Ubuntu
 
@@ -119,8 +119,8 @@ your system:
 
 - [Python](https://www.python.org/)
 - [Doxygen](http://www.stack.nl/~dimitri/doxygen/)
-- [MkDocs](https://www.mkdocs.org/) with `mike`, `mkdocstrings` and
-  `mkdocs-material`
+- [MkDocs](https://www.mkdocs.org/) with `mkdocs-material`, `mkdocstrings`,
+  `pymdown-extensions` and `mike`
 
 First generate makefiles or project files using CMake as described in
 the previous section. Then compile the `doc` target/project, for example:
