@@ -46,6 +46,7 @@
 #  include <cstring>           // std::memcpy
 #  include <initializer_list>  // std::initializer_list
 #  include <limits>            // std::numeric_limits
+#  include <new>               // std::bad_alloc
 #  if defined(__GLIBCXX__) && !defined(_GLIBCXX_USE_DUAL_ABI)
 // Workaround for pre gcc 5 libstdc++.
 #    include <memory>  // std::allocator_traits
@@ -789,6 +790,22 @@ template <typename T, typename Enable = void>
 struct is_locale : std::false_type {};
 template <typename T>
 struct is_locale<T, void_t<decltype(T::classic())>> : std::true_type {};
+
+// An allocator that uses malloc/free to allow removing dependency on the C++
+// standard libary runtime.
+template <typename T> struct allocator {
+  using value_type = T;
+
+  T* allocate(size_t n) {
+    FMT_ASSERT(n <= max_value<size_t>() / sizeof(T), "");
+    T* p = static_cast<T*>(malloc(n * sizeof(T)));
+    if (!p) FMT_THROW(std::bad_alloc());
+    return p;
+  }
+
+  void deallocate(T* p, size_t) { free(p); }
+};
+
 }  // namespace detail
 
 FMT_BEGIN_EXPORT
@@ -811,7 +828,7 @@ enum { inline_buffer_size = 500 };
  * converted to `std::string` with `to_string(out)`.
  */
 template <typename T, size_t SIZE = inline_buffer_size,
-          typename Allocator = std::allocator<T>>
+          typename Allocator = detail::allocator<T>>
 class basic_memory_buffer : public detail::buffer<T> {
  private:
   T store_[SIZE];
@@ -1338,36 +1355,46 @@ FMT_CONSTEXPR auto format_decimal(OutputIt out, UInt value, int num_digits)
     return out;
   }
   // Buffer is large enough to hold all digits (digits10 + 1).
-  char buffer[digits10<UInt>() + 1] = {};
+  char buffer[digits10<UInt>() + 1];
+  if (is_constant_evaluated()) fill_n(buffer, sizeof(buffer), '\0');
   do_format_decimal(buffer, value, num_digits);
-  return detail::copy_noinline<Char>(buffer, buffer + num_digits, out);
+  return copy_noinline<Char>(buffer, buffer + num_digits, out);
 }
 
-template <unsigned BASE_BITS, typename Char, typename UInt>
-FMT_CONSTEXPR auto format_uint(Char* buffer, UInt value, int num_digits,
-                               bool upper = false) -> Char* {
-  buffer += num_digits;
-  Char* end = buffer;
+template <typename Char, typename UInt>
+FMT_CONSTEXPR auto do_format_base2e(int base_bits, Char* out, UInt value,
+                                    int size, bool upper = false) -> Char* {
+  out += size;
   do {
     const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    unsigned digit = static_cast<unsigned>(value & ((1 << BASE_BITS) - 1));
-    *--buffer = static_cast<Char>(BASE_BITS < 4 ? static_cast<char>('0' + digit)
-                                                : digits[digit]);
-  } while ((value >>= BASE_BITS) != 0);
-  return end;
+    unsigned digit = static_cast<unsigned>(value & ((1 << base_bits) - 1));
+    *--out = static_cast<Char>(base_bits < 4 ? static_cast<char>('0' + digit)
+                                             : digits[digit]);
+  } while ((value >>= base_bits) != 0);
+  return out;
 }
 
-template <unsigned BASE_BITS, typename Char, typename OutputIt, typename UInt,
+// Formats an unsigned integer in the power of two base (binary, octal, hex).
+template <typename Char, typename UInt>
+FMT_CONSTEXPR auto format_base2e(int base_bits, Char* out, UInt value,
+                                 int num_digits, bool upper = false) -> Char* {
+  do_format_base2e(base_bits, out, value, num_digits, upper);
+  return out + num_digits;
+}
+
+template <typename Char, typename OutputIt, typename UInt,
           FMT_ENABLE_IF(is_back_insert_iterator<OutputIt>::value)>
-FMT_CONSTEXPR inline auto format_uint(OutputIt out, UInt value, int num_digits,
-                                      bool upper = false) -> OutputIt {
+FMT_CONSTEXPR inline auto format_base2e(int base_bits, OutputIt out, UInt value,
+                                        int num_digits, bool upper = false)
+    -> OutputIt {
   if (auto ptr = to_pointer<Char>(out, to_unsigned(num_digits))) {
-    format_uint<BASE_BITS>(ptr, value, num_digits, upper);
+    format_base2e(base_bits, ptr, value, num_digits, upper);
     return out;
   }
-  // Buffer should be large enough to hold all digits (digits / BASE_BITS + 1).
-  char buffer[num_bits<UInt>() / BASE_BITS + 1] = {};
-  format_uint<BASE_BITS>(buffer, value, num_digits, upper);
+  // Make buffer large enough for any base.
+  char buffer[num_bits<UInt>()];
+  if (is_constant_evaluated()) fill_n(buffer, sizeof(buffer), '\0');
+  format_base2e(base_bits, buffer, value, num_digits, upper);
   return detail::copy_noinline<Char>(buffer, buffer + num_digits, out);
 }
 
@@ -1785,7 +1812,7 @@ auto write_ptr(OutputIt out, UIntPtr value, const format_specs* specs)
   auto write = [=](reserve_iterator<OutputIt> it) {
     *it++ = static_cast<Char>('0');
     *it++ = static_cast<Char>('x');
-    return format_uint<4, Char>(it, value, num_digits);
+    return format_base2e<Char>(4, it, value, num_digits);
   };
   return specs ? write_padded<Char, align::right>(out, *specs, size, write)
                : base_iterator(out, write(reserve(out, size)));
@@ -1861,7 +1888,7 @@ auto write_codepoint(OutputIt out, char prefix, uint32_t cp) -> OutputIt {
   *out++ = static_cast<Char>(prefix);
   Char buf[width];
   fill_n(buf, width, static_cast<Char>('0'));
-  format_uint<4>(buf, cp, width);
+  format_base2e(4, buf, cp, width);
   return copy<Char>(buf, buf + width, out);
 }
 
@@ -1981,32 +2008,6 @@ template <typename Char> struct write_int_data {
   }
 };
 
-// Writes an integer in the format
-//   <left-padding><prefix><numeric-padding><digits><right-padding>
-// where <digits> are written by write_digits(it).
-// prefix contains chars in three lower bytes and the size in the fourth byte.
-template <typename Char, typename OutputIt, typename W>
-FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, int num_digits,
-                                        unsigned prefix,
-                                        const format_specs& specs,
-                                        W write_digits) -> OutputIt {
-  // Slightly faster check for specs.width == 0 && specs.precision == -1.
-  if ((specs.width | (specs.precision + 1)) == 0) {
-    auto it = reserve(out, to_unsigned(num_digits) + (prefix >> 24));
-    for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
-      *it++ = static_cast<Char>(p & 0xff);
-    return base_iterator(out, write_digits(it));
-  }
-  auto data = write_int_data<Char>(num_digits, prefix, specs);
-  return write_padded<Char, align::right>(
-      out, specs, data.size, [=](reserve_iterator<OutputIt> it) {
-        for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
-          *it++ = static_cast<Char>(p & 0xff);
-        it = detail::fill_n(it, data.padding, static_cast<Char>('0'));
-        return write_digits(it);
-      });
-}
-
 template <typename Char> class digit_grouping {
  private:
   std::string grouping_;
@@ -2097,7 +2098,7 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
     if (specs.alt())
       prefix_append(prefix, unsigned(specs.upper() ? 'X' : 'x') << 8 | '0');
     num_digits = count_digits<4>(value);
-    format_uint<4, char>(appender(buffer), value, num_digits, specs.upper());
+    format_base2e<char>(4, appender(buffer), value, num_digits, specs.upper());
     break;
   case presentation_type::oct:
     num_digits = count_digits<3>(value);
@@ -2105,13 +2106,13 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
     // is not greater than the number of digits.
     if (specs.alt() && specs.precision <= num_digits && value != 0)
       prefix_append(prefix, '0');
-    format_uint<3, char>(appender(buffer), value, num_digits);
+    format_base2e<char>(3, appender(buffer), value, num_digits);
     break;
   case presentation_type::bin:
     if (specs.alt())
       prefix_append(prefix, unsigned(specs.upper() ? 'B' : 'b') << 8 | '0');
     num_digits = count_digits<1>(value);
-    format_uint<1, char>(appender(buffer), value, num_digits);
+    format_base2e<char>(1, appender(buffer), value, num_digits);
     break;
   case presentation_type::chr:
     return write_char<Char>(out, static_cast<Char>(value), specs);
@@ -2184,6 +2185,13 @@ template <typename Char, typename OutputIt, typename T>
 FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
                                         const format_specs& specs) -> OutputIt {
   static_assert(std::is_same<T, uint32_or_64_or_128_t<T>>::value, "");
+
+  constexpr int buffer_size = num_bits<T>();
+  char buffer[buffer_size];
+  if (is_constant_evaluated()) fill_n(buffer, buffer_size, '\0');
+  const char* begin = nullptr;
+  const char* end = buffer + buffer_size;
+
   auto abs_value = arg.abs_value;
   auto prefix = arg.prefix;
   switch (specs.type()) {
@@ -2191,46 +2199,53 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
     FMT_ASSERT(false, "");
     FMT_FALLTHROUGH;
   case presentation_type::none:
-  case presentation_type::dec: {
-    int num_digits = count_digits(abs_value);
-    return write_int<Char>(
-        out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
-          return format_decimal<Char>(it, abs_value, num_digits);
-        });
-  }
-  case presentation_type::hex: {
+  case presentation_type::dec:
+    begin = do_format_decimal(buffer, abs_value, buffer_size);
+    break;
+  case presentation_type::hex:
+    begin = do_format_base2e(4, buffer, abs_value, buffer_size, specs.upper());
     if (specs.alt())
       prefix_append(prefix, unsigned(specs.upper() ? 'X' : 'x') << 8 | '0');
-    int num_digits = count_digits<4>(abs_value);
-    return write_int<Char>(
-        out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
-          return format_uint<4, Char>(it, abs_value, num_digits, specs.upper());
-        });
-  }
+    break;
   case presentation_type::oct: {
-    int num_digits = count_digits<3>(abs_value);
+    begin = do_format_base2e(3, buffer, abs_value, buffer_size);
     // Octal prefix '0' is counted as a digit, so only add it if precision
     // is not greater than the number of digits.
+    auto num_digits = end - begin;
     if (specs.alt() && specs.precision <= num_digits && abs_value != 0)
       prefix_append(prefix, '0');
-    return write_int<Char>(
-        out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
-          return format_uint<3, Char>(it, abs_value, num_digits);
-        });
+    break;
   }
-  case presentation_type::bin: {
+  case presentation_type::bin:
+    begin = do_format_base2e(1, buffer, abs_value, buffer_size);
     if (specs.alt())
       prefix_append(prefix, unsigned(specs.upper() ? 'B' : 'b') << 8 | '0');
-    int num_digits = count_digits<1>(abs_value);
-    return write_int<Char>(
-        out, num_digits, prefix, specs, [=](reserve_iterator<OutputIt> it) {
-          return format_uint<1, Char>(it, abs_value, num_digits);
-        });
-  }
+    break;
   case presentation_type::chr:
     return write_char<Char>(out, static_cast<Char>(abs_value), specs);
   }
+
+  // Write an integer in the format
+  //   <left-padding><prefix><numeric-padding><digits><right-padding>
+  // prefix contains chars in three lower bytes and the size in the fourth byte.
+  int num_digits = static_cast<int>(end - begin);
+  // Slightly faster check for specs.width == 0 && specs.precision == -1.
+  if ((specs.width | (specs.precision + 1)) == 0) {
+    auto it = reserve(out, to_unsigned(num_digits) + (prefix >> 24));
+    for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
+      *it++ = static_cast<Char>(p & 0xff);
+    return base_iterator(out, copy<Char>(begin, end, it));
+  }
+  auto data = write_int_data<Char>(num_digits, prefix, specs);
+  return write_padded<Char, align::right>(
+      out, specs, data.size, [=](reserve_iterator<OutputIt> it) {
+        for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
+          *it++ = static_cast<Char>(p & 0xff);
+        it = detail::fill_n(it, data.padding, static_cast<Char>('0'));
+        return copy<Char>(begin, end, it);
+      });
 }
+
 template <typename Char, typename OutputIt, typename T>
 FMT_CONSTEXPR FMT_NOINLINE auto write_int_noinline(OutputIt out,
                                                    write_int_arg<T> arg,
@@ -2238,6 +2253,7 @@ FMT_CONSTEXPR FMT_NOINLINE auto write_int_noinline(OutputIt out,
     -> OutputIt {
   return write_int<Char>(out, arg, specs);
 }
+
 template <typename Char, typename T,
           FMT_ENABLE_IF(is_integral<T>::value &&
                         !std::is_same<T, bool>::value &&
@@ -2249,6 +2265,7 @@ FMT_CONSTEXPR FMT_INLINE auto write(basic_appender<Char> out, T value,
   return write_int_noinline<Char>(out, make_write_int_arg(value, specs.sign()),
                                   specs);
 }
+
 // An inlined version of write used in format string compilation.
 template <typename Char, typename OutputIt, typename T,
           FMT_ENABLE_IF(is_integral<T>::value &&
@@ -3121,7 +3138,7 @@ FMT_CONSTEXPR20 void format_hexfloat(Float value, format_specs specs,
 
   char xdigits[num_bits<carrier_uint>() / 4];
   detail::fill_n(xdigits, sizeof(xdigits), '0');
-  format_uint<4>(xdigits, f.f, num_xdigits, specs.upper());
+  format_base2e(4, xdigits, f.f, num_xdigits, specs.upper());
 
   // Remove zero tail
   while (print_xdigits > 0 && xdigits[print_xdigits] == '0') --print_xdigits;
