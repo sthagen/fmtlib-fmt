@@ -73,20 +73,6 @@
 #  define FMT_INLINE_VARIABLE
 #endif
 
-#ifndef FMT_NO_UNIQUE_ADDRESS
-#  if FMT_CPLUSPLUS >= 202002L
-#    if FMT_HAS_CPP_ATTRIBUTE(no_unique_address)
-#      define FMT_NO_UNIQUE_ADDRESS [[no_unique_address]]
-// VS2019 v16.10 and later except clang-cl (https://reviews.llvm.org/D110485).
-#    elif (FMT_MSC_VERSION >= 1929) && !FMT_CLANG_VERSION
-#      define FMT_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-#    endif
-#  endif
-#endif
-#ifndef FMT_NO_UNIQUE_ADDRESS
-#  define FMT_NO_UNIQUE_ADDRESS
-#endif
-
 // Visibility when compiled as a shared library/object.
 #if defined(FMT_LIB_EXPORT) || defined(FMT_SHARED)
 #  define FMT_SO_VISIBILITY(value) FMT_VISIBILITY(value)
@@ -765,16 +751,6 @@ using is_integer =
                   !std::is_same<T, char>::value &&
                   !std::is_same<T, wchar_t>::value>;
 
-#ifndef FMT_USE_FLOAT
-#  define FMT_USE_FLOAT 1
-#endif
-#ifndef FMT_USE_DOUBLE
-#  define FMT_USE_DOUBLE 1
-#endif
-#ifndef FMT_USE_LONG_DOUBLE
-#  define FMT_USE_LONG_DOUBLE 1
-#endif
-
 #if defined(FMT_USE_FLOAT128)
 // Use the provided definition.
 #elif FMT_CLANG_VERSION && FMT_HAS_INCLUDE(<quadmath.h>)
@@ -1037,6 +1013,7 @@ template <typename OutputIt, typename Char> class generic_context {
   using iterator = OutputIt;
   using parse_context_type = basic_format_parse_context<Char>;
   template <typename T> using formatter_type = formatter<T, Char>;
+  enum { builtin_types = FMT_BUILTIN_TYPES };
 
   constexpr generic_context(OutputIt out,
                             basic_format_args<generic_context> ctx_args,
@@ -1074,7 +1051,10 @@ class loc_value {
 
  public:
   template <typename T, FMT_ENABLE_IF(!detail::is_float128<T>::value)>
-  loc_value(T value) : value_(detail::make_arg<format_context>(value)) {}
+  loc_value(T value) {
+    value_.type_ = detail::mapped_type_constant<T, format_context>::value;
+    value_.value_ = detail::arg_mapper<format_context>().map(value);
+  }
 
   template <typename T, FMT_ENABLE_IF(detail::is_float128<T>::value)>
   loc_value(T) {}
@@ -1126,14 +1106,6 @@ constexpr auto is_negative(T value) -> bool {
 template <typename T, FMT_ENABLE_IF(!is_signed<T>::value)>
 constexpr auto is_negative(T) -> bool {
   return false;
-}
-
-template <typename T>
-FMT_CONSTEXPR auto is_supported_floating_point(T) -> bool {
-  if (std::is_same<T, float>()) return FMT_USE_FLOAT;
-  if (std::is_same<T, double>()) return FMT_USE_DOUBLE;
-  if (std::is_same<T, long double>()) return FMT_USE_LONG_DOUBLE;
-  return true;
 }
 
 // Smallest of uint32_t, uint64_t, uint128_t that is large enough to
@@ -1219,7 +1191,7 @@ inline auto do_count_digits(uint64_t n) -> int {
 // except for n == 0 in which case count_digits returns 1.
 FMT_CONSTEXPR20 inline auto count_digits(uint64_t n) -> int {
 #ifdef FMT_BUILTIN_CLZLL
-  if (!is_constant_evaluated()) return do_count_digits(n);
+  if (!is_constant_evaluated() && !FMT_OPTIMIZE_SIZE) return do_count_digits(n);
 #endif
   return count_digits_fallback(n);
 }
@@ -1269,9 +1241,7 @@ FMT_INLINE auto do_count_digits(uint32_t n) -> int {
 // Optional version of count_digits for better performance on 32-bit platforms.
 FMT_CONSTEXPR20 inline auto count_digits(uint32_t n) -> int {
 #ifdef FMT_BUILTIN_CLZ
-  if (!is_constant_evaluated()) {
-    return do_count_digits(n);
-  }
+  if (!is_constant_evaluated() && !FMT_OPTIMIZE_SIZE) return do_count_digits(n);
 #endif
   return count_digits_fallback(n);
 }
@@ -1319,7 +1289,8 @@ inline auto equal2(const char* lhs, const char* rhs) -> bool {
 // Writes a two-digit value to out.
 template <typename Char>
 FMT_CONSTEXPR20 FMT_INLINE void write2digits(Char* out, size_t value) {
-  if (!is_constant_evaluated() && std::is_same<Char, char>::value) {
+  if (!is_constant_evaluated() && std::is_same<Char, char>::value &&
+      !FMT_OPTIMIZE_SIZE) {
     memcpy(out, digits2(value), 2);
     return;
   }
@@ -2022,10 +1993,8 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, int num_digits,
   // Slightly faster check for specs.width == 0 && specs.precision == -1.
   if ((specs.width | (specs.precision + 1)) == 0) {
     auto it = reserve(out, to_unsigned(num_digits) + (prefix >> 24));
-    if (prefix != 0) {
-      for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
-        *it++ = static_cast<Char>(p & 0xff);
-    }
+    for (unsigned p = prefix & 0xffffff; p != 0; p >>= 8)
+      *it++ = static_cast<Char>(p & 0xff);
     return base_iterator(out, write_digits(it));
   }
   auto data = write_int_data<Char>(num_digits, prefix, specs);
@@ -2158,9 +2127,11 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
       });
 }
 
+#if FMT_USE_LOCALE
 // Writes a localized value.
 FMT_API auto write_loc(appender out, loc_value value, const format_specs& specs,
                        locale_ref loc) -> bool;
+#endif
 template <typename OutputIt>
 inline auto write_loc(OutputIt, loc_value, const format_specs&, locale_ref)
     -> bool {
@@ -2211,8 +2182,7 @@ template <typename Char = char> struct loc_writer {
 
 template <typename Char, typename OutputIt, typename T>
 FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
-                                        const format_specs& specs, locale_ref)
-    -> OutputIt {
+                                        const format_specs& specs) -> OutputIt {
   static_assert(std::is_same<T, uint32_or_64_or_128_t<T>>::value, "");
   auto abs_value = arg.abs_value;
   auto prefix = arg.prefix;
@@ -2264,9 +2234,9 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
 template <typename Char, typename OutputIt, typename T>
 FMT_CONSTEXPR FMT_NOINLINE auto write_int_noinline(OutputIt out,
                                                    write_int_arg<T> arg,
-                                                   const format_specs& specs,
-                                                   locale_ref loc) -> OutputIt {
-  return write_int<Char>(out, arg, specs, loc);
+                                                   const format_specs& specs)
+    -> OutputIt {
+  return write_int<Char>(out, arg, specs);
 }
 template <typename Char, typename T,
           FMT_ENABLE_IF(is_integral<T>::value &&
@@ -2277,7 +2247,7 @@ FMT_CONSTEXPR FMT_INLINE auto write(basic_appender<Char> out, T value,
     -> basic_appender<Char> {
   if (specs.localized() && write_loc(out, value, specs, loc)) return out;
   return write_int_noinline<Char>(out, make_write_int_arg(value, specs.sign()),
-                                  specs, loc);
+                                  specs);
 }
 // An inlined version of write used in format string compilation.
 template <typename Char, typename OutputIt, typename T,
@@ -2289,8 +2259,7 @@ FMT_CONSTEXPR FMT_INLINE auto write(OutputIt out, T value,
                                     const format_specs& specs, locale_ref loc)
     -> OutputIt {
   if (specs.localized() && write_loc(out, value, specs, loc)) return out;
-  return write_int<Char>(out, make_write_int_arg(value, specs.sign()), specs,
-                         loc);
+  return write_int<Char>(out, make_write_int_arg(value, specs.sign()), specs);
 }
 
 template <typename Char, typename OutputIt>
@@ -3552,7 +3521,6 @@ template <typename Char, typename OutputIt, typename T,
           FMT_ENABLE_IF(is_floating_point<T>::value)>
 FMT_CONSTEXPR20 auto write(OutputIt out, T value, format_specs specs,
                            locale_ref loc = {}) -> OutputIt {
-  if (const_check(!is_supported_floating_point(value))) return out;
   return specs.localized() && write_loc(out, value, specs, loc)
              ? out
              : write_float<Char>(out, value, specs, loc);
@@ -3562,7 +3530,6 @@ template <typename Char, typename OutputIt, typename T,
           FMT_ENABLE_IF(is_fast_float<T>::value)>
 FMT_CONSTEXPR20 auto write(OutputIt out, T value) -> OutputIt {
   if (is_constant_evaluated()) return write<Char>(out, value, format_specs());
-  if (const_check(!is_supported_floating_point(value))) return out;
 
   auto s = detail::signbit(value) ? sign::minus : sign::none;
 
@@ -3672,6 +3639,10 @@ FMT_CONSTEXPR auto write(OutputIt out, const T& value)
   return formatter.format(value, ctx);
 }
 
+template <typename T>
+using is_builtin =
+    bool_constant<std::is_same<T, int>::value || FMT_BUILTIN_TYPES>;
+
 // An argument visitor that formats the argument and writes it via the output
 // iterator. It's a class and not a generic lambda for compatibility with C++11.
 template <typename Char> struct default_arg_formatter {
@@ -3681,7 +3652,15 @@ template <typename Char> struct default_arg_formatter {
 
   void operator()(monostate) { report_error("argument not found"); }
 
-  template <typename T> void operator()(T value) { write<Char>(out, value); }
+  template <typename T, FMT_ENABLE_IF(is_builtin<T>::value)>
+  void operator()(T value) {
+    write<Char>(out, value);
+  }
+
+  template <typename T, FMT_ENABLE_IF(!is_builtin<T>::value)>
+  void operator()(T) {
+    FMT_ASSERT(false, "");
+  }
 
   void operator()(typename basic_format_arg<context>::handle h) {
     // Use a null locale since the default format must be unlocalized.
@@ -3692,21 +3671,23 @@ template <typename Char> struct default_arg_formatter {
 };
 
 template <typename Char> struct arg_formatter {
-  using iterator = basic_appender<Char>;
-  using context = buffered_context<Char>;
-
-  iterator out;
+  basic_appender<Char> out;
   const format_specs& specs;
-  locale_ref locale;
+  FMT_NO_UNIQUE_ADDRESS locale_ref locale;
 
-  template <typename T>
-  FMT_CONSTEXPR FMT_INLINE auto operator()(T value) -> iterator {
-    return detail::write<Char>(out, value, specs, locale);
+  template <typename T, FMT_ENABLE_IF(is_builtin<T>::value)>
+  FMT_CONSTEXPR FMT_INLINE void operator()(T value) {
+    detail::write<Char>(out, value, specs, locale);
   }
-  auto operator()(typename basic_format_arg<context>::handle) -> iterator {
+
+  template <typename T, FMT_ENABLE_IF(!is_builtin<T>::value)>
+  void operator()(T) {
+    FMT_ASSERT(false, "");
+  }
+
+  void operator()(typename basic_format_arg<buffered_context<Char>>::handle) {
     // User-defined types are handled separately because they require access
     // to the parse context.
-    return out;
   }
 };
 
@@ -3939,21 +3920,21 @@ FMT_FORMAT_AS(unsigned short, unsigned);
 FMT_FORMAT_AS(long, detail::long_type);
 FMT_FORMAT_AS(unsigned long, detail::ulong_type);
 FMT_FORMAT_AS(Char*, const Char*);
-FMT_FORMAT_AS(std::nullptr_t, const void*);
 FMT_FORMAT_AS(detail::std_string_view<Char>, basic_string_view<Char>);
+FMT_FORMAT_AS(std::nullptr_t, const void*);
 FMT_FORMAT_AS(void*, const void*);
+
+template <typename Char, size_t N>
+struct formatter<Char[N], Char> : formatter<basic_string_view<Char>, Char> {};
 
 template <typename Char, typename Traits, typename Allocator>
 class formatter<std::basic_string<Char, Traits, Allocator>, Char>
     : public formatter<basic_string_view<Char>, Char> {};
 
-template <typename Char, size_t N>
-struct formatter<Char[N], Char> : formatter<basic_string_view<Char>, Char> {};
-
 template <typename T, typename Char>
 struct formatter<T, Char,
                  enable_if_t<(detail::bitint_traits<T>::is_formattable)>>
-    : formatter<typename detail::bitint_traits<T>::formatter_type, Char> {};
+    : formatter<typename detail::bitint_traits<T>::format_type, Char> {};
 
 /**
  * Converts `p` to `const void*` for pointer formatting.
@@ -4208,8 +4189,6 @@ template <typename Char> struct format_handler {
                           specs.precision_ref, context);
     }
 
-    if (begin == end || *begin != '}')
-      report_error("missing '}' in format string");
     arg.visit(arg_formatter<Char>{context.out(), specs, context.locale()});
     return begin;
   }
@@ -4246,7 +4225,7 @@ FMT_END_EXPORT
 
 template <typename T, typename Char, type TYPE>
 template <typename FormatContext>
-FMT_CONSTEXPR FMT_INLINE auto native_formatter<T, Char, TYPE>::format(
+FMT_CONSTEXPR auto native_formatter<T, Char, TYPE>::format(
     const T& val, FormatContext& ctx) const -> decltype(ctx.out()) {
   if (!specs_.dynamic())
     return write<Char>(ctx.out(), val, specs_, ctx.locale());
