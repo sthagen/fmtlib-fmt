@@ -491,7 +491,7 @@ void vprintf(buffer<Char>& buf, basic_string_view<Char> format,
     auto arg = get_arg(arg_index);
     // For d, i, o, u, x, and X conversion specifiers, if a precision is
     // specified, the '0' flag is ignored
-    if (specs.precision >= 0 && arg.is_integral()) {
+    if (specs.precision >= 0 && is_integral_type(arg.type())) {
       // Ignore '0' for non-numeric types or if '-' present.
       specs.set_fill(' ');
     }
@@ -505,7 +505,7 @@ void vprintf(buffer<Char>& buf, basic_string_view<Char> format,
     }
     if (specs.alt() && arg.visit(is_zero_int())) specs.clear_alt();
     if (specs.fill_unit<Char>() == '0') {
-      if (arg.is_arithmetic() && specs.align() != align::left) {
+      if (is_arithmetic_type(arg.type()) && specs.align() != align::left) {
         specs.set_align(align::numeric);
       } else {
         // Ignore '0' flag for non-numeric types or if '-' flag is also present.
@@ -556,7 +556,7 @@ void vprintf(buffer<Char>& buf, basic_string_view<Char> format,
     // Parse type.
     if (it == end) report_error("invalid format string");
     char type = static_cast<char>(*it++);
-    if (arg.is_integral()) {
+    if (is_integral_type(arg.type())) {
       // Normalize type.
       switch (type) {
       case 'i':
@@ -618,7 +618,7 @@ inline auto vsprintf(basic_string_view<Char> fmt,
  *
  *     std::string message = fmt::sprintf("The answer is %d", 42);
  */
-template <typename S, typename... T, typename Char = char_t<S>>
+template <typename S, typename... T, typename Char = detail::char_t<S>>
 inline auto sprintf(const S& fmt, const T&... args) -> std::basic_string<Char> {
   return vsprintf(detail::to_string_view(fmt),
                   fmt::make_format_args<basic_printf_context<Char>>(args...));
@@ -643,7 +643,7 @@ inline auto vfprintf(std::FILE* f, basic_string_view<Char> fmt,
  *
  *     fmt::fprintf(stderr, "Don't %s!", "panic");
  */
-template <typename S, typename... T, typename Char = char_t<S>>
+template <typename S, typename... T, typename Char = detail::char_t<S>>
 inline auto fprintf(std::FILE* f, const S& fmt, const T&... args) -> int {
   return vfprintf(f, detail::to_string_view(fmt),
                   make_printf_args<Char>(args...));

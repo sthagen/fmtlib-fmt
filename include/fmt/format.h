@@ -124,6 +124,20 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
+#ifdef FMT_NO_UNIQUE_ADDRESS
+// Use the provided definition.
+#elif FMT_CPLUSPLUS < 202002L
+// Not supported.
+#elif FMT_HAS_CPP_ATTRIBUTE(no_unique_address)
+#  define FMT_NO_UNIQUE_ADDRESS [[no_unique_address]]
+// VS2019 v16.10 and later except clang-cl (https://reviews.llvm.org/D110485).
+#elif FMT_MSC_VERSION >= 1929 && !FMT_CLANG_VERSION
+#  define FMT_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#endif
+#ifndef FMT_NO_UNIQUE_ADDRESS
+#  define FMT_NO_UNIQUE_ADDRESS
+#endif
+
 #ifndef FMT_MAYBE_UNUSED
 #  if FMT_HAS_CPP17_ATTRIBUTE(maybe_unused)
 #    define FMT_MAYBE_UNUSED [[maybe_unused]]
@@ -1043,8 +1057,9 @@ template <typename OutputIt, typename Char> class generic_context {
  public:
   using char_type = Char;
   using iterator = OutputIt;
-  using parse_context_type = parse_context<Char>;
-  template <typename T> using formatter_type = formatter<T, Char>;
+  using parse_context_type FMT_DEPRECATED = parse_context<Char>;
+  template <typename T>
+  using formatter_type FMT_DEPRECATED = formatter<T, Char>;
   enum { builtin_types = FMT_BUILTIN_TYPES };
 
   constexpr generic_context(OutputIt out,
@@ -1064,9 +1079,6 @@ template <typename OutputIt, typename Char> class generic_context {
   FMT_CONSTEXPR auto arg_id(basic_string_view<Char> name) -> int {
     return args_.get_id(name);
   }
-  auto args() const -> const basic_format_args<generic_context>& {
-    return args_;
-  }
 
   FMT_CONSTEXPR auto out() -> iterator { return out_; }
 
@@ -1079,14 +1091,11 @@ template <typename OutputIt, typename Char> class generic_context {
 
 class loc_value {
  private:
-  basic_format_arg<format_context> value_;
+  basic_format_arg<context> value_;
 
  public:
   template <typename T, FMT_ENABLE_IF(!detail::is_float128<T>::value)>
-  loc_value(T value) {
-    value_.type_ = detail::mapped_type_constant<T, format_context>::value;
-    value_.value_ = detail::arg_mapper<format_context>::map(value);
-  }
+  loc_value(T value) : value_(detail::make_arg<context>(value)) {}
 
   template <typename T, FMT_ENABLE_IF(detail::is_float128<T>::value)>
   loc_value(T) {}
@@ -1860,7 +1869,7 @@ auto find_escape(const Char* begin, const Char* end)
 
 inline auto find_escape(const char* begin, const char* end)
     -> find_escape_result<char> {
-  if (!use_utf8()) return find_escape<char>(begin, end);
+  if (!FMT_USE_UTF8) return find_escape<char>(begin, end);
   auto result = find_escape_result<char>{end, nullptr, 0};
   for_each_codepoint(string_view(begin, to_unsigned(end - begin)),
                      [&](uint32_t cp, string_view sv) {
@@ -3606,10 +3615,8 @@ constexpr auto write(OutputIt out, const T& value) -> OutputIt {
 // FMT_ENABLE_IF() condition separated to workaround an MSVC bug.
 template <
     typename Char, typename OutputIt, typename T,
-    bool check =
-        std::is_enum<T>::value && !std::is_same<T, Char>::value &&
-        mapped_type_constant<T, basic_format_context<OutputIt, Char>>::value !=
-            type::custom_type,
+    bool check = std::is_enum<T>::value && !std::is_same<T, Char>::value &&
+                 mapped_type_constant<T, Char>::value != type::custom_type,
     FMT_ENABLE_IF(check)>
 FMT_CONSTEXPR auto write(OutputIt out, T value) -> OutputIt {
   return write<Char>(out, static_cast<underlying_t<T>>(value));
@@ -3652,24 +3659,22 @@ template <typename Char, typename OutputIt, typename T,
 FMT_CONSTEXPR auto write(OutputIt out, const T& value) -> enable_if_t<
     std::is_class<T>::value && !has_to_string_view<T>::value &&
         !is_floating_point<T>::value && !std::is_same<T, Char>::value &&
-        !std::is_same<T, remove_cvref_t<
-                             decltype(arg_mapper<Context>::map(value))>>::value,
+        !std::is_same<
+            T, remove_cvref_t<decltype(arg_mapper<Char>::map(value))>>::value,
     OutputIt> {
-  return write<Char>(out, arg_mapper<Context>::map(value));
+  return write<Char>(out, arg_mapper<Char>::map(value));
 }
 
 template <typename Char, typename OutputIt, typename T,
-          typename Context = basic_format_context<OutputIt, Char>>
-FMT_CONSTEXPR auto write(OutputIt out, const T& value)
-    -> enable_if_t<mapped_type_constant<T, Context>::value ==
-                           type::custom_type &&
-                       !std::is_fundamental<T>::value,
-                   OutputIt> {
-  auto formatter = typename Context::template formatter_type<T>();
-  auto parse_ctx = typename Context::parse_context_type({});
-  formatter.parse(parse_ctx);
-  auto ctx = Context(out, {}, {});
-  return formatter.format(value, ctx);
+          FMT_ENABLE_IF(mapped_type_constant<T, Char>::value ==
+                            type::custom_type &&
+                        !std::is_fundamental<T>::value)>
+FMT_CONSTEXPR auto write(OutputIt out, const T& value) -> OutputIt {
+  auto f = formatter<T, Char>();
+  auto parse_ctx = parse_context<Char>({});
+  f.parse(parse_ctx);
+  auto ctx = basic_format_context<OutputIt, Char>(out, {}, {});
+  return f.format(value, ctx);
 }
 
 template <typename T>
@@ -3769,27 +3774,27 @@ FMT_CONSTEXPR void handle_dynamic_spec(
 #  if FMT_USE_NONTYPE_TEMPLATE_ARGS
 template <typename T, typename Char, size_t N,
           fmt::detail_exported::fixed_string<Char, N> Str>
-struct statically_named_arg : view {
+struct static_named_arg : view {
   static constexpr auto name = Str.data;
 
   const T& value;
-  statically_named_arg(const T& v) : value(v) {}
+  static_named_arg(const T& v) : value(v) {}
 };
 
 template <typename T, typename Char, size_t N,
           fmt::detail_exported::fixed_string<Char, N> Str>
-struct is_named_arg<statically_named_arg<T, Char, N, Str>> : std::true_type {};
+struct is_named_arg<static_named_arg<T, Char, N, Str>> : std::true_type {};
 
 template <typename T, typename Char, size_t N,
           fmt::detail_exported::fixed_string<Char, N> Str>
-struct is_statically_named_arg<statically_named_arg<T, Char, N, Str>>
-    : std::true_type {};
+struct is_static_named_arg<static_named_arg<T, Char, N, Str>> : std::true_type {
+};
 
 template <typename Char, size_t N,
           fmt::detail_exported::fixed_string<Char, N> Str>
 struct udl_arg {
   template <typename T> auto operator=(T&& value) const {
-    return statically_named_arg<T, Char, N, Str>(std::forward<T>(value));
+    return static_named_arg<T, Char, N, Str>(std::forward<T>(value));
   }
 };
 #  else
@@ -3820,6 +3825,10 @@ FMT_API void format_error_code(buffer<char>& out, int error_code,
 using fmt::report_error;
 FMT_API void report_error(format_func func, int error_code,
                           const char* message) noexcept;
+
+template <typename T>
+struct has_format_as
+    : bool_constant<!std::is_same<format_as_t<T>, void>::value> {};
 }  // namespace detail
 
 FMT_BEGIN_EXPORT
