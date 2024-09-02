@@ -33,7 +33,7 @@ template <typename Char> class basic_printf_context {
 
  public:
   using char_type = Char;
-  using parse_context_type = basic_format_parse_context<Char>;
+  using parse_context_type = parse_context<Char>;
   template <typename T> using formatter_type = printf_formatter<T>;
   enum { builtin_types = 1 };
 
@@ -54,6 +54,23 @@ template <typename Char> class basic_printf_context {
 };
 
 namespace detail {
+
+// Return the result via the out param to workaround gcc bug 77539.
+template <bool IS_CONSTEXPR, typename T, typename Ptr = const T*>
+FMT_CONSTEXPR auto find(Ptr first, Ptr last, T value, Ptr& out) -> bool {
+  for (out = first; out != last; ++out) {
+    if (*out == value) return true;
+  }
+  return false;
+}
+
+template <>
+inline auto find<false, char>(const char* first, const char* last, char value,
+                              const char*& out) -> bool {
+  out =
+      static_cast<const char*>(memchr(first, value, to_unsigned(last - first)));
+  return out != nullptr;
+}
 
 // Checks if a value fits in int - used to avoid warnings about comparing
 // signed and unsigned integers.
@@ -302,7 +319,7 @@ class printf_arg_formatter : public arg_formatter<Char> {
   }
 
   void operator()(typename basic_format_arg<context_type>::handle handle) {
-    auto parse_ctx = basic_format_parse_context<Char>({});
+    auto parse_ctx = parse_context<Char>({});
     handle.format(parse_ctx, context_);
   }
 };
@@ -421,7 +438,7 @@ void vprintf(buffer<Char>& buf, basic_string_view<Char> format,
   using iterator = basic_appender<Char>;
   auto out = iterator(buf);
   auto context = basic_printf_context<Char>(out, args);
-  auto parse_ctx = basic_format_parse_context<Char>(format);
+  auto parse_ctx = parse_context<Char>(format);
 
   // Returns the argument with specified index or, if arg_index is -1, the next
   // argument.

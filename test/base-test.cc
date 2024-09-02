@@ -561,7 +561,7 @@ struct test_format_string_handler {
 
 template <size_t N> constexpr bool parse_string(const char (&s)[N]) {
   auto h = test_format_string_handler();
-  fmt::detail::parse_format_string<true>(fmt::string_view(s, N - 1), h);
+  fmt::detail::parse_format_string(fmt::string_view(s, N - 1), h);
   return !h.error;
 }
 
@@ -707,8 +707,8 @@ TEST(base_test, is_formattable) {
   static_assert(!fmt::is_formattable<unformattable_scoped_enum>::value, "");
 }
 
-#if FMT_USE_CONCEPTS
-TEST(base_test, formattable) {
+#ifdef __cpp_concepts
+TEST(base_test, formattable_concept) {
   static_assert(fmt::formattable<char>);
   static_assert(fmt::formattable<char&>);
   static_assert(fmt::formattable<char&&>);
