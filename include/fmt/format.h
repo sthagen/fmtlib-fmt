@@ -81,12 +81,6 @@
 #  define FMT_SO_VISIBILITY(value)
 #endif
 
-#ifdef __has_builtin
-#  define FMT_HAS_BUILTIN(x) __has_builtin(x)
-#else
-#  define FMT_HAS_BUILTIN(x) 0
-#endif
-
 #if FMT_GCC_VERSION || FMT_CLANG_VERSION
 #  define FMT_NOINLINE __attribute__((noinline))
 #else
@@ -196,7 +190,7 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
-#if FMT_MSC_VERSION
+#if FMT_MSC_VERSION && !defined(FMT_MODULE)
 #  include <intrin.h>  // _BitScanReverse[64], _BitScanForward[64], _umul128
 #endif
 

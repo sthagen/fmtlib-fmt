@@ -78,6 +78,11 @@
 #else
 #  define FMT_HAS_INCLUDE(x) 0
 #endif
+#ifdef __has_builtin
+#  define FMT_HAS_BUILTIN(x) __has_builtin(x)
+#else
+#  define FMT_HAS_BUILTIN(x) 0
+#endif
 #ifdef __has_cpp_attribute
 #  define FMT_HAS_CPP_ATTRIBUTE(x) __has_cpp_attribute(x)
 #else
@@ -455,18 +460,15 @@ constexpr auto is_utf8_enabled() -> bool { return "\u00A7"[1] == '\xA7'; }
 // It is a macro for better debug codegen without if constexpr.
 #define FMT_USE_UTF8 (!FMT_MSC_VERSION || fmt::detail::is_utf8_enabled())
 
+template <typename T> constexpr const char* narrow(const T*) { return nullptr; }
+constexpr FMT_ALWAYS_INLINE const char* narrow(const char* s) { return s; }
+
 #ifndef FMT_UNICODE
 #  define FMT_UNICODE 1
 #endif
 
 static_assert(!FMT_UNICODE || FMT_USE_UTF8,
               "Unicode support requires compiling with /utf-8");
-
-template <typename Char> FMT_CONSTEXPR auto length(const Char* s) -> size_t {
-  size_t len = 0;
-  while (*s++) ++len;
-  return len;
-}
 
 template <typename Char>
 FMT_CONSTEXPR auto compare(const Char* s1, const Char* s2, std::size_t n)
@@ -536,13 +538,20 @@ template <typename Char> class basic_string_view {
   constexpr basic_string_view(std::nullptr_t) = delete;
 
   /// Constructs a string reference object from a C string.
-  FMT_CONSTEXPR20
-  basic_string_view(const Char* s)
-      : data_(s),
-        size_(detail::const_check(std::is_same<Char, char>::value &&
-                                  !detail::is_constant_evaluated(false))
-                  ? strlen(reinterpret_cast<const char*>(s))
-                  : detail::length(s)) {}
+#if FMT_GCC_VERSION
+  FMT_ALWAYS_INLINE
+#endif
+  FMT_CONSTEXPR20 basic_string_view(const Char* s) : data_(s) {
+#if FMT_HAS_BUILTIN(__buitin_strlen) || FMT_GCC_VERSION || FMT_CLANG_VERSION
+    if (std::is_same<Char, char>::value) {
+      size_ = __builtin_strlen(detail::narrow(s));
+      return;
+    }
+#endif
+    size_t len = 0;
+    while (*s++) ++len;
+    size_ = len;
+  }
 
   /// Constructs a string reference from a `std::basic_string` or a
   /// `std::basic_string_view` object.
@@ -2465,7 +2474,6 @@ inline void vprint_mojibake(FILE*, string_view, const format_args&, bool) {}
 }  // namespace detail
 
 // The main public API.
-FMT_BEGIN_EXPORT
 
 template <typename Char>
 FMT_CONSTEXPR void parse_context<Char>::do_check_arg_id(int arg_id) {
@@ -2483,6 +2491,8 @@ FMT_CONSTEXPR void parse_context<Char>::check_dynamic_spec(int arg_id) {
   if (detail::is_constant_evaluated() && use_constexpr_cast)
     static_cast<compile_parse_context<Char>*>(this)->check_dynamic_spec(arg_id);
 }
+
+FMT_BEGIN_EXPORT
 
 // An output iterator that appends to a buffer. It is used instead of
 // back_insert_iterator to reduce symbol sizes and avoid <iterator> dependency.
@@ -2759,30 +2769,31 @@ template <typename Char = char> struct runtime_format_string {
 inline auto runtime(string_view s) -> runtime_format_string<> { return {{s}}; }
 
 /// A compile-time format string.
-template <typename Char, typename... Args> class basic_format_string {
+template <typename Char, typename... T> class fstring {
  private:
   basic_string_view<Char> str_;
 
   static constexpr int num_static_named_args =
-      detail::count_static_named_args<Args...>();
+      detail::count_static_named_args<T...>();
 
   using checker = detail::format_string_checker<
-      Char, static_cast<int>(sizeof...(Args)), num_static_named_args,
-      num_static_named_args != detail::count_named_args<Args...>()>;
+      Char, static_cast<int>(sizeof...(T)), num_static_named_args,
+      num_static_named_args != detail::count_named_args<T...>()>;
 
-  using arg_pack = detail::arg_pack<Args...>;
+  using arg_pack = detail::arg_pack<T...>;
 
  public:
-  // Reports a compile-time error if S is not a valid format string for Args.
+  using t = fstring;
+
+  // Reports a compile-time error if S is not a valid format string for T.
   template <typename S,
             FMT_ENABLE_IF(
                 std::is_convertible<const S&, basic_string_view<Char>>::value)>
-  FMT_CONSTEVAL FMT_ALWAYS_INLINE basic_format_string(const S& s) : str_(s) {
+  FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const S& s) : str_(s) {
     using namespace detail;
-    static_assert(
-        count<(std::is_base_of<view, remove_reference_t<Args>>::value &&
-               std::is_reference<Args>::value)...>() == 0,
-        "passing views as lvalues is disallowed");
+    static_assert(count<(std::is_base_of<view, remove_reference_t<T>>::value &&
+                         std::is_reference<T>::value)...>() == 0,
+                  "passing views as lvalues is disallowed");
     if (FMT_USE_CONSTEVAL) parse_format_string<Char>(s, checker(s, arg_pack()));
 #ifdef FMT_ENFORCE_COMPILE_STRING
     static_assert(
@@ -2793,24 +2804,26 @@ template <typename Char, typename... Args> class basic_format_string {
   template <typename S,
             FMT_ENABLE_IF(std::is_base_of<detail::compile_string, S>::value&&
                               std::is_same<typename S::char_type, Char>::value)>
-  FMT_ALWAYS_INLINE basic_format_string(const S& s) : str_(s) {
+  FMT_ALWAYS_INLINE fstring(const S& s) : str_(s) {
     FMT_CONSTEXPR auto fmt = basic_string_view<Char>(S());
     FMT_CONSTEXPR int ignore =
         (parse_format_string(fmt, checker(fmt, arg_pack())), 0);
     detail::ignore_unused(ignore);
   }
-  basic_format_string(runtime_format_string<Char> fmt) : str_(fmt.str) {}
+  fstring(runtime_format_string<Char> fmt) : str_(fmt.str) {}
 
   FMT_ALWAYS_INLINE operator basic_string_view<Char>() const { return str_; }
   auto get() const -> basic_string_view<Char> { return str_; }
 };
 
-template <typename... T>
-using format_string = basic_format_string<char, type_identity_t<T>...>;
+template <typename... T> using format_string = typename fstring<char, T...>::t;
 
 template <typename T, typename Char = char>
-using is_formattable = bool_constant<
-    !std::is_base_of<detail::unformattable, detail::mapped_t<T, Char>>::value>;
+using is_formattable = bool_constant<!std::is_base_of<
+    detail::unformattable,
+    detail::mapped_t<
+        conditional_t<std::is_same<T, void>::value, detail::unformattable, T>,
+        Char>>::value>;
 
 #ifdef __cpp_concepts
 template <typename T, typename Char = char>
