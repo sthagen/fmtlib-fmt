@@ -140,17 +140,14 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
-#ifndef FMT_USE_USER_DEFINED_LITERALS
+#ifndef FMT_USE_USER_LITERALS
 // EDG based compilers (Intel, NVIDIA, Elbrus, etc), GCC and MSVC support UDLs.
-//
-// GCC before 4.9 requires a space in `operator"" _a` which is invalid in later
-// compiler versions.
-#  if (FMT_HAS_FEATURE(cxx_user_literals) || FMT_GCC_VERSION >= 409 || \
-       FMT_MSC_VERSION >= 1900) &&                                     \
+#  if (FMT_HAS_FEATURE(cxx_user_literals) || FMT_GCC_VERSION || \
+       FMT_MSC_VERSION >= 1900) &&                              \
       (!defined(__EDG_VERSION__) || __EDG_VERSION__ >= /* UDL feature */ 480)
-#    define FMT_USE_USER_DEFINED_LITERALS 1
+#    define FMT_USE_USER_LITERALS 1
 #  else
-#    define FMT_USE_USER_DEFINED_LITERALS 0
+#    define FMT_USE_USER_LITERALS 0
 #  endif
 #endif
 
@@ -3775,7 +3772,7 @@ FMT_CONSTEXPR void handle_dynamic_spec(
   if (kind != arg_id_kind::none) value = get_dynamic_spec(kind, ref, ctx);
 }
 
-#if FMT_USE_USER_DEFINED_LITERALS
+#if FMT_USE_USER_LITERALS
 #  if FMT_USE_NONTYPE_TEMPLATE_ARGS
 template <typename T, typename Char, size_t N,
           fmt::detail_exported::fixed_string<Char, N> Str>
@@ -3810,8 +3807,8 @@ template <typename Char> struct udl_arg {
     return {str, std::forward<T>(value)};
   }
 };
-#  endif
-#endif  // FMT_USE_USER_DEFINED_LITERALS
+#  endif  // FMT_USE_NONTYPE_TEMPLATE_ARGS
+#endif    // FMT_USE_USER_LITERALS
 
 template <typename Char> struct format_handler {
   parse_context<Char> parse_ctx;
@@ -3860,7 +3857,6 @@ template <typename Char> struct format_handler {
 };
 
 // DEPRECATED!
-// Use vformat_args and avoid type_identity to keep symbols short.
 template <typename Char = char> struct vformat_args {
   using type = basic_format_args<buffered_context<Char>>;
 };
@@ -3923,7 +3919,7 @@ FMT_API auto vsystem_error(int error_code, string_view format_str,
 template <typename... T>
 auto system_error(int error_code, format_string<T...> fmt, T&&... args)
     -> std::system_error {
-  return vsystem_error(error_code, fmt, fmt::make_format_args(args...));
+  return vsystem_error(error_code, fmt, vargs<T...>{{args...}});
 }
 
 /**
@@ -4294,7 +4290,7 @@ struct formatter<detail::float128, Char>
     : detail::native_formatter<detail::float128, Char,
                                detail::type::float_type> {};
 
-#if FMT_USE_USER_DEFINED_LITERALS
+#if FMT_USE_USER_LITERALS
 inline namespace literals {
 /**
  * User-defined literal equivalent of `fmt::arg`.
@@ -4315,7 +4311,7 @@ constexpr auto operator""_a(const char* s, size_t) -> detail::udl_arg<char> {
 }
 #  endif
 }  // namespace literals
-#endif  // FMT_USE_USER_DEFINED_LITERALS
+#endif  // FMT_USE_USER_LITERALS
 
 FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
 
@@ -4331,7 +4327,7 @@ FMT_API auto vformat(string_view fmt, format_args args) -> std::string;
 template <typename... T>
 FMT_NODISCARD FMT_INLINE auto format(format_string<T...> fmt, T&&... args)
     -> std::string {
-  return vformat(fmt, fmt::make_format_args(args...));
+  return vformat(fmt, vargs<T...>{{args...}});
 }
 
 template <typename Locale, FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
@@ -4344,7 +4340,7 @@ template <typename Locale, typename... T,
           FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
 inline auto format(const Locale& loc, format_string<T...> fmt, T&&... args)
     -> std::string {
-  return fmt::vformat(loc, string_view(fmt), fmt::make_format_args(args...));
+  return fmt::vformat(loc, string_view(fmt), vargs<T...>{{args...}});
 }
 
 template <typename OutputIt, typename Locale,
@@ -4352,8 +4348,7 @@ template <typename OutputIt, typename Locale,
                             detail::is_locale<Locale>::value)>
 auto vformat_to(OutputIt out, const Locale& loc, string_view fmt,
                 format_args args) -> OutputIt {
-  using detail::get_buffer;
-  auto&& buf = get_buffer<char>(out);
+  auto&& buf = detail::get_buffer<char>(out);
   detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
   return detail::get_iterator(buf, out);
 }
@@ -4363,7 +4358,7 @@ template <typename OutputIt, typename Locale, typename... T,
                             detail::is_locale<Locale>::value)>
 FMT_INLINE auto format_to(OutputIt out, const Locale& loc,
                           format_string<T...> fmt, T&&... args) -> OutputIt {
-  return vformat_to(out, loc, fmt, fmt::make_format_args(args...));
+  return vformat_to(out, loc, fmt, vargs<T...>{{args...}});
 }
 
 template <typename Locale, typename... T,
@@ -4372,13 +4367,11 @@ FMT_NODISCARD FMT_INLINE auto formatted_size(const Locale& loc,
                                              format_string<T...> fmt,
                                              T&&... args) -> size_t {
   auto buf = detail::counting_buffer<>();
-  detail::vformat_to(buf, fmt, fmt::make_format_args(args...),
-                     detail::locale_ref(loc));
+  detail::vformat_to(buf, fmt, vargs<T...>{{args...}}, detail::locale_ref(loc));
   return buf.count();
 }
 
 FMT_END_EXPORT
-
 FMT_END_NAMESPACE
 
 #ifdef FMT_HEADER_ONLY
