@@ -15,7 +15,7 @@
 #ifndef FMT_MODULE
 #  include <limits.h>  // CHAR_BIT
 #  include <stdio.h>   // FILE
-#  include <string.h>  // strlen
+#  include <string.h>  // memcmp
 
 // <cstddef> is also included transitively from <type_traits>.
 #  include <cstddef>      // std::byte
@@ -2226,9 +2226,27 @@ template <typename Context> class value {
   constexpr FMT_INLINE value() : no_value() {}
   constexpr FMT_INLINE value(int val) : int_value(val) {}
   constexpr FMT_INLINE value(unsigned val FMT_BUILTIN) : uint_value(val) {}
+  FMT_CONSTEXPR FMT_INLINE value(long val FMT_BUILTIN) {
+    if (sizeof(long) == sizeof(int))
+      int_value = static_cast<int>(val);
+    else
+      long_long_value = val;
+  }
+  FMT_CONSTEXPR FMT_INLINE value(unsigned long val FMT_BUILTIN) {
+    if (sizeof(long) == sizeof(int))
+      uint_value = static_cast<unsigned>(val);
+    else
+      ulong_long_value = val;
+  }
   constexpr FMT_INLINE value(long long val FMT_BUILTIN)
       : long_long_value(val) {}
   constexpr FMT_INLINE value(unsigned long long val FMT_BUILTIN)
+      : ulong_long_value(val) {}
+  template <int N>
+  constexpr FMT_INLINE value(bitint<N> val FMT_BUILTIN)
+      : long_long_value(val) {}
+  template <int N>
+  constexpr FMT_INLINE value(ubitint<N> val FMT_BUILTIN)
       : ulong_long_value(val) {}
   FMT_INLINE value(int128_opt val FMT_BUILTIN) : int128_value(val) {}
   FMT_INLINE value(uint128_opt val FMT_BUILTIN) : uint128_value(val) {}
@@ -2236,7 +2254,11 @@ template <typename Context> class value {
   constexpr FMT_INLINE value(double val FMT_BUILTIN) : double_value(val) {}
   FMT_INLINE value(long double val FMT_BUILTIN) : long_double_value(val) {}
   constexpr FMT_INLINE value(bool val FMT_BUILTIN) : bool_value(val) {}
-  constexpr FMT_INLINE value(char_type val FMT_BUILTIN) : char_value(val) {}
+  template <typename T, FMT_ENABLE_IF(is_char<T>::value)>
+  constexpr FMT_INLINE value(T val FMT_BUILTIN) : char_value(val) {
+    static_assert(std::is_same<T, char_type>::value,
+                  "mixing character types is disallowed");
+  }
   FMT_CONSTEXPR FMT_INLINE value(const char_type* val FMT_BUILTIN) {
     string.data = val;
     if (is_constant_evaluated()) string.size = {};
@@ -2248,16 +2270,20 @@ template <typename Context> class value {
   FMT_INLINE value(const void* val FMT_BUILTIN) : pointer(val) {}
 
   // We can't use mapped_t because of a bug in MSVC 2017.
-  template <typename T,
-            FMT_ENABLE_IF(!std::is_same<T, decltype(arg_mapper<char_type>::map(
-                                               std::declval<T&>()))>::value)>
+  template <
+      typename T,
+      typename M = decltype(arg_mapper<char_type>::map(std::declval<T&>())),
+      FMT_ENABLE_IF(!std::is_same<T, M>::value &&
+                    !std::is_integral<remove_cvref_t<T>>::value)>
   FMT_CONSTEXPR20 FMT_INLINE value(T&& val) {
     *this = arg_mapper<char_type>::map(val);
   }
 
-  template <typename T,
-            FMT_ENABLE_IF(std::is_same<T, decltype(arg_mapper<char_type>::map(
-                                              std::declval<T&>()))>::value)>
+  template <
+      typename T,
+      typename M = decltype(arg_mapper<char_type>::map(std::declval<T&>())),
+      FMT_ENABLE_IF(std::is_same<T, M>::value &&
+                    !std::is_integral<remove_cvref_t<T>>::value)>
   FMT_CONSTEXPR20 FMT_INLINE value(T&& val) {
     // Use enum instead of constexpr because the latter may generate code.
     enum { formattable_char = !std::is_same<T, unformattable_char>::value };
@@ -2786,32 +2812,29 @@ template <typename Char = char> struct runtime_format_string {
 inline auto runtime(string_view s) -> runtime_format_string<> { return {{s}}; }
 
 /// A compile-time format string.
-template <typename Char, typename... T> class fstring {
+template <typename... T> struct fstring {
  private:
-  const Char* str_;
-  size_t size_;
-
   static constexpr int num_static_named_args =
       detail::count_static_named_args<T...>();
 
   using checker = detail::format_string_checker<
-      Char, static_cast<int>(sizeof...(T)), num_static_named_args,
+      char, static_cast<int>(sizeof...(T)), num_static_named_args,
       num_static_named_args != detail::count_named_args<T...>()>;
 
   using arg_pack = detail::arg_pack<T...>;
 
  public:
+  string_view str;
   using t = fstring;
 
   // Reports a compile-time error if S is not a valid format string for T.
   template <size_t N>
-  FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const Char (&s)[N])
-      : str_(s), size_(N - 1) {
+  FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const char (&s)[N]) : str(s, N - 1) {
     using namespace detail;
     static_assert(count<(std::is_base_of<view, remove_reference_t<T>>::value &&
                          std::is_reference<T>::value)...>() == 0,
                   "passing views as lvalues is disallowed");
-    if (FMT_USE_CONSTEVAL) parse_format_string<Char>(s, checker(s, arg_pack()));
+    if (FMT_USE_CONSTEVAL) parse_format_string<char>(s, checker(s, arg_pack()));
 #ifdef FMT_ENFORCE_COMPILE_STRING
     static_assert(
         FMT_USE_CONSTEVAL && sizeof(s) != 0,
@@ -2819,14 +2842,10 @@ template <typename Char, typename... T> class fstring {
 #endif
   }
   template <typename S,
-            FMT_ENABLE_IF(
-                std::is_convertible<const S&, basic_string_view<Char>>::value)>
-  FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const S& s) {
-    auto sv = basic_string_view<Char>(s);
-    str_ = sv.data();
-    size_ = sv.size();
+            FMT_ENABLE_IF(std::is_convertible<const S&, string_view>::value)>
+  FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const S& s) : str(s) {
     if (FMT_USE_CONSTEVAL)
-      detail::parse_format_string<Char>(s, checker(s, arg_pack()));
+      detail::parse_format_string<char>(s, checker(s, arg_pack()));
 #ifdef FMT_ENFORCE_COMPILE_STRING
     static_assert(
         FMT_USE_CONSTEVAL && sizeof(s) != 0,
@@ -2835,25 +2854,21 @@ template <typename Char, typename... T> class fstring {
   }
   template <typename S,
             FMT_ENABLE_IF(std::is_base_of<detail::compile_string, S>::value&&
-                              std::is_same<typename S::char_type, Char>::value)>
-  FMT_ALWAYS_INLINE fstring(const S&) {
-    FMT_CONSTEXPR auto sv = basic_string_view<Char>(S());
-    str_ = sv.data();
-    size_ = sv.size();
+                              std::is_same<typename S::char_type, char>::value)>
+  FMT_ALWAYS_INLINE fstring(const S&) : str(S()) {
+    FMT_CONSTEXPR auto sv = string_view(S());
     FMT_CONSTEXPR int ignore =
         (parse_format_string(sv, checker(sv, arg_pack())), 0);
     detail::ignore_unused(ignore);
   }
-  fstring(runtime_format_string<Char> fmt)
-      : str_(fmt.str.data()), size_(fmt.str.size()) {}
+  fstring(runtime_format_string<> fmt) : str(fmt.str) {}
 
-  FMT_ALWAYS_INLINE operator basic_string_view<Char>() const {
-    return {str_, size_};
-  }
-  auto get() const -> basic_string_view<Char> { return {str_, size_}; }
+  // Returning by reference generates better code in debug mode.
+  FMT_ALWAYS_INLINE operator const string_view&() const { return str; }
+  auto get() const -> string_view { return str; }
 };
 
-template <typename... T> using format_string = typename fstring<char, T...>::t;
+template <typename... T> using format_string = typename fstring<T...>::t;
 
 template <typename T, typename Char = char>
 using is_formattable = bool_constant<
@@ -2941,7 +2956,7 @@ template <typename OutputIt, typename... T,
                                                    char>::value)>
 FMT_INLINE auto format_to(OutputIt&& out, format_string<T...> fmt, T&&... args)
     -> remove_cvref_t<OutputIt> {
-  return vformat_to(FMT_FWD(out), fmt, vargs<T...>{{args...}});
+  return vformat_to(FMT_FWD(out), fmt.str, vargs<T...>{{args...}});
 }
 
 template <typename OutputIt> struct format_to_n_result {
@@ -2971,7 +2986,7 @@ template <typename OutputIt, typename... T,
           FMT_ENABLE_IF(detail::is_output_iterator<OutputIt, char>::value)>
 FMT_INLINE auto format_to_n(OutputIt out, size_t n, format_string<T...> fmt,
                             T&&... args) -> format_to_n_result<OutputIt> {
-  return vformat_to_n(out, n, fmt, vargs<T...>{{args...}});
+  return vformat_to_n(out, n, fmt.str, vargs<T...>{{args...}});
 }
 
 struct format_to_result {
@@ -2997,7 +3012,7 @@ auto vformat_to(char (&out)[N], string_view fmt, format_args args)
 template <size_t N, typename... T>
 FMT_INLINE auto format_to(char (&out)[N], format_string<T...> fmt, T&&... args)
     -> format_to_result {
-  auto result = vformat_to_n(out, N, fmt, vargs<T...>{{args...}});
+  auto result = vformat_to_n(out, N, fmt.str, vargs<T...>{{args...}});
   return {result.out, result.size > N};
 }
 
@@ -3006,7 +3021,7 @@ template <typename... T>
 FMT_NODISCARD FMT_INLINE auto formatted_size(format_string<T...> fmt,
                                              T&&... args) -> size_t {
   auto buf = detail::counting_buffer<>();
-  detail::vformat_to(buf, fmt, vargs<T...>{{args...}}, {});
+  detail::vformat_to(buf, fmt.str, vargs<T...>{{args...}}, {});
   return buf.count();
 }
 
@@ -3026,9 +3041,10 @@ FMT_API void vprintln(FILE* f, string_view fmt, format_args args);
 template <typename... T>
 FMT_INLINE void print(format_string<T...> fmt, T&&... args) {
   fmt::vargs<T...> vargs = {{args...}};
-  if (!FMT_USE_UTF8) return detail::vprint_mojibake(stdout, fmt, vargs, false);
-  return detail::is_locking<T...>() ? vprint_buffered(stdout, fmt, vargs)
-                                    : vprint(fmt, vargs);
+  if (!FMT_USE_UTF8)
+    return detail::vprint_mojibake(stdout, fmt.str, vargs, false);
+  return detail::is_locking<T...>() ? vprint_buffered(stdout, fmt.str, vargs)
+                                    : vprint(fmt.str, vargs);
 }
 
 /**
@@ -3042,9 +3058,9 @@ FMT_INLINE void print(format_string<T...> fmt, T&&... args) {
 template <typename... T>
 FMT_INLINE void print(FILE* f, format_string<T...> fmt, T&&... args) {
   fmt::vargs<T...> vargs = {{args...}};
-  if (!FMT_USE_UTF8) return detail::vprint_mojibake(f, fmt, vargs, false);
-  return detail::is_locking<T...>() ? vprint_buffered(f, fmt, vargs)
-                                    : vprint(f, fmt, vargs);
+  if (!FMT_USE_UTF8) return detail::vprint_mojibake(f, fmt.str, vargs, false);
+  return detail::is_locking<T...>() ? vprint_buffered(f, fmt.str, vargs)
+                                    : vprint(f, fmt.str, vargs);
 }
 
 /// Formats `args` according to specifications in `fmt` and writes the output
@@ -3052,8 +3068,8 @@ FMT_INLINE void print(FILE* f, format_string<T...> fmt, T&&... args) {
 template <typename... T>
 FMT_INLINE void println(FILE* f, format_string<T...> fmt, T&&... args) {
   fmt::vargs<T...> vargs = {{args...}};
-  return FMT_USE_UTF8 ? vprintln(f, fmt, vargs)
-                      : detail::vprint_mojibake(f, fmt, vargs, true);
+  return FMT_USE_UTF8 ? vprintln(f, fmt.str, vargs)
+                      : detail::vprint_mojibake(f, fmt.str, vargs, true);
 }
 
 /// Formats `args` according to specifications in `fmt` and writes the output
