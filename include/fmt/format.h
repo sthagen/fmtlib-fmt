@@ -151,10 +151,6 @@ FMT_END_NAMESPACE
 #  endif
 #endif
 
-#ifndef FMT_OPTIMIZE_SIZE
-#  define FMT_OPTIMIZE_SIZE 0
-#endif
-
 // Defining FMT_REDUCE_INT_INSTANTIATIONS to 1, will reduce the number of
 // integer formatter template instantiations to just one by only using the
 // largest integer type. This results in a reduction in binary size but will
@@ -1848,8 +1844,9 @@ auto write_ptr(OutputIt out, UIntPtr value, const format_specs* specs)
 FMT_API auto is_printable(uint32_t cp) -> bool;
 
 inline auto needs_escape(uint32_t cp) -> bool {
-  return cp < 0x20 || cp == 0x7f || cp == '"' || cp == '\\' ||
-         !is_printable(cp);
+  if (cp < 0x20 || cp == 0x7f || cp == '"' || cp == '\\') return true;
+  if (FMT_OPTIMIZE_SIZE > 1) return false;
+  return !is_printable(cp);
 }
 
 template <typename Char> struct find_escape_result {
@@ -3868,17 +3865,14 @@ template <typename Char>
 void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
                 typename vformat_args<Char>::type args, locale_ref loc = {}) {
   auto out = basic_appender<Char>(buf);
-  if (fmt.size() == 2 && equal2(fmt.data(), "{}"))
-    return args.get(0).visit(default_arg_formatter<Char>{out});
   parse_format_string(
       fmt, format_handler<Char>{parse_context<Char>(fmt), {out, args, loc}});
 }
 
-template <typename Locale, typename Char>
-auto vformat(const Locale& loc, basic_string_view<Char> fmt,
-             typename detail::vformat_args<Char>::type args)
-    -> std::basic_string<Char> {
-  auto buf = basic_memory_buffer<Char>();
+template <typename Locale>
+auto vformat(const Locale& loc, string_view fmt, format_args args)
+    -> std::string {
+  auto buf = memory_buffer();
   detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
   return {buf.data(), buf.size()};
 }

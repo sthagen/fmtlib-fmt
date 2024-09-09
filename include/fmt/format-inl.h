@@ -33,11 +33,9 @@ namespace detail {
 
 FMT_FUNC void assert_fail(const char* file, int line, const char* message) {
   // Use unchecked std::fprintf to avoid triggering another assertion when
-  // writing to stderr fails
-  std::fprintf(stderr, "%s:%d: assertion failed: %s", file, line, message);
-  // Chosen instead of std::abort to satisfy Clang in CUDA mode during device
-  // code pass.
-  std::terminate();
+  // writing to stderr fails.
+  fprintf(stderr, "%s:%d: assertion failed: %s", file, line, message);
+  abort();
 }
 
 FMT_FUNC void format_error_code(detail::buffer<char>& out, int error_code,
@@ -133,7 +131,12 @@ FMT_FUNC auto write_loc(appender out, loc_value value,
 }  // namespace detail
 
 FMT_FUNC void report_error(const char* message) {
-  FMT_THROW(format_error(message));
+#if FMT_EXCEPTIONS
+  throw format_error(message);
+#else
+  fputs(message, stderr);
+  abort();
+#endif
 }
 
 template <typename Locale> typename Locale::id format_facet<Locale>::id;
