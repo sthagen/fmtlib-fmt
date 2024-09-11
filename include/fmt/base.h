@@ -143,21 +143,6 @@
 #  define FMT_CONSTEXPR20
 #endif
 
-#if defined(FMT_USE_NONTYPE_TEMPLATE_ARGS)
-// Use the provided definition.
-#elif defined(__NVCOMPILER)
-#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
-#elif FMT_GCC_VERSION >= 903 && FMT_CPLUSPLUS >= 201709L
-#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
-#elif defined(__cpp_nontype_template_args) && \
-    __cpp_nontype_template_args >= 201911L
-#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
-#elif FMT_CLANG_VERSION >= 1200 && FMT_CPLUSPLUS >= 202002L
-#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
-#else
-#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
-#endif
-
 // Check if exceptions are disabled.
 #ifdef FMT_EXCEPTIONS
 // Use the provided definition.
@@ -174,17 +159,6 @@
 #else
 #  define FMT_TRY if (true)
 #  define FMT_CATCH(x) if (false)
-#endif
-
-// Check if RTTI is disabled.
-#ifdef FMT_USE_RTTI
-// Use the provided definition.
-#elif defined(__GXX_RTTI) || FMT_HAS_FEATURE(cxx_rtti) || defined(_CPPRTTI) || \
-    defined(__INTEL_RTTI__) || defined(__RTTI)
-// __RTTI is for EDG compilers. _CPPRTTI is for MSVC.
-#  define FMT_USE_RTTI 1
-#else
-#  define FMT_USE_RTTI 0
 #endif
 
 #if FMT_HAS_CPP17_ATTRIBUTE(fallthrough)
@@ -302,17 +276,11 @@
 #  define FMT_OPTIMIZE_SIZE 0
 #endif
 
-// Specifies whether to handle built-in and string types specially.
 // FMT_BUILTIN_TYPE=0 may result in smaller library size at the cost of higher
-// per-call binary size.
+// per-call binary size by passing built-in types through the extension API.
 #ifndef FMT_BUILTIN_TYPES
 #  define FMT_BUILTIN_TYPES 1
 #endif
-#if !FMT_BUILTIN_TYPES && !defined(__cpp_if_constexpr)
-#  error FMT_BUILTIN_TYPES=0 requires constexpr if support
-#endif
-
-#define FMT_FWD(...) static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
 
 #define FMT_APPLY_VARIADIC(expr) \
   using ignore = int[];          \
@@ -346,7 +314,7 @@ using underlying_t = typename std::underlying_type<T>::type;
 template <typename T> using decay_t = typename std::decay<T>::type;
 
 #if FMT_GCC_VERSION && FMT_GCC_VERSION < 500
-// A workaround for gcc 4.8 to make void_t work in a SFINAE context.
+// A workaround for gcc 4.9 to make void_t work in a SFINAE context.
 template <typename...> struct void_t_impl {
   using type = void;
 };
@@ -416,9 +384,8 @@ FMT_NORETURN FMT_API void assert_fail(const char* file, int line,
 #  define FMT_USE_INT128 1
 using int128_opt = __int128_t;  // An optional native 128-bit integer.
 using uint128_opt = __uint128_t;
-template <typename T> inline auto convert_for_visit(T value) -> T {
-  return value;
-}
+inline auto map(int128_opt x) -> int128_opt { return x; }
+inline auto map(uint128_opt x) -> uint128_opt { return x; }
 #else
 #  define FMT_USE_INT128 0
 #endif
@@ -426,7 +393,8 @@ template <typename T> inline auto convert_for_visit(T value) -> T {
 enum class int128_opt {};
 enum class uint128_opt {};
 // Reduce template instantiations.
-template <typename T> auto convert_for_visit(T) -> monostate { return {}; }
+inline auto map(int128_opt) -> monostate { return {}; }
+inline auto map(uint128_opt) -> monostate { return {}; }
 #endif
 
 #ifndef FMT_USE_BITINT
@@ -1390,12 +1358,9 @@ FMT_CONSTEXPR auto parse_nonnegative_int(const Char*& begin, const Char* end,
 
 FMT_CONSTEXPR inline auto parse_align(char c) -> align {
   switch (c) {
-  case '<':
-    return align::left;
-  case '>':
-    return align::right;
-  case '^':
-    return align::center;
+  case '<': return align::left;
+  case '>': return align::right;
+  case '^': return align::center;
   }
   return align::none;
 }
@@ -1564,7 +1529,6 @@ FMT_CONSTEXPR auto parse_format_specs(const Char* begin, const Char* end,
       ++begin;
       break;
     case '+':
-      FMT_FALLTHROUGH;
     case ' ':
       specs.set_sign(c == ' ' ? sign::space : sign::plus);
       FMT_FALLTHROUGH;
@@ -1611,40 +1575,20 @@ FMT_CONSTEXPR auto parse_format_specs(const Char* begin, const Char* end,
       specs.set_localized();
       ++begin;
       break;
-    case 'd':
-      return parse_presentation_type(pres::dec, integral_set);
-    case 'X':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'x':
-      return parse_presentation_type(pres::hex, integral_set);
-    case 'o':
-      return parse_presentation_type(pres::oct, integral_set);
-    case 'B':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'b':
-      return parse_presentation_type(pres::bin, integral_set);
-    case 'E':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'e':
-      return parse_presentation_type(pres::exp, float_set);
-    case 'F':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'f':
-      return parse_presentation_type(pres::fixed, float_set);
-    case 'G':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'g':
-      return parse_presentation_type(pres::general, float_set);
-    case 'A':
-      specs.set_upper();
-      FMT_FALLTHROUGH;
-    case 'a':
-      return parse_presentation_type(pres::hexfloat, float_set);
+    case 'd': return parse_presentation_type(pres::dec, integral_set);
+    case 'X': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'x': return parse_presentation_type(pres::hex, integral_set);
+    case 'o': return parse_presentation_type(pres::oct, integral_set);
+    case 'B': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'b': return parse_presentation_type(pres::bin, integral_set);
+    case 'E': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'e': return parse_presentation_type(pres::exp, float_set);
+    case 'F': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'f': return parse_presentation_type(pres::fixed, float_set);
+    case 'G': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'g': return parse_presentation_type(pres::general, float_set);
+    case 'A': specs.set_upper(); FMT_FALLTHROUGH;
+    case 'a': return parse_presentation_type(pres::hexfloat, float_set);
     case 'c':
       if (arg_type == type::bool_type) report_error("invalid format specifier");
       return parse_presentation_type(pres::chr, integral_set);
@@ -1656,9 +1600,8 @@ FMT_CONSTEXPR auto parse_format_specs(const Char* begin, const Char* end,
     case '?':
       return parse_presentation_type(pres::debug,
                                      char_set | string_set | cstring_set);
-    case '}':
-      return begin;
-    default: {
+    case '}': return begin;
+    default:  {
       if (*begin == '}') return begin;
       // Parse fill and alignment.
       auto fill_end = begin + code_point_length(begin);
@@ -1698,13 +1641,9 @@ FMT_CONSTEXPR FMT_INLINE auto parse_replacement_field(const Char* begin,
   case '}':
     handler.on_replacement_field(handler.on_arg_id(), begin);
     return begin + 1;
-  case '{':
-    handler.on_text(begin, begin + 1);
-    return begin + 1;
-  case ':':
-    arg_id = handler.on_arg_id();
-    break;
-  default: {
+  case '{': handler.on_text(begin, begin + 1); return begin + 1;
+  case ':': arg_id = handler.on_arg_id(); break;
+  default:  {
     struct id_adapter {
       Handler& handler;
       int arg_id;
@@ -2179,11 +2118,10 @@ auto get_iterator(buffer<T>&, OutputIt out) -> OutputIt {
 // This type is intentionally undefined, only used for errors.
 template <typename T, typename Char> struct type_is_unformattable_for;
 
-struct custom_tag {};
-
 template <typename Char> struct string_value {
   const Char* data;
   size_t size;
+  auto str() const -> basic_string_view<Char> { return {data, size}; }
 };
 
 template <typename Char> struct named_arg_value {
@@ -2228,50 +2166,38 @@ template <typename Context> class value {
   };
 
   constexpr FMT_INLINE value() : no_value() {}
-  constexpr FMT_INLINE value(int val) : int_value(val) {}
-  constexpr FMT_INLINE value(unsigned val FMT_BUILTIN) : uint_value(val) {}
-  FMT_CONSTEXPR FMT_INLINE value(long val FMT_BUILTIN) {
-    if (sizeof(long) == sizeof(int))
-      int_value = static_cast<int>(val);
-    else
-      long_long_value = val;
-  }
-  FMT_CONSTEXPR FMT_INLINE value(unsigned long val FMT_BUILTIN) {
-    if (sizeof(long) == sizeof(int))
-      uint_value = static_cast<unsigned>(val);
-    else
-      ulong_long_value = val;
-  }
-  constexpr FMT_INLINE value(long long val FMT_BUILTIN)
-      : long_long_value(val) {}
-  constexpr FMT_INLINE value(unsigned long long val FMT_BUILTIN)
-      : ulong_long_value(val) {}
+  constexpr FMT_INLINE value(int x) : int_value(x) {}
+  constexpr FMT_INLINE value(unsigned x FMT_BUILTIN) : uint_value(x) {}
+  FMT_CONSTEXPR FMT_INLINE value(long x FMT_BUILTIN) : value(long_type(x)) {}
+  FMT_CONSTEXPR FMT_INLINE value(unsigned long x FMT_BUILTIN)
+      : value(ulong_type(x)) {}
+  constexpr FMT_INLINE value(long long x FMT_BUILTIN) : long_long_value(x) {}
+  constexpr FMT_INLINE value(unsigned long long x FMT_BUILTIN)
+      : ulong_long_value(x) {}
   template <int N>
-  constexpr FMT_INLINE value(bitint<N> val FMT_BUILTIN)
-      : long_long_value(val) {}
+  constexpr FMT_INLINE value(bitint<N> x FMT_BUILTIN) : long_long_value(x) {}
   template <int N>
-  constexpr FMT_INLINE value(ubitint<N> val FMT_BUILTIN)
-      : ulong_long_value(val) {}
-  FMT_INLINE value(int128_opt val FMT_BUILTIN) : int128_value(val) {}
-  FMT_INLINE value(uint128_opt val FMT_BUILTIN) : uint128_value(val) {}
-  constexpr FMT_INLINE value(float val FMT_BUILTIN) : float_value(val) {}
-  constexpr FMT_INLINE value(double val FMT_BUILTIN) : double_value(val) {}
-  FMT_INLINE value(long double val FMT_BUILTIN) : long_double_value(val) {}
-  constexpr FMT_INLINE value(bool val FMT_BUILTIN) : bool_value(val) {}
+  constexpr FMT_INLINE value(ubitint<N> x FMT_BUILTIN) : ulong_long_value(x) {}
+  FMT_INLINE value(int128_opt x FMT_BUILTIN) : int128_value(x) {}
+  FMT_INLINE value(uint128_opt x FMT_BUILTIN) : uint128_value(x) {}
+  constexpr FMT_INLINE value(float x FMT_BUILTIN) : float_value(x) {}
+  constexpr FMT_INLINE value(double x FMT_BUILTIN) : double_value(x) {}
+  FMT_INLINE value(long double x FMT_BUILTIN) : long_double_value(x) {}
+  constexpr FMT_INLINE value(bool x FMT_BUILTIN) : bool_value(x) {}
   template <typename T, FMT_ENABLE_IF(is_char<T>::value)>
-  constexpr FMT_INLINE value(T val FMT_BUILTIN) : char_value(val) {
+  constexpr FMT_INLINE value(T x FMT_BUILTIN) : char_value(x) {
     static_assert(std::is_same<T, char_type>::value,
                   "mixing character types is disallowed");
   }
-  FMT_CONSTEXPR FMT_INLINE value(const char_type* val FMT_BUILTIN) {
-    string.data = val;
-    if (is_constant_evaluated()) string.size = {};
+  FMT_CONSTEXPR FMT_INLINE value(const char_type* x FMT_BUILTIN) {
+    string.data = x;
+    if (is_constant_evaluated()) string.size = 0;
   }
-  FMT_CONSTEXPR FMT_INLINE value(basic_string_view<char_type> val FMT_BUILTIN) {
-    string.data = val.data();
-    string.size = val.size();
+  FMT_CONSTEXPR FMT_INLINE value(basic_string_view<char_type> x FMT_BUILTIN) {
+    string.data = x.data();
+    string.size = x.size();
   }
-  FMT_INLINE value(const void* val FMT_BUILTIN) : pointer(val) {}
+  FMT_INLINE value(const void* x FMT_BUILTIN) : pointer(x) {}
 
   // We can't use mapped_t because of a bug in MSVC 2017.
   template <
@@ -2279,8 +2205,8 @@ template <typename Context> class value {
       typename M = decltype(arg_mapper<char_type>::map(std::declval<T&>())),
       FMT_ENABLE_IF(!std::is_same<T, M>::value &&
                     !std::is_integral<remove_cvref_t<T>>::value)>
-  FMT_CONSTEXPR20 FMT_INLINE value(T&& val) {
-    *this = arg_mapper<char_type>::map(val);
+  FMT_CONSTEXPR20 FMT_INLINE value(T&& x) {
+    *this = arg_mapper<char_type>::map(x);
   }
 
   template <
@@ -2288,7 +2214,7 @@ template <typename Context> class value {
       typename M = decltype(arg_mapper<char_type>::map(std::declval<T&>())),
       FMT_ENABLE_IF(std::is_same<T, M>::value &&
                     !std::is_integral<remove_cvref_t<T>>::value)>
-  FMT_CONSTEXPR20 FMT_INLINE value(T&& val) {
+  FMT_CONSTEXPR20 FMT_INLINE value(T&& x) {
     // Use enum instead of constexpr because the latter may generate code.
     enum { formattable_char = !std::is_same<T, unformattable_char>::value };
     static_assert(formattable_char, "mixing character types is disallowed");
@@ -2308,14 +2234,9 @@ template <typename Context> class value {
 #if defined(__cpp_if_constexpr)
     if constexpr (!formattable) type_is_unformattable_for<T, char_type> _;
 
-    if constexpr (std::is_same<T, int>::value) {
-      int_value = val;  // int is always handled as a built-in type.
-      return;
-    }
-
     // T may overload operator& e.g. std::vector<bool>::reference in libc++.
-    if constexpr (std::is_same<decltype(&val), remove_reference_t<T>*>::value)
-      custom.value = const_cast<value_type*>(&val);
+    if constexpr (std::is_same<decltype(&x), remove_reference_t<T>*>::value)
+      custom.value = const_cast<value_type*>(&x);
 #endif
 
     static_assert(
@@ -2325,7 +2246,7 @@ template <typename Context> class value {
 
     if (!is_constant_evaluated())
       custom.value =
-          const_cast<char*>(&reinterpret_cast<const volatile char&>(val));
+          const_cast<char*>(&reinterpret_cast<const volatile char&>(x));
     // Get the formatter type through the context to allow different contexts
     // have different extension points, e.g. `formatter<T>` for `format` and
     // `printf_formatter<T>` for `printf`.
@@ -2415,9 +2336,7 @@ template <typename Context, size_t NUM_ARGS, size_t NUM_NAMED_ARGS,
 struct named_arg_store {
   // args_[0].named_args points to named_args to avoid bloating format_args.
   // +1 to workaround a bug in gcc 7.5 that causes duplicated-branches warning.
-  static constexpr size_t ARGS_ARRAY_SIZE = 1 + (NUM_ARGS != 0 ? NUM_ARGS : +1);
-
-  arg_t<Context, NUM_ARGS> args[ARGS_ARRAY_SIZE];
+  arg_t<Context, NUM_ARGS> args[1 + (NUM_ARGS != 0 ? NUM_ARGS : +1)];
   named_arg_info<typename Context::char_type> named_args[NUM_NAMED_ARGS];
 
   template <typename... T>
@@ -2430,7 +2349,8 @@ struct named_arg_store {
 
   named_arg_store(named_arg_store&& rhs) {
     args[0] = {named_args, NUM_NAMED_ARGS};
-    for (size_t i = 1; i < ARGS_ARRAY_SIZE; ++i) args[i] = rhs.args[i];
+    for (size_t i = 1; i < sizeof(args) / sizeof(*args); ++i)
+      args[i] = rhs.args[i];
     for (size_t i = 0; i < NUM_NAMED_ARGS; ++i)
       named_args[i] = rhs.named_args[i];
   }
@@ -2438,6 +2358,7 @@ struct named_arg_store {
   named_arg_store(const named_arg_store& rhs) = delete;
   named_arg_store& operator=(const named_arg_store& rhs) = delete;
   named_arg_store& operator=(named_arg_store&& rhs) = delete;
+  operator const arg_t<Context, NUM_ARGS>*() const { return args + 1; }
 };
 
 // An array of references to arguments. It can be implicitly converted to
@@ -2597,40 +2518,24 @@ template <typename Context> class basic_format_arg {
    */
   template <typename Visitor>
   FMT_CONSTEXPR FMT_INLINE auto visit(Visitor&& vis) const -> decltype(vis(0)) {
+    using detail::map;
     switch (type_) {
-    case detail::type::none_type:
-      break;
-    case detail::type::int_type:
-      return vis(value_.int_value);
-    case detail::type::uint_type:
-      return vis(value_.uint_value);
-    case detail::type::long_long_type:
-      return vis(value_.long_long_value);
-    case detail::type::ulong_long_type:
-      return vis(value_.ulong_long_value);
-    case detail::type::int128_type:
-      return vis(detail::convert_for_visit(value_.int128_value));
-    case detail::type::uint128_type:
-      return vis(detail::convert_for_visit(value_.uint128_value));
-    case detail::type::bool_type:
-      return vis(value_.bool_value);
-    case detail::type::char_type:
-      return vis(value_.char_value);
-    case detail::type::float_type:
-      return vis(value_.float_value);
-    case detail::type::double_type:
-      return vis(value_.double_value);
-    case detail::type::long_double_type:
-      return vis(value_.long_double_value);
-    case detail::type::cstring_type:
-      return vis(value_.string.data);
-    case detail::type::string_type:
-      using sv = basic_string_view<char_type>;
-      return vis(sv(value_.string.data, value_.string.size));
-    case detail::type::pointer_type:
-      return vis(value_.pointer);
-    case detail::type::custom_type:
-      return vis(typename basic_format_arg<Context>::handle(value_.custom));
+    case detail::type::none_type:        break;
+    case detail::type::int_type:         return vis(value_.int_value);
+    case detail::type::uint_type:        return vis(value_.uint_value);
+    case detail::type::long_long_type:   return vis(value_.long_long_value);
+    case detail::type::ulong_long_type:  return vis(value_.ulong_long_value);
+    case detail::type::int128_type:      return vis(map(value_.int128_value));
+    case detail::type::uint128_type:     return vis(map(value_.uint128_value));
+    case detail::type::bool_type:        return vis(value_.bool_value);
+    case detail::type::char_type:        return vis(value_.char_value);
+    case detail::type::float_type:       return vis(value_.float_value);
+    case detail::type::double_type:      return vis(value_.double_value);
+    case detail::type::long_double_type: return vis(value_.long_double_value);
+    case detail::type::cstring_type:     return vis(value_.string.data);
+    case detail::type::string_type:      return vis(value_.string.str());
+    case detail::type::pointer_type:     return vis(value_.pointer);
+    case detail::type::custom_type:      return vis(handle(value_.custom));
     }
     return vis(monostate());
   }
@@ -2694,35 +2599,23 @@ template <typename Context> class basic_format_args {
 
   /// Constructs a `basic_format_args` object from `format_arg_store`.
   template <size_t NUM_ARGS, size_t NUM_NAMED_ARGS, unsigned long long DESC,
-            FMT_ENABLE_IF(NUM_ARGS <= detail::max_packed_args &&
-                          NUM_NAMED_ARGS == 0)>
+            FMT_ENABLE_IF(NUM_ARGS <= detail::max_packed_args)>
   constexpr FMT_ALWAYS_INLINE basic_format_args(
       const store<NUM_ARGS, NUM_NAMED_ARGS, DESC>& s)
-      : desc_(DESC), values_(s.args) {}
+      : desc_(DESC | (NUM_NAMED_ARGS != 0 ? +detail::has_named_args_bit : 0)),
+        values_(s.args) {}
 
   template <size_t NUM_ARGS, size_t NUM_NAMED_ARGS, unsigned long long DESC,
-            FMT_ENABLE_IF(NUM_ARGS <= detail::max_packed_args &&
-                          NUM_NAMED_ARGS != 0)>
+            FMT_ENABLE_IF(NUM_ARGS > detail::max_packed_args)>
   constexpr basic_format_args(const store<NUM_ARGS, NUM_NAMED_ARGS, DESC>& s)
-      : desc_(DESC | detail::has_named_args_bit), values_(s.args.args + 1) {}
-
-  template <size_t NUM_ARGS, size_t NUM_NAMED_ARGS, unsigned long long DESC,
-            FMT_ENABLE_IF(NUM_ARGS > detail::max_packed_args &&
-                          NUM_NAMED_ARGS == 0)>
-  constexpr basic_format_args(const store<NUM_ARGS, NUM_NAMED_ARGS, DESC>& s)
-      : desc_(DESC), args_(s.args) {}
-
-  template <size_t NUM_ARGS, size_t NUM_NAMED_ARGS, unsigned long long DESC,
-            FMT_ENABLE_IF(NUM_ARGS > detail::max_packed_args &&
-                          NUM_NAMED_ARGS != 0)>
-  constexpr basic_format_args(const store<NUM_ARGS, NUM_NAMED_ARGS, DESC>& s)
-      : desc_(DESC | detail::has_named_args_bit), args_(s.args.args + 1) {}
+      : desc_(DESC | (NUM_NAMED_ARGS != 0 ? +detail::has_named_args_bit : 0)),
+        args_(s.args) {}
 
   /// Constructs a `basic_format_args` object from a dynamic list of arguments.
   constexpr basic_format_args(const format_arg* args, int count,
                               bool has_named = false)
       : desc_(detail::is_unpacked_bit | detail::to_unsigned(count) |
-              (has_named ? +detail::has_named_args_bit : 0ULL)),
+              (has_named ? +detail::has_named_args_bit : 0)),
         args_(args) {}
 
   /// Returns the argument with the specified id.
@@ -2880,7 +2773,6 @@ using is_formattable = bool_constant<
                      detail::mapped_t<conditional_t<std::is_void<T>::value,
                                                     detail::unformattable, T>,
                                       Char>>::value>;
-
 #ifdef __cpp_concepts
 template <typename T, typename Char = char>
 concept formattable = is_formattable<remove_reference_t<T>, Char>::value;
@@ -2960,7 +2852,7 @@ template <typename OutputIt, typename... T,
                                                    char>::value)>
 FMT_INLINE auto format_to(OutputIt&& out, format_string<T...> fmt, T&&... args)
     -> remove_cvref_t<OutputIt> {
-  return vformat_to(FMT_FWD(out), fmt.str, vargs<T...>{{args...}});
+  return vformat_to(out, fmt.str, vargs<T...>{{args...}});
 }
 
 template <typename OutputIt> struct format_to_n_result {

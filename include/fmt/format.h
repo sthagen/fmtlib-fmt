@@ -68,10 +68,36 @@
 #  endif
 #endif  // FMT_MODULE
 
+#if defined(FMT_USE_NONTYPE_TEMPLATE_ARGS)
+// Use the provided definition.
+#elif defined(__NVCOMPILER)
+#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
+#elif FMT_GCC_VERSION >= 903 && FMT_CPLUSPLUS >= 201709L
+#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
+#elif defined(__cpp_nontype_template_args) && \
+    __cpp_nontype_template_args >= 201911L
+#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
+#elif FMT_CLANG_VERSION >= 1200 && FMT_CPLUSPLUS >= 202002L
+#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 1
+#else
+#  define FMT_USE_NONTYPE_TEMPLATE_ARGS 0
+#endif
+
 #if defined __cpp_inline_variables && __cpp_inline_variables >= 201606L
 #  define FMT_INLINE_VARIABLE inline
 #else
 #  define FMT_INLINE_VARIABLE
+#endif
+
+// Check if RTTI is disabled.
+#ifdef FMT_USE_RTTI
+// Use the provided definition.
+#elif defined(__GXX_RTTI) || FMT_HAS_FEATURE(cxx_rtti) || defined(_CPPRTTI) || \
+    defined(__INTEL_RTTI__) || defined(__RTTI)
+// __RTTI is for EDG compilers. _CPPRTTI is for MSVC.
+#  define FMT_USE_RTTI 1
+#else
+#  define FMT_USE_RTTI 0
 #endif
 
 // Visibility when compiled as a shared library/object.
@@ -508,21 +534,6 @@ FMT_INLINE void assume(bool condition) {
 #endif
 }
 
-// An approximation of iterator_t for pre-C++20 systems.
-template <typename T>
-using iterator_t = decltype(std::begin(std::declval<T&>()));
-template <typename T> using sentinel_t = decltype(std::end(std::declval<T&>()));
-
-// A workaround for std::string not having mutable data() until C++17.
-template <typename Char>
-inline auto get_data(std::basic_string<Char>& s) -> Char* {
-  return &s[0];
-}
-template <typename Container>
-inline auto get_data(Container& c) -> typename Container::value_type* {
-  return c.data();
-}
-
 // Attempts to reserve space for n extra characters in the output range.
 // Returns a pointer to the reserved range or a reference to it.
 template <typename OutputIt,
@@ -536,7 +547,7 @@ reserve(OutputIt it, size_t n) -> typename OutputIt::value_type* {
   auto& c = get_container(it);
   size_t size = c.size();
   c.resize(size + n);
-  return get_data(c) + size;
+  return &c[size];
 }
 
 template <typename T>
@@ -1007,9 +1018,7 @@ FMT_API void print(std::FILE*, string_view);
 FMT_BEGIN_EXPORT
 
 // Suppress a misleading warning in older versions of clang.
-#if FMT_CLANG_VERSION
-#  pragma clang diagnostic ignored "-Wweak-vtables"
-#endif
+FMT_CLANG_PRAGMA(diagnostic ignored "-Wweak-vtables")
 
 /// An error reported from a formatting function.
 class FMT_SO_VISIBILITY("default") format_error : public std::runtime_error {
@@ -1176,11 +1185,7 @@ inline auto digits2(size_t value) -> const char* {
   return &data[value * 2];
 }
 
-// Sign is a template parameter to workaround a bug in gcc 4.8.
-template <typename Char, typename Sign> constexpr auto getsign(Sign s) -> Char {
-#if !FMT_GCC_VERSION || FMT_GCC_VERSION >= 604
-  static_assert(std::is_same<Sign, sign>::value, "");
-#endif
+template <typename Char> constexpr auto getsign(sign s) -> Char {
   return static_cast<char>(((' ' << 24) | ('+' << 16) | ('-' << 8)) >>
                            (static_cast<int>(s) * 8));
 }
@@ -1933,13 +1938,9 @@ auto write_escaped_cp(OutputIt out, const find_escape_result<Char>& escape)
     *out++ = static_cast<Char>('\\');
     c = static_cast<Char>('t');
     break;
-  case '"':
-    FMT_FALLTHROUGH;
-  case '\'':
-    FMT_FALLTHROUGH;
-  case '\\':
-    *out++ = static_cast<Char>('\\');
-    break;
+  case '"':  FMT_FALLTHROUGH;
+  case '\'': FMT_FALLTHROUGH;
+  case '\\': *out++ = static_cast<Char>('\\'); break;
   default:
     if (escape.cp < 0x100) return write_codepoint<2, Char>(out, 'x', escape.cp);
     if (escape.cp < 0x10000)
@@ -2088,9 +2089,7 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
   int num_digits = 0;
   auto buffer = memory_buffer();
   switch (specs.type()) {
-  default:
-    FMT_ASSERT(false, "");
-    FMT_FALLTHROUGH;
+  default: FMT_ASSERT(false, ""); FMT_FALLTHROUGH;
   case presentation_type::none:
   case presentation_type::dec:
     num_digits = count_digits(value);
@@ -2218,9 +2217,7 @@ FMT_CONSTEXPR FMT_INLINE auto write_int(OutputIt out, write_int_arg<T> arg,
   auto abs_value = arg.abs_value;
   auto prefix = arg.prefix;
   switch (specs.type()) {
-  default:
-    FMT_ASSERT(false, "");
-    FMT_FALLTHROUGH;
+  default: FMT_ASSERT(false, ""); FMT_FALLTHROUGH;
   case presentation_type::none:
   case presentation_type::dec:
     begin = do_format_decimal(buffer, abs_value, buffer_size);
@@ -2373,15 +2370,9 @@ FMT_CONSTEXPR auto parse_align(const Char* begin, const Char* end,
   if (end - p <= 0) p = begin;
   for (;;) {
     switch (to_ascii(*p)) {
-    case '<':
-      alignment = align::left;
-      break;
-    case '>':
-      alignment = align::right;
-      break;
-    case '^':
-      alignment = align::center;
-      break;
+    case '<': alignment = align::left; break;
+    case '>': alignment = align::right; break;
+    case '^': alignment = align::center; break;
     }
     if (alignment != align::none) {
       if (p != begin) {
