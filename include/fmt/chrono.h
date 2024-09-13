@@ -293,12 +293,12 @@ inline auto gmtime_s(...) -> null<> { return null<>(); }
 
 // It is defined here and not in ostream.h because the latter has expensive
 // includes.
-template <typename Streambuf> class formatbuf : public Streambuf {
+template <typename StreamBuf> class formatbuf : public StreamBuf {
  private:
-  using char_type = typename Streambuf::char_type;
-  using streamsize = decltype(std::declval<Streambuf>().sputn(nullptr, 0));
-  using int_type = typename Streambuf::int_type;
-  using traits_type = typename Streambuf::traits_type;
+  using char_type = typename StreamBuf::char_type;
+  using streamsize = decltype(std::declval<StreamBuf>().sputn(nullptr, 0));
+  using int_type = typename StreamBuf::int_type;
+  using traits_type = typename StreamBuf::traits_type;
 
   buffer<char_type>& buffer_;
 
@@ -336,20 +336,16 @@ template <typename CodeUnit> struct codecvt_result {
 };
 
 template <typename CodeUnit>
-void write_codecvt(codecvt_result<CodeUnit>& out, string_view in_buf,
+void write_codecvt(codecvt_result<CodeUnit>& out, string_view in,
                    const std::locale& loc) {
-#if FMT_CLANG_VERSION
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wdeprecated"
+  FMT_CLANG_PRAGMA(diagnostic push)
+  FMT_CLANG_PRAGMA(diagnostic ignored "-Wdeprecated")
   auto& f = std::use_facet<std::codecvt<CodeUnit, char, std::mbstate_t>>(loc);
-#  pragma clang diagnostic pop
-#else
-  auto& f = std::use_facet<std::codecvt<CodeUnit, char, std::mbstate_t>>(loc);
-#endif
+  FMT_CLANG_PRAGMA(diagnostic pop)
   auto mb = std::mbstate_t();
   const char* from_next = nullptr;
-  auto result = f.in(mb, in_buf.begin(), in_buf.end(), from_next,
-                     std::begin(out.buf), std::end(out.buf), out.end);
+  auto result = f.in(mb, in.begin(), in.end(), from_next, std::begin(out.buf),
+                     std::end(out.buf), out.end);
   if (result != std::codecvt_base::ok)
     FMT_THROW(format_error("failed to format time"));
 }
@@ -1672,10 +1668,8 @@ class get_locale {
 
  public:
   get_locale(bool localized, locale_ref loc) : has_locale_(localized) {
-#ifndef FMT_STATIC_THOUSANDS_SEPARATOR
     if (localized)
       ::new (&locale_) std::locale(loc.template get<std::locale>());
-#endif
   }
   ~get_locale() {
     if (has_locale_) locale_.~locale();
@@ -2133,7 +2127,7 @@ struct formatter<std::chrono::duration<Rep, Period>, Char> {
   detail::arg_ref<Char> width_ref_;
   detail::arg_ref<Char> precision_ref_;
   bool localized_ = false;
-  basic_string_view<Char> format_str_;
+  basic_string_view<Char> fmt_;
 
  public:
   FMT_CONSTEXPR auto parse(parse_context<Char>& ctx) -> const Char* {
@@ -2159,7 +2153,7 @@ struct formatter<std::chrono::duration<Rep, Period>, Char> {
       ++it;
     }
     end = detail::parse_chrono_format(it, end, checker);
-    format_str_ = {it, detail::to_unsigned(end - it)};
+    fmt_ = {it, detail::to_unsigned(end - it)};
     return end;
   }
 
@@ -2169,7 +2163,7 @@ struct formatter<std::chrono::duration<Rep, Period>, Char> {
     auto specs = specs_;
     auto precision = specs.precision;
     specs.precision = -1;
-    auto begin = format_str_.begin(), end = format_str_.end();
+    auto begin = fmt_.begin(), end = fmt_.end();
     // As a possible future optimization, we could avoid extra copying if width
     // is not specified.
     auto buf = basic_memory_buffer<Char>();
@@ -2200,7 +2194,7 @@ template <typename Char> struct formatter<std::tm, Char> {
   detail::arg_ref<Char> width_ref_;
 
  protected:
-  basic_string_view<Char> format_str_;
+  basic_string_view<Char> fmt_;
 
   template <typename Duration, typename FormatContext>
   auto do_format(const std::tm& tm, FormatContext& ctx,
@@ -2215,7 +2209,7 @@ template <typename Char> struct formatter<std::tm, Char> {
     detail::get_locale loc(static_cast<bool>(loc_ref), loc_ref);
     auto w =
         detail::tm_writer<decltype(out), Char, Duration>(loc, out, tm, subsecs);
-    detail::parse_chrono_format(format_str_.begin(), format_str_.end(), w);
+    detail::parse_chrono_format(fmt_.begin(), fmt_.end(), w);
     return detail::write(
         ctx.out(), basic_string_view<Char>(buf.data(), buf.size()), specs);
   }
@@ -2235,8 +2229,8 @@ template <typename Char> struct formatter<std::tm, Char> {
     }
 
     end = detail::parse_chrono_format(it, end, detail::tm_format_checker());
-    // Replace the default format_str only if the new spec is not empty.
-    if (end != it) format_str_ = {it, detail::to_unsigned(end - it)};
+    // Replace the default format string only if the new spec is not empty.
+    if (end != it) fmt_ = {it, detail::to_unsigned(end - it)};
     return end;
   }
 
@@ -2250,7 +2244,7 @@ template <typename Char> struct formatter<std::tm, Char> {
 template <typename Char, typename Duration>
 struct formatter<sys_time<Duration>, Char> : formatter<std::tm, Char> {
   FMT_CONSTEXPR formatter() {
-    this->format_str_ = detail::string_literal<Char, '%', 'F', ' ', '%', 'T'>();
+    this->fmt_ = detail::string_literal<Char, '%', 'F', ' ', '%', 'T'>();
   }
 
   template <typename FormatContext>
@@ -2292,7 +2286,7 @@ struct formatter<utc_time<Duration>, Char>
 template <typename Duration, typename Char>
 struct formatter<local_time<Duration>, Char> : formatter<std::tm, Char> {
   FMT_CONSTEXPR formatter() {
-    this->format_str_ = detail::string_literal<Char, '%', 'F', ' ', '%', 'T'>();
+    this->fmt_ = detail::string_literal<Char, '%', 'F', ' ', '%', 'T'>();
   }
 
   template <typename FormatContext>

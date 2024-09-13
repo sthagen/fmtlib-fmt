@@ -144,16 +144,16 @@
 #endif
 
 // Check if exceptions are disabled.
-#ifdef FMT_EXCEPTIONS
+#ifdef FMT_USE_EXCEPTIONS
 // Use the provided definition.
 #elif defined(__GNUC__) && !defined(__EXCEPTIONS)
-#  define FMT_EXCEPTIONS 0
+#  define FMT_USE_EXCEPTIONS 0
 #elif FMT_MSC_VERSION && !_HAS_EXCEPTIONS
-#  define FMT_EXCEPTIONS 0
+#  define FMT_USE_EXCEPTIONS 0
 #else
-#  define FMT_EXCEPTIONS 1
+#  define FMT_USE_EXCEPTIONS 1
 #endif
-#if FMT_EXCEPTIONS
+#if FMT_USE_EXCEPTIONS
 #  define FMT_TRY try
 #  define FMT_CATCH(x) catch (x)
 #else
@@ -215,13 +215,13 @@
 #  define FMT_VISIBILITY(value)
 #endif
 
+#define FMT_PRAGMA_IMPL(x) _Pragma(#x)
 #ifdef FMT_GCC_PRAGMA
 // Use the provided definition.
 #elif FMT_GCC_VERSION >= 504 && !defined(__NVCOMPILER)
 // Workaround a _Pragma bug https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59884
 // and an nvhpc warning: https://github.com/fmtlib/fmt/pull/2582.
-#  define FMT_GCC_PRAGMA_IMPL(x) _Pragma(#x)
-#  define FMT_GCC_PRAGMA(x) FMT_GCC_PRAGMA_IMPL(GCC x)
+#  define FMT_GCC_PRAGMA(x) FMT_PRAGMA_IMPL(GCC x)
 #else
 #  define FMT_GCC_PRAGMA(x)
 #endif
@@ -229,8 +229,7 @@
 #ifdef FMT_CLANG_PRAGMA
 // Use the provided definition.
 #elif FMT_CLANG_VERSION
-#  define FMT_CLANG_PRAGMA_IMPL(x) _Pragma(#x)
-#  define FMT_CLANG_PRAGMA(x) FMT_CLANG_PRAGMA_IMPL(clang x)
+#  define FMT_CLANG_PRAGMA(x) FMT_PRAGMA_IMPL(clang x)
 #else
 #  define FMT_CLANG_PRAGMA(x)
 #endif
@@ -837,7 +836,7 @@ struct format_specs : basic_specs {
  */
 template <typename Char = char> class parse_context {
  private:
-  basic_string_view<Char> format_str_;
+  basic_string_view<Char> fmt_;
   int next_arg_id_;
 
   enum { use_constexpr_cast = !FMT_GCC_VERSION || FMT_GCC_VERSION >= 1200 };
@@ -848,22 +847,20 @@ template <typename Char = char> class parse_context {
   using char_type = Char;
   using iterator = const Char*;
 
-  explicit constexpr parse_context(basic_string_view<Char> format_str,
+  explicit constexpr parse_context(basic_string_view<Char> fmt,
                                    int next_arg_id = 0)
-      : format_str_(format_str), next_arg_id_(next_arg_id) {}
+      : fmt_(fmt), next_arg_id_(next_arg_id) {}
 
   /// Returns an iterator to the beginning of the format string range being
   /// parsed.
-  constexpr auto begin() const noexcept -> iterator {
-    return format_str_.begin();
-  }
+  constexpr auto begin() const noexcept -> iterator { return fmt_.begin(); }
 
   /// Returns an iterator past the end of the format string range being parsed.
-  constexpr auto end() const noexcept -> iterator { return format_str_.end(); }
+  constexpr auto end() const noexcept -> iterator { return fmt_.end(); }
 
   /// Advances the begin iterator to `it`.
   FMT_CONSTEXPR void advance_to(iterator it) {
-    format_str_.remove_prefix(detail::to_unsigned(it - begin()));
+    fmt_.remove_prefix(detail::to_unsigned(it - begin()));
   }
 
   /// Reports an error if using the manual argument indexing; otherwise returns
@@ -1273,10 +1270,10 @@ class compile_parse_context : public parse_context<Char> {
   using base = parse_context<Char>;
 
  public:
-  explicit FMT_CONSTEXPR compile_parse_context(
-      basic_string_view<Char> format_str, int num_args, const type* types,
-      int next_arg_id = 0)
-      : base(format_str, next_arg_id), num_args_(num_args), types_(types) {}
+  explicit FMT_CONSTEXPR compile_parse_context(basic_string_view<Char> fmt,
+                                               int num_args, const type* types,
+                                               int next_arg_id = 0)
+      : base(fmt, next_arg_id), num_args_(num_args), types_(types) {}
 
   constexpr auto num_args() const -> int { return num_args_; }
   constexpr auto arg_type(int id) const -> type { return types_[id]; }
@@ -1294,7 +1291,7 @@ class compile_parse_context : public parse_context<Char> {
   using base::check_arg_id;
 
   FMT_CONSTEXPR void check_dynamic_spec(int arg_id) {
-    detail::ignore_unused(arg_id);
+    ignore_unused(arg_id);
     if (arg_id < num_args_ && types_ && !is_integral_type(types_[arg_id]))
       report_error("width/precision is not integer");
   }
@@ -2024,7 +2021,7 @@ class container_buffer : public buffer<typename Container::value_type> {
 template <typename OutputIt>
 class iterator_buffer<
     OutputIt,
-    enable_if_t<detail::is_back_insert_iterator<OutputIt>::value &&
+    enable_if_t<is_back_insert_iterator<OutputIt>::value &&
                     is_contiguous<typename OutputIt::container_type>::value,
                 typename OutputIt::container_type::value_type>>
     : public container_buffer<typename OutputIt::container_type> {
@@ -2288,12 +2285,8 @@ struct is_output_iterator<
     void_t<decltype(*std::declval<decay_t<It>&>()++ = std::declval<T>())>>
     : std::true_type {};
 
-#ifdef FMT_USE_LOCALE
-// Use the provided definition.
-#elif defined(FMT_STATIC_THOUSANDS_SEPARATOR) || FMT_OPTIMIZE_SIZE > 1
-#  define FMT_USE_LOCALE 0
-#else
-#  define FMT_USE_LOCALE 1
+#ifndef FMT_USE_LOCALE
+#  define FMT_USE_LOCALE (FMT_OPTIMIZE_SIZE <= 1)
 #endif
 
 // A type-erased reference to an std::locale to avoid a heavy <locale> include.
@@ -2673,8 +2666,9 @@ class context : private detail::locale_ref {
 
   /// Constructs a `context` object. References to the arguments are stored
   /// in the object so make sure they have appropriate lifetimes.
-  FMT_CONSTEXPR context(iterator out, format_args a, detail::locale_ref l = {})
-      : locale_ref(l), out_(out), args_(a) {}
+  FMT_CONSTEXPR context(iterator out, format_args args,
+                        detail::locale_ref loc = {})
+      : locale_ref(loc), out_(out), args_(args) {}
   context(context&&) = default;
   context(const context&) = delete;
   void operator=(const context&) = delete;
@@ -2936,11 +2930,10 @@ FMT_API void vprintln(FILE* f, string_view fmt, format_args args);
  */
 template <typename... T>
 FMT_INLINE void print(format_string<T...> fmt, T&&... args) {
-  fmt::vargs<T...> vargs = {{args...}};
-  if (!FMT_USE_UTF8)
-    return detail::vprint_mojibake(stdout, fmt.str, vargs, false);
-  return detail::is_locking<T...>() ? vprint_buffered(stdout, fmt.str, vargs)
-                                    : vprint(fmt.str, vargs);
+  vargs<T...> va = {{args...}};
+  if (!FMT_USE_UTF8) return detail::vprint_mojibake(stdout, fmt.str, va, false);
+  return detail::is_locking<T...>() ? vprint_buffered(stdout, fmt.str, va)
+                                    : vprint(fmt.str, va);
 }
 
 /**
@@ -2953,19 +2946,19 @@ FMT_INLINE void print(format_string<T...> fmt, T&&... args) {
  */
 template <typename... T>
 FMT_INLINE void print(FILE* f, format_string<T...> fmt, T&&... args) {
-  fmt::vargs<T...> vargs = {{args...}};
-  if (!FMT_USE_UTF8) return detail::vprint_mojibake(f, fmt.str, vargs, false);
-  return detail::is_locking<T...>() ? vprint_buffered(f, fmt.str, vargs)
-                                    : vprint(f, fmt.str, vargs);
+  vargs<T...> va = {{args...}};
+  if (!FMT_USE_UTF8) return detail::vprint_mojibake(f, fmt.str, va, false);
+  return detail::is_locking<T...>() ? vprint_buffered(f, fmt.str, va)
+                                    : vprint(f, fmt.str, va);
 }
 
 /// Formats `args` according to specifications in `fmt` and writes the output
 /// to the file `f` followed by a newline.
 template <typename... T>
 FMT_INLINE void println(FILE* f, format_string<T...> fmt, T&&... args) {
-  fmt::vargs<T...> vargs = {{args...}};
-  return FMT_USE_UTF8 ? vprintln(f, fmt.str, vargs)
-                      : detail::vprint_mojibake(f, fmt.str, vargs, true);
+  vargs<T...> va = {{args...}};
+  return FMT_USE_UTF8 ? vprintln(f, fmt.str, va)
+                      : detail::vprint_mojibake(f, fmt.str, va, true);
 }
 
 /// Formats `args` according to specifications in `fmt` and writes the output
