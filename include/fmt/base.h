@@ -2146,7 +2146,8 @@ template <typename Context> class value {
   template <typename T, FMT_ENABLE_IF(is_named_arg<T>::value)>
   value(const T& named_arg) : value(named_arg.value) {}
 
-  template <typename T, FMT_ENABLE_IF(use_formatter<T>::value)>
+  template <typename T,
+            FMT_ENABLE_IF(use_formatter<T>::value || !FMT_BUILTIN_TYPES)>
   FMT_CONSTEXPR20 FMT_INLINE value(T& x) : value(x, custom_tag()) {}
 
   FMT_ALWAYS_INLINE value(const named_arg_info<char_type>* args, size_t size)
@@ -2660,8 +2661,9 @@ template <typename... T> struct fstring {
   template <typename S,
             FMT_ENABLE_IF(std::is_convertible<const S&, string_view>::value)>
   FMT_CONSTEVAL FMT_ALWAYS_INLINE fstring(const S& s) : str(s) {
+    FMT_CONSTEXPR auto sv = string_view(S());
     if (FMT_USE_CONSTEVAL)
-      detail::parse_format_string<char>(s, checker(s, arg_pack()));
+      detail::parse_format_string<char>(sv, checker(sv, arg_pack()));
 #ifdef FMT_ENFORCE_COMPILE_STRING
     static_assert(
         FMT_USE_CONSTEVAL && sizeof(s) != 0,
