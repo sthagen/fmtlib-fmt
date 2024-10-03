@@ -119,11 +119,13 @@
 #endif
 
 namespace std {
-template <> struct iterator_traits<fmt::appender> {
+template <class T> struct iterator_traits<fmt::basic_appender<T>> {
   using iterator_category = output_iterator_tag;
-  using value_type = char;
-  using reference = char&;
-  using difference_type = fmt::appender::difference_type;
+  using value_type = T;
+  using difference_type =
+      decltype(static_cast<int*>(nullptr) - static_cast<int*>(nullptr));
+  using pointer = void;
+  using reference = void;
 };
 }  // namespace std
 
@@ -2674,7 +2676,7 @@ class bigint {
 
   FMT_CONSTEXPR auto get_bigit(int i) const -> bigit {
     return i >= exp_ && i < num_bigits() ? bigits_[i - exp_] : 0;
-  };
+  }
 
   FMT_CONSTEXPR void subtract_bigits(int index, bigit other, bigit& borrow) {
     auto result = double_bigit(bigits_[index]) - other - borrow;
