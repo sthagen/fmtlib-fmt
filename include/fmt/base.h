@@ -21,7 +21,7 @@
 #endif
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 110103
+#define FMT_VERSION 110104
 
 // Detect compiler versions.
 #if defined(__clang__) && !defined(__ibmxl__)
@@ -2271,7 +2271,7 @@ struct is_output_iterator<
 #endif
 
 // A type-erased reference to an std::locale to avoid a heavy <locale> include.
-struct locale_ref {
+class locale_ref {
 #if FMT_USE_LOCALE
  private:
   const void* locale_;  // A type-erased pointer to std::locale.
@@ -2283,6 +2283,7 @@ struct locale_ref {
   inline explicit operator bool() const noexcept { return locale_ != nullptr; }
 #endif  // FMT_USE_LOCALE
 
+ public:
   template <typename Locale> auto get() const -> Locale;
 };
 
