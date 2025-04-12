@@ -1268,28 +1268,8 @@ class tm_writer {
     write_utc_offset(tm.tm_gmtoff, ns);
   }
   template <typename T, FMT_ENABLE_IF(!has_member_data_tm_gmtoff<T>::value)>
-  void format_utc_offset_impl(const T& tm, numeric_system ns) {
-#if defined(_WIN32) && defined(_UCRT)
-    tzset_once();
-    long offset = 0;
-    _get_timezone(&offset);
-    if (tm.tm_isdst) {
-      long dstbias = 0;
-      _get_dstbias(&dstbias);
-      offset += dstbias;
-    }
-    write_utc_offset(-offset, ns);
-#else
-    if (ns == numeric_system::standard) return format_localized('z');
-
-    // Extract timezone offset from timezone conversion functions.
-    std::tm gtm = tm;
-    std::time_t gt = std::mktime(&gtm);
-    std::tm ltm = gmtime(gt);
-    std::time_t lt = std::mktime(&ltm);
-    long long offset = gt - lt;
-    write_utc_offset(offset, ns);
-#endif
+  void format_utc_offset_impl(const T&, numeric_system ns) {
+    write_utc_offset(0, ns);
   }
 
   template <typename T, FMT_ENABLE_IF(has_member_data_tm_zone<T>::value)>
@@ -1413,7 +1393,7 @@ class tm_writer {
   }
 
   void on_utc_offset(numeric_system ns) { format_utc_offset_impl(tm_, ns); }
-  void on_tz_name() { format_tz_name_impl(tm_); }
+  void on_tz_name() { out_ = std::copy_n("UTC", 3, out_); }
 
   void on_year(numeric_system ns, pad_type pad) {
     if (is_classic_ || ns == numeric_system::standard)
