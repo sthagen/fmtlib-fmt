@@ -21,7 +21,7 @@
 #endif
 
 // The fmt library version in the form major * 10000 + minor * 100 + patch.
-#define FMT_VERSION 110105
+#define FMT_VERSION 110200
 
 // Detect compiler versions.
 #if defined(__clang__) && !defined(__ibmxl__)
@@ -2263,6 +2263,7 @@ template <typename Context> class value {
   }
 
   // Formats an argument of a custom type, such as a user-defined class.
+  // DEPRECATED! Formatter template parameter will be removed.
   template <typename T, typename Formatter>
   static void format_custom(void* arg, parse_context<char_type>& parse_ctx,
                             Context& ctx) {
