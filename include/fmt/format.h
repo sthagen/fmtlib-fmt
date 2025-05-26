@@ -2109,13 +2109,33 @@ FMT_CONSTEXPR FMT_INLINE auto write(OutputIt out, T value,
   return write_int<Char>(out, make_write_int_arg(value, specs.sign()), specs);
 }
 
+inline auto convert_precision_to_size(string_view s, size_t precision)
+    -> size_t {
+  size_t display_width = 0;
+  size_t num_code_points = 0;
+  for_each_codepoint(s, [&](uint32_t, string_view sv) {
+    display_width += compute_width(sv);
+    // Stop when display width exceeds precision.
+    if (display_width > precision) return false;
+    ++num_code_points;
+    return true;
+  });
+  return code_point_index(s, num_code_points);
+}
+
+template <typename Char, FMT_ENABLE_IF(!std::is_same<Char, char>::value)>
+auto convert_precision_to_size(basic_string_view<Char>, size_t precision)
+    -> size_t {
+  return precision;
+}
+
 template <typename Char, typename OutputIt>
 FMT_CONSTEXPR auto write(OutputIt out, basic_string_view<Char> s,
                          const format_specs& specs) -> OutputIt {
   auto data = s.data();
   auto size = s.size();
   if (specs.precision >= 0 && to_unsigned(specs.precision) < size)
-    size = code_point_index(s, to_unsigned(specs.precision));
+    size = convert_precision_to_size(s, to_unsigned(specs.precision));
 
   bool is_debug = specs.type() == presentation_type::debug;
   if (is_debug) {
