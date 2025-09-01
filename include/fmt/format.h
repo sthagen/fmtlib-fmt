@@ -736,7 +736,7 @@ using is_double_double = bool_constant<std::numeric_limits<T>::digits == 106>;
 template <typename T> struct allocator : private std::decay<void> {
   using value_type = T;
 
-  T* allocate(size_t n) {
+  auto allocate(size_t n) -> T* {
     FMT_ASSERT(n <= max_value<size_t>() / sizeof(T), "");
     T* p = static_cast<T*>(std::malloc(n * sizeof(T)));
     if (!p) FMT_THROW(std::bad_alloc());
@@ -940,7 +940,7 @@ class string_buffer {
   inline string_buffer() : buf_(str_) {}
 
   inline operator writer() { return buf_; }
-  inline std::string& str() { return str_; }
+  inline auto str() -> std::string& { return str_; }
 };
 
 template <typename T, size_t SIZE, typename Allocator>
@@ -1846,16 +1846,6 @@ FMT_CONSTEXPR auto write_char(OutputIt out, Char value,
     return it;
   });
 }
-template <typename Char, typename OutputIt>
-FMT_CONSTEXPR auto write(OutputIt out, Char value, const format_specs& specs,
-                         locale_ref loc = {}) -> OutputIt {
-  // char is formatted as unsigned char for consistency across platforms.
-  using unsigned_type =
-      conditional_t<std::is_same<Char, char>::value, unsigned char, unsigned>;
-  return check_char_specs(specs)
-             ? write_char<Char>(out, value, specs)
-             : write<Char>(out, static_cast<unsigned_type>(value), specs, loc);
-}
 
 template <typename Char> class digit_grouping {
  private:
@@ -1879,9 +1869,7 @@ template <typename Char> class digit_grouping {
   }
 
  public:
-  template <typename Locale,
-            FMT_ENABLE_IF(std::is_same<Locale, locale_ref>::value)>
-  explicit digit_grouping(Locale loc, bool localized = true) {
+  explicit digit_grouping(locale_ref loc, bool localized = true) {
     if (!localized) return;
     auto sep = thousands_sep<Char>(loc);
     grouping_ = sep.grouping;
@@ -1981,6 +1969,8 @@ auto write_int(OutputIt out, UInt value, unsigned prefix,
 // Writes a localized value.
 FMT_API auto write_loc(appender out, loc_value value, const format_specs& specs,
                        locale_ref loc) -> bool;
+auto write_loc(basic_appender<wchar_t> out, loc_value value,
+               const format_specs& specs, locale_ref loc) -> bool;
 #endif
 template <typename OutputIt>
 inline auto write_loc(OutputIt, const loc_value&, const format_specs&,
@@ -2145,6 +2135,17 @@ FMT_CONSTEXPR FMT_INLINE auto write(OutputIt out, T value,
     -> OutputIt {
   if (specs.localized() && write_loc(out, value, specs, loc)) return out;
   return write_int<Char>(out, make_write_int_arg(value, specs.sign()), specs);
+}
+
+template <typename Char, typename OutputIt>
+FMT_CONSTEXPR auto write(OutputIt out, Char value, const format_specs& specs,
+                         locale_ref loc = {}) -> OutputIt {
+  // char is formatted as unsigned char for consistency across platforms.
+  using unsigned_type =
+      conditional_t<std::is_same<Char, char>::value, unsigned char, unsigned>;
+  return check_char_specs(specs)
+             ? write_char<Char>(out, value, specs)
+             : write<Char>(out, static_cast<unsigned_type>(value), specs, loc);
 }
 
 template <typename Char, typename OutputIt,
@@ -2621,7 +2622,7 @@ FMT_CONSTEXPR auto isfinite(T value) -> bool {
 }
 
 template <typename T, FMT_ENABLE_IF(is_floating_point<T>::value)>
-FMT_INLINE FMT_CONSTEXPR bool signbit(T value) {
+FMT_INLINE FMT_CONSTEXPR auto signbit(T value) -> bool {
   if (is_constant_evaluated()) {
 #ifdef __cpp_if_constexpr
     if constexpr (std::numeric_limits<double>::is_iec559) {
@@ -3697,9 +3698,9 @@ FMT_CONSTEXPR auto get_arg(Context& ctx, ID id) -> basic_format_arg<Context> {
 }
 
 template <typename Context>
-FMT_CONSTEXPR int get_dynamic_spec(
+FMT_CONSTEXPR auto get_dynamic_spec(
     arg_id_kind kind, const arg_ref<typename Context::char_type>& ref,
-    Context& ctx) {
+    Context& ctx) -> int {
   FMT_ASSERT(kind != arg_id_kind::none, "");
   auto arg =
       kind == arg_id_kind::index ? ctx.arg(ref.index) : ctx.arg(ref.name);
@@ -3752,7 +3753,7 @@ template <typename Char> struct udl_arg {
 };
 #endif  // FMT_USE_NONTYPE_TEMPLATE_ARGS
 
-template <typename Char> struct format_handler {
+template <typename Char = char> struct format_handler {
   parse_context<Char> parse_ctx;
   buffered_context<Char> ctx;
 
@@ -3818,28 +3819,6 @@ FMT_CONSTEXPR auto native_formatter<T, Char, TYPE>::format(
                       specs_.precision_ref, ctx);
   return write<Char>(ctx.out(), val, specs, ctx.locale());
 }
-
-// DEPRECATED! https://github.com/fmtlib/fmt/issues/4292.
-template <typename T, typename Enable = void>
-struct is_locale : std::false_type {};
-template <typename T>
-struct is_locale<T, void_t<decltype(T::classic())>> : std::true_type {};
-
-// DEPRECATED!
-template <typename Char = char> struct vformat_args {
-  using type = basic_format_args<buffered_context<Char>>;
-};
-template <> struct vformat_args<char> {
-  using type = format_args;
-};
-
-template <typename Char>
-void vformat_to(buffer<Char>& buf, basic_string_view<Char> fmt,
-                typename vformat_args<Char>::type args, locale_ref loc = {}) {
-  auto out = basic_appender<Char>(buf);
-  parse_format_string(
-      fmt, format_handler<Char>{parse_context<Char>(fmt), {out, args, loc}});
-}
 }  // namespace detail
 
 FMT_BEGIN_EXPORT
@@ -3851,19 +3830,16 @@ template <typename OutputIt, typename Char> class generic_context {
  private:
   OutputIt out_;
   basic_format_args<generic_context> args_;
-  detail::locale_ref loc_;
+  locale_ref loc_;
 
  public:
   using char_type = Char;
   using iterator = OutputIt;
-  using parse_context_type FMT_DEPRECATED = parse_context<Char>;
-  template <typename T>
-  using formatter_type FMT_DEPRECATED = formatter<T, Char>;
   enum { builtin_types = FMT_BUILTIN_TYPES };
 
   constexpr generic_context(OutputIt out,
                             basic_format_args<generic_context> args,
-                            detail::locale_ref loc = {})
+                            locale_ref loc = {})
       : out_(out), args_(args), loc_(loc) {}
   generic_context(generic_context&&) = default;
   generic_context(const generic_context&) = delete;
@@ -3886,7 +3862,7 @@ template <typename OutputIt, typename Char> class generic_context {
     if (!detail::is_back_insert_iterator<iterator>()) out_ = it;
   }
 
-  constexpr auto locale() const -> detail::locale_ref { return loc_; }
+  constexpr auto locale() const -> locale_ref { return loc_; }
 };
 
 class loc_value {
@@ -4307,46 +4283,41 @@ FMT_API void format_system_error(detail::buffer<char>& out, int error_code,
 // Can be used to report errors from destructors.
 FMT_API void report_system_error(int error_code, const char* message) noexcept;
 
-template <typename Locale, FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
-inline auto vformat(const Locale& loc, string_view fmt, format_args args)
+inline auto vformat(locale_ref loc, string_view fmt, format_args args)
     -> std::string {
   auto buf = memory_buffer();
-  detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
+  detail::vformat_to(buf, fmt, args, loc);
   return {buf.data(), buf.size()};
 }
 
-template <typename Locale, typename... T,
-          FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
-FMT_INLINE auto format(const Locale& loc, format_string<T...> fmt, T&&... args)
+template <typename... T>
+FMT_INLINE auto format(locale_ref loc, format_string<T...> fmt, T&&... args)
     -> std::string {
   return vformat(loc, fmt.str, vargs<T...>{{args...}});
 }
 
-template <typename OutputIt, typename Locale,
+template <typename OutputIt,
           FMT_ENABLE_IF(detail::is_output_iterator<OutputIt, char>::value)>
-auto vformat_to(OutputIt out, const Locale& loc, string_view fmt,
-                format_args args) -> OutputIt {
+auto vformat_to(OutputIt out, locale_ref loc, string_view fmt, format_args args)
+    -> OutputIt {
   auto&& buf = detail::get_buffer<char>(out);
-  detail::vformat_to(buf, fmt, args, detail::locale_ref(loc));
+  detail::vformat_to(buf, fmt, args, loc);
   return detail::get_iterator(buf, out);
 }
 
-template <typename OutputIt, typename Locale, typename... T,
-          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt, char>::value&&
-                            detail::is_locale<Locale>::value)>
-FMT_INLINE auto format_to(OutputIt out, const Locale& loc,
-                          format_string<T...> fmt, T&&... args) -> OutputIt {
+template <typename OutputIt, typename... T,
+          FMT_ENABLE_IF(detail::is_output_iterator<OutputIt, char>::value)>
+FMT_INLINE auto format_to(OutputIt out, locale_ref loc, format_string<T...> fmt,
+                          T&&... args) -> OutputIt {
   return fmt::vformat_to(out, loc, fmt.str, vargs<T...>{{args...}});
 }
 
-template <typename Locale, typename... T,
-          FMT_ENABLE_IF(detail::is_locale<Locale>::value)>
-FMT_NODISCARD FMT_INLINE auto formatted_size(const Locale& loc,
+template <typename... T>
+FMT_NODISCARD FMT_INLINE auto formatted_size(locale_ref loc,
                                              format_string<T...> fmt,
                                              T&&... args) -> size_t {
   auto buf = detail::counting_buffer<>();
-  detail::vformat_to(buf, fmt.str, vargs<T...>{{args...}},
-                     detail::locale_ref(loc));
+  detail::vformat_to(buf, fmt.str, vargs<T...>{{args...}}, loc);
   return buf.count();
 }
 
