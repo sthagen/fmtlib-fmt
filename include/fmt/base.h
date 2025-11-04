@@ -233,7 +233,6 @@
 FMT_PRAGMA_GCC(push_options)
 #if !defined(__OPTIMIZE__) && !defined(__CUDACC__) && !defined(FMT_MODULE)
 FMT_PRAGMA_GCC(optimize("Og"))
-#  define FMT_GCC_OPTIMIZED
 #endif
 FMT_PRAGMA_CLANG(diagnostic push)
 FMT_PRAGMA_GCC(diagnostic push)
@@ -246,7 +245,7 @@ FMT_PRAGMA_GCC(diagnostic push)
 #  define FMT_ALWAYS_INLINE inline
 #endif
 // A version of FMT_ALWAYS_INLINE to prevent code bloat in debug mode.
-#if defined(NDEBUG) || defined(FMT_GCC_OPTIMIZED)
+#ifdef NDEBUG
 #  define FMT_INLINE FMT_ALWAYS_INLINE
 #else
 #  define FMT_INLINE inline
@@ -927,7 +926,7 @@ class locale_ref {
   template <typename Locale, FMT_ENABLE_IF(sizeof(Locale::collate) != 0)>
   locale_ref(const Locale& loc) : locale_(&loc) {
     // Check if std::isalpha is found via ADL to reduce the chance of misuse.
-    isalpha('x', loc);
+    detail::ignore_unused(isalpha('x', loc));
   }
 
   inline explicit operator bool() const noexcept { return locale_ != nullptr; }
@@ -2756,7 +2755,9 @@ template <typename... T> struct fstring {
     static_assert(count<(is_view<remove_cvref_t<T>>::value &&
                          std::is_reference<T>::value)...>() == 0,
                   "passing views as lvalues is disallowed");
-    if (FMT_USE_CONSTEVAL) parse_format_string<char>(s, checker(s, arg_pack()));
+#if FMT_USE_CONSTEVAL
+    parse_format_string<char>(s, checker(s, arg_pack()));
+#endif
 #ifdef FMT_ENFORCE_COMPILE_STRING
     static_assert(
         FMT_USE_CONSTEVAL && sizeof(s) != 0,
