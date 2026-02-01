@@ -231,6 +231,14 @@ FMT_PRAGMA_GCC(optimize("Og"))
 #endif
 FMT_PRAGMA_CLANG(diagnostic push)
 
+#ifdef FMT_DEPRECATED
+// Use the provided definition.
+#elif FMT_HAS_CPP14_ATTRIBUTE(deprecated)
+#  define FMT_DEPRECATED [[deprecated]]
+#else
+#  define FMT_DEPRECATED /* deprecated */
+#endif
+
 #ifdef FMT_ALWAYS_INLINE
 // Use the provided definition.
 #elif FMT_GCC_VERSION || FMT_CLANG_VERSION
@@ -501,7 +509,6 @@ template <typename Char> class basic_string_view {
   constexpr basic_string_view() noexcept : data_(nullptr), size_(0) {}
   constexpr basic_string_view(const Char* s, size_t count) noexcept
       : data_(s), size_(count) {}
-  constexpr basic_string_view(nullptr_t) = delete;
 
 #if FMT_GCC_VERSION
   FMT_ALWAYS_INLINE
@@ -1732,11 +1739,9 @@ template <typename T> class buffer {
 
  protected:
   // Don't initialize ptr_ since it is not accessed to save a few cycles.
-  constexpr buffer(grow_fun grow, size_t sz) noexcept
+  FMT_CONSTEXPR buffer(grow_fun grow, size_t sz) noexcept
       : size_(sz), capacity_(sz), grow_(grow) {
-#if FMT_MSC_VERSION
-    ptr_ = nullptr;  // Suppress warning 26495.
-#endif
+    if (FMT_MSC_VERSION) ptr_ = nullptr;  // Suppress warning 26495.
   }
 
   constexpr buffer(grow_fun grow, T* p = nullptr, size_t sz = 0,
@@ -2659,8 +2664,7 @@ template <typename... T> struct fstring {
   }
   fstring(runtime_format_string<> fmt) : str(fmt.str) {}
 
-  // Returning by reference generates better code in debug mode.
-  FMT_ALWAYS_INLINE operator const string_view&() const { return str; }
+  FMT_DEPRECATED operator const string_view&() const { return str; }
   auto get() const -> string_view { return str; }
 };
 
@@ -2691,7 +2695,7 @@ struct formatter<T, Char,
 // Take arguments by lvalue references to avoid some lifetime issues, e.g.
 //   auto args = make_format_args(std::string());
 template <typename Context = context, typename... T,
-          int NUM_ARGS = sizeof...(T),
+          int NUM_ARGS = int(sizeof...(T)),
           int NUM_NAMED_ARGS = detail::count_named_args<T...>(),
           ullong DESC = detail::make_descriptor<Context, T...>()>
 constexpr FMT_ALWAYS_INLINE auto make_format_args(T&... args)
@@ -2701,7 +2705,7 @@ constexpr FMT_ALWAYS_INLINE auto make_format_args(T&... args)
 
 template <typename... T>
 using vargs =
-    detail::format_arg_store<context, sizeof...(T),
+    detail::format_arg_store<context, int(sizeof...(T)),
                              detail::count_named_args<T...>(),
                              detail::make_descriptor<context, T...>()>;
 
