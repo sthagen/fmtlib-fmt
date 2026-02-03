@@ -229,7 +229,6 @@ FMT_PRAGMA_GCC(push_options)
 #if !defined(__OPTIMIZE__) && !defined(__CUDACC__) && !defined(FMT_MODULE)
 FMT_PRAGMA_GCC(optimize("Og"))
 #endif
-FMT_PRAGMA_CLANG(diagnostic push)
 
 #ifdef FMT_DEPRECATED
 // Use the provided definition.
@@ -397,19 +396,19 @@ constexpr auto is_constant_evaluated(bool default_value = false) noexcept
 #elif defined(__SIZEOF_INT128__) && !defined(__NVCC__) && \
     !(FMT_CLANG_VERSION && FMT_MSC_VERSION)
 #  define FMT_USE_INT128 1
-using int128_opt = __int128_t;  // An optional native 128-bit integer.
-using uint128_opt = __uint128_t;
-inline auto map(int128_opt x) -> int128_opt { return x; }
-inline auto map(uint128_opt x) -> uint128_opt { return x; }
+using native_int128 = __int128_t;
+using native_uint128 = __uint128_t;
+inline auto map(native_int128 x) -> native_int128 { return x; }
+inline auto map(native_uint128 x) -> native_uint128 { return x; }
 #else
 #  define FMT_USE_INT128 0
 #endif
 #if !FMT_USE_INT128
-enum class int128_opt {};
-enum class uint128_opt {};
-// Reduce template instantiations.
-inline auto map(int128_opt) -> monostate { return {}; }
-inline auto map(uint128_opt) -> monostate { return {}; }
+// Fallbacks to reduce conditional compilation and SFINAE.
+enum class native_int128 {};
+enum class native_uint128 {};
+inline auto map(native_int128) -> monostate { return {}; }
+inline auto map(native_uint128) -> monostate { return {}; }
 #endif
 
 // Casts a nonnegative integer to unsigned.
@@ -986,8 +985,8 @@ FMT_TYPE_CONSTANT(int, int_type);
 FMT_TYPE_CONSTANT(unsigned, uint_type);
 FMT_TYPE_CONSTANT(long long, long_long_type);
 FMT_TYPE_CONSTANT(ullong, ulong_long_type);
-FMT_TYPE_CONSTANT(int128_opt, int128_type);
-FMT_TYPE_CONSTANT(uint128_opt, uint128_type);
+FMT_TYPE_CONSTANT(native_int128, int128_type);
+FMT_TYPE_CONSTANT(native_uint128, uint128_type);
 FMT_TYPE_CONSTANT(bool, bool_type);
 FMT_TYPE_CONSTANT(Char, char_type);
 FMT_TYPE_CONSTANT(float, float_type);
@@ -1031,14 +1030,14 @@ struct is_view : std::false_type {};
 template <typename T>
 struct is_view<T, bool_constant<sizeof(T) != 0>> : std::is_base_of<view, T> {};
 
-template <typename Char, typename T> struct named_arg;
+template <typename T, typename Char> struct named_arg;
 template <typename T> struct is_named_arg : std::false_type {};
 template <typename T> struct is_static_named_arg : std::false_type {};
 
-template <typename Char, typename T>
-struct is_named_arg<named_arg<Char, T>> : std::true_type {};
+template <typename T, typename Char>
+struct is_named_arg<named_arg<T, Char>> : std::true_type {};
 
-template <typename Char, typename T> struct named_arg : view {
+template <typename T, typename Char = char> struct named_arg : view {
   const Char* name;
   const T& value;
 
@@ -1157,8 +1156,8 @@ template <typename Char> struct type_mapper {
   static auto map(unsigned long) -> ulong_type;
   static auto map(long long) -> long long;
   static auto map(ullong) -> ullong;
-  static auto map(int128_opt) -> int128_opt;
-  static auto map(uint128_opt) -> uint128_opt;
+  static auto map(native_int128) -> native_int128;
+  static auto map(native_uint128) -> native_uint128;
   static auto map(bool) -> bool;
 
   template <typename T, FMT_ENABLE_IF(is_code_unit<T>::value)>
@@ -2081,8 +2080,8 @@ template <typename Context> class value {
     unsigned uint_value;
     long long long_long_value;
     ullong ulong_long_value;
-    int128_opt int128_value;
-    uint128_opt uint128_value;
+    native_int128 int128_value;
+    native_uint128 uint128_value;
     bool bool_value;
     char_type char_value;
     float float_value;
@@ -2106,8 +2105,8 @@ template <typename Context> class value {
       : value(ulong_type(x)) {}
   constexpr FMT_INLINE value(long long x FMT_BUILTIN) : long_long_value(x) {}
   constexpr FMT_INLINE value(ullong x FMT_BUILTIN) : ulong_long_value(x) {}
-  FMT_INLINE value(int128_opt x FMT_BUILTIN) : int128_value(x) {}
-  FMT_INLINE value(uint128_opt x FMT_BUILTIN) : uint128_value(x) {}
+  FMT_INLINE value(native_int128 x FMT_BUILTIN) : int128_value(x) {}
+  FMT_INLINE value(native_uint128 x FMT_BUILTIN) : uint128_value(x) {}
   constexpr FMT_INLINE value(bool x FMT_BUILTIN) : bool_value(x) {}
 
   template <typename T, FMT_ENABLE_IF(is_code_unit<T>::value)>
@@ -2718,8 +2717,8 @@ using vargs =
  * in compile-time checks, but `"answer"_a=42` are compile-time checked in
  * sufficiently new compilers. See `operator""_a()`.
  */
-template <typename Char, typename T>
-inline auto arg(const Char* name, const T& arg) -> detail::named_arg<Char, T> {
+template <typename T>
+inline auto arg(const char* name, const T& arg) -> detail::named_arg<T> {
   return {name, arg};
 }
 
@@ -2870,7 +2869,6 @@ FMT_INLINE void println(format_string<T...> fmt, T&&... args) {
   fmt::println(stdout, fmt, static_cast<T&&>(args)...);
 }
 
-FMT_PRAGMA_CLANG(diagnostic pop)
 FMT_PRAGMA_GCC(pop_options)
 FMT_END_EXPORT
 FMT_END_NAMESPACE
