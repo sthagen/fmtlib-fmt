@@ -1,6 +1,6 @@
 // Formatting library for C++ - chrono support
 //
-// Copyright (c) 2012 - present, Victor Zverovich
+// Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
 // All rights reserved.
 //
 // For the license information refer to format.h.
@@ -1192,6 +1192,7 @@ class tm_writer {
 
   template <typename T, FMT_ENABLE_IF(has_tm_zone<T>::value)>
   void format_tz_name(const T& tm) {
+    if (!tm.tm_zone) FMT_THROW(format_error("no timezone"));
     out_ = write_tm_str<Char>(out_, tm.tm_zone, loc_);
   }
   template <typename T, FMT_ENABLE_IF(!has_tm_zone<T>::value)>
