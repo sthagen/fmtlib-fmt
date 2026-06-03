@@ -35,6 +35,9 @@ class Git:
     def clone(self, *args):
         return self.call('clone', list(args) + [self.dir])
 
+    def fetch(self, *args):
+        return self.call('fetch', args, cwd=self.dir)
+
     def commit(self, *args):
         return self.call('commit', args, cwd=self.dir)
 
@@ -56,16 +59,22 @@ class Git:
 
 def clean_checkout(repo, branch):
     repo.clean('-f', '-d')
-    repo.reset('--hard')
+    repo.fetch('origin')
     repo.checkout(branch)
+    # Hard-reset to the remote so a reused clone picks up new commits
+    # instead of building from stale local state.
+    repo.reset('--hard', 'origin/' + branch)
 
 
 class Runner:
-    def __init__(self, cwd):
+    def __init__(self, cwd, env=None):
         self.cwd = cwd
+        self.env = env
 
     def __call__(self, *args, **kwargs):
         kwargs['cwd'] = kwargs.get('cwd', self.cwd)
+        if self.env is not None:
+            kwargs['env'] = kwargs.get('env', self.env)
         check_call(args, **kwargs)
 
 
@@ -80,6 +89,28 @@ def create_build_env():
     return env
 
 
+def create_doc_env(env, fmt_repo):
+    """Create a virtualenv with the pinned documentation dependencies and
+    return an environment dict with it prepended to PATH. This ensures the
+    docs are built with the exact mkdocs/mkdocstrings versions required by the
+    custom handler, regardless of what is installed system-wide."""
+    # Use an absolute path so the venv resolves on PATH regardless of the
+    # working directory the build steps run in.
+    venv_dir = os.path.abspath(os.path.join(env.build_dir, 'venv'))
+    shutil.rmtree(venv_dir, ignore_errors=True)
+    check_call([sys.executable, '-m', 'venv', venv_dir])
+    venv_bin = os.path.join(venv_dir, 'bin')
+    pip = os.path.join(venv_bin, 'pip')
+    check_call([pip, 'install', '--quiet', '--upgrade', 'pip'])
+    requirements = os.path.join(
+        fmt_repo.dir, 'support', 'doc-requirements.txt')
+    check_call(
+        [pip, 'install', '--quiet', '--require-hashes', '-r', requirements])
+    doc_env = os.environ.copy()
+    doc_env['PATH'] = venv_bin + os.pathsep + doc_env.get('PATH', '')
+    return doc_env
+
+
 if __name__ == '__main__':
     args = docopt.docopt(__doc__)
     env = create_build_env()
@@ -87,7 +118,7 @@ if __name__ == '__main__':
 
     branch = args.get('<branch>')
     if branch is None:
-        branch = 'master'
+        branch = 'main'
     if not fmt_repo.update('-b', branch, 'git@github.com:fmtlib/fmt'):
         clean_checkout(fmt_repo, branch)
 
@@ -151,10 +182,14 @@ if __name__ == '__main__':
     fmt_repo.add(changelog)
     fmt_repo.commit('-m', 'Update version')
 
-    # Build the docs locally; the source zip is now built and attached to the
-    # release in CI by .github/workflows/release.yml, which also generates a
-    # SLSA provenance attestation for it.
-    run = Runner(fmt_repo.dir)
+    # Build the docs locally in a virtualenv with the pinned doc dependencies;
+    # the source zip is now built and attached to the release in CI by
+    # .github/workflows/release.yml, which also generates a SLSA provenance
+    # attestation for it. The venv is prepended to PATH so that CMake's
+    # find_program(MKDOCS mkdocs) and the ./mkdocs deploy step below both pick
+    # up the correct mkdocs/mkdocstrings versions.
+    doc_env = create_doc_env(env, fmt_repo)
+    run = Runner(fmt_repo.dir, env=doc_env)
     run('cmake', '.')
     run('make', 'doc')
 
@@ -176,4 +211,4 @@ if __name__ == '__main__':
                             '{response.status} {response.reason}')
 
     short_version = '.'.join(version.split('.')[:-1])
-    check_call(['./mkdocs', 'deploy', short_version])
+    check_call(['./mkdocs', 'deploy', short_version], env=doc_env)

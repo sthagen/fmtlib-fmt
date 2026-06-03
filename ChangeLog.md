@@ -1,21 +1,26 @@
 # 12.2.0 - TBD
 
-- Added a C11 API with type-safe formatting via `_Generic`. The new `fmt-c`
-  library and `fmt/fmt-c.h` header allow C code to use {fmt}'s formatter
-  with compile-time type checking
+- Added a C11 API that brings fast, type-safe formatting to C. The new
+  `fmt-c` library and `fmt/fmt-c.h` header use `_Generic` to dispatch on
+  argument types and outperform `printf`/`sprintf`. For example:
+
+  ```c++
+  #include <fmt/fmt-c.h>
+
+  char buf[100];
+  int n = fmt_format(buf, sizeof(buf), "The answer is {}.", 42);
+  ```
+
   (https://github.com/fmtlib/fmt/issues/4663,
   https://github.com/fmtlib/fmt/pull/4671,
   https://github.com/fmtlib/fmt/pull/4696,
   https://github.com/fmtlib/fmt/issues/4693,
   https://github.com/fmtlib/fmt/pull/4694,
   https://github.com/fmtlib/fmt/pull/4712).
-  Thanks @Soumik15630m, @yrlf and @localspook.
-
-- Reduced binary size of debug builds (~200k to ~85k in the bloat test) and
-  improved compile speed when consteval is unavailable.
+  Thanks @Soumik15630m, @Ferdi265 and @localspook.
 
 - Added a separate `fmt::fmt-module` CMake target for C++20 modules and a
-  Linux CI workflow that exercises module-based builds
+  CI workflow that exercises module-based builds
   (https://github.com/fmtlib/fmt/issues/4684,
   https://github.com/fmtlib/fmt/pull/4685,
   https://github.com/fmtlib/fmt/issues/4707,
@@ -27,22 +32,37 @@
 - Enabled the full Dragonbox lookup cache by default for floating-point
   formatting unless optimizing for binary size (`__OPTIMIZE_SIZE__`),
   giving a ~10–25% speedup. Thanks Matthias Kretz for the suggestion.
+  Average time per `double` on Apple M1 Pro (clang 17, random digits,
+  smaller is better) measured with
+  [dtoa-benchmark](https://github.com/fmtlib/dtoa-benchmark):
 
-- Improved integer formatting throughput by ~3%
+  | Method                  | Time (ns) |
+  | ----------------------- | --------: |
+  | fmt (full)              |     22.07 |
+  | fmt (compact)           |     29.55 |
+  | ryu                     |     35.21 |
+  | double-conversion       |     81.81 |
+  | `sprintf`               |    726.27 |
+  | `ostringstream`         |    864.34 |
+
+- Improved integer formatting performance by ~3%
   (https://github.com/fmtlib/fmt/pull/4630). Thanks @user202729.
 
 - Optimized formatting into back-insert iterators by using bulk container
   append/insert methods (e.g. on `std::vector<char>` and custom string
   types) (https://github.com/fmtlib/fmt/pull/4679). Thanks @user202729.
 
+- Reduced binary size of debug builds (~200k to ~85k in the bloat test) and
+  improved compile speed when `consteval` is unavailable.
+
 - Made path formatting lossless, preserving ill-formed UTF-16
   sequences when converting `std::filesystem::path` to a narrow string.
 
-- Added overloads of `fmt::println` that take a `fmt::text_style`
-  (https://github.com/fmtlib/fmt/pull/4782). Thanks @ahoarau.
-
 - Added support for formatting `std::unexpected`
   (https://github.com/fmtlib/fmt/pull/4675). Thanks @17steen.
+
+- Added overloads of `fmt::println` that take a `fmt::text_style`
+  (https://github.com/fmtlib/fmt/pull/4782). Thanks @ahoarau.
 
 - Added support for positional arguments as width and precision specifiers
   in `fmt::printf` (https://github.com/fmtlib/fmt/pull/4643).
@@ -65,16 +85,15 @@
   (https://github.com/fmtlib/fmt/pull/4731,
   https://github.com/fmtlib/fmt/pull/4770). Thanks @user202729 and @phprus.
 
-- Added the `FMT_USE_FLOCKFILE` macro to force `has_flockfile` to false
+- Added the `FMT_USE_FLOCKFILE` macro to disable the use of `flockfile`
   (https://github.com/fmtlib/fmt/issues/4646,
-  https://github.com/fmtlib/fmt/pull/4666). Thanks @MikeVastola.
+  https://github.com/fmtlib/fmt/pull/4666). Thanks @mvastola.
 
 - Added `include_guard(GLOBAL)` so that {fmt} can be used in multiple
   submodules of the same project
   (https://github.com/fmtlib/fmt/pull/4672). Thanks @torsten48.
 
-- Added `constexpr` to argument `value` constructors and to
-  `static_format_result` members
+- Improved `constexpr` support
   (https://github.com/fmtlib/fmt/pull/4659,
   https://github.com/fmtlib/fmt/pull/4591).
   Thanks @elbeno and @17steen.
@@ -105,7 +124,7 @@
   Thanks @Yancey2023 and @sunmy2019.
 
 - Fixed formatting of `std::tm` with a null `tm_zone`
-  (https://github.com/fmtlib/fmt/pull/4790). Thanks @JiamiLin.
+  (https://github.com/fmtlib/fmt/pull/4790). Thanks @Carmel0.
 
 - Fixed compile-time formatting in `fmt/ranges.h`, `fmt/style.h` and
   `fmt/std.h` (https://github.com/fmtlib/fmt/pull/4759). Thanks @j4niwzis.
@@ -125,10 +144,10 @@
 
 - Fixed an out-of-bounds read in `fmt::vprintf` with a trailing `%`
   (https://github.com/fmtlib/fmt/issues/4741,
-  https://github.com/fmtlib/fmt/pull/4742). Thanks @rmarin.
+  https://github.com/fmtlib/fmt/pull/4742). Thanks @Algunenano.
 
-- Fixed the return type of the `f(un)lockfile` wrappers on Windows
-  (https://github.com/fmtlib/fmt/pull/4739). Thanks @MikeVastola.
+- Fixed the return type of the `f(un)lockfile`   wrappers on Windows
+  (https://github.com/fmtlib/fmt/pull/4739). Thanks @mvastola.
 
 - Worked around a CUDA issue when handling UTF-32 literals
   (https://github.com/fmtlib/fmt/pull/4719). Thanks @Cazadorro.
@@ -154,7 +173,7 @@
   https://github.com/fmtlib/fmt/pull/4660). Thanks @Soumik15630m.
 
 - Fixed C++20 concept detection
-  (https://github.com/fmtlib/fmt/pull/4653). Thanks @lagoho7.
+  (https://github.com/fmtlib/fmt/pull/4653). Thanks @tearfur.
 
 - Fixed a clang compilation failure
   (https://github.com/fmtlib/fmt/pull/4718). Thanks @mccakit.
@@ -162,7 +181,7 @@
 - Fixed various MSVC warnings, including C4305 and conversion warnings on
   x86 (https://github.com/fmtlib/fmt/pull/4668,
   https://github.com/fmtlib/fmt/pull/4594).
-  Thanks @kanren3 and @JBerger.
+  Thanks @kanren3 and @blizzard4591.
 
 - Updated the Android Gradle Plugin to 9.x
   (https://github.com/fmtlib/fmt/issues/4651,
