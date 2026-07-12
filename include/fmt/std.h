@@ -649,6 +649,21 @@ struct formatter<
   }
 };
 
+template <> struct formatter<std::exception_ptr> : formatter<std::exception> {
+  template <typename FormatContext>
+  auto format(const std::exception_ptr& ep, FormatContext& ctx) const
+      -> decltype(ctx.out()) {
+    if (!ep) return detail::write(ctx.out(), string_view("none"));
+    try {
+      std::rethrow_exception(ep);
+    } catch (const std::exception& e) {
+      return formatter<std::exception>::format(e, ctx);
+    } catch (...) {
+      return detail::write(ctx.out(), string_view("unknown exception"));
+    }
+  }
+};
+
 template <int N, typename Char>
 struct formatter<detail::bitint<N>, Char> : formatter<long long, Char> {
   static_assert(N <= 64, "unsupported _BitInt");
