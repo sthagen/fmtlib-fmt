@@ -441,6 +441,13 @@ add_library(fmt::fmt-c ALIAS fmt-c)
 set_target_properties(fmt-c PROPERTIES PUBLIC_HEADER include/fmt/fmt-c.h)
 
 # Install targets.
+set(targets_export_name fmt-targets)
+set(FMT_TARGETS fmt fmt-header-only fmt-c)
+
+if (FMT_MODULE)
+  list(APPEND FMT_TARGETS fmt-module)
+endif ()
+
 if (FMT_INSTALL)
   include(CMakePackageConfigHelpers)
   set_verbose(
@@ -454,7 +461,6 @@ if (FMT_INSTALL)
   set(version_config ${PROJECT_BINARY_DIR}/fmt-config-version.cmake)
   set(project_config ${PROJECT_BINARY_DIR}/fmt-config.cmake)
   set(pkgconfig ${PROJECT_BINARY_DIR}/fmt.pc)
-  set(targets_export_name fmt-targets)
 
   set_verbose(
     FMT_LIB_DIR ${CMAKE_INSTALL_LIBDIR} CACHE STRING
@@ -485,31 +491,18 @@ if (FMT_INSTALL)
     ${PROJECT_SOURCE_DIR}/support/cmake/fmt-config.cmake.in ${project_config}
     INSTALL_DESTINATION ${FMT_CMAKE_DIR})
 
-  set(INSTALL_TARGETS fmt fmt-header-only fmt-c)
-
-  if (FMT_MODULE)
-    list(APPEND INSTALL_TARGETS fmt-module)
-    if (FMT_USE_CMAKE_MODULES)
-      set(INSTALL_FILE_SET FILE_SET fmt DESTINATION ${FMT_INC_DIR}/fmt)
-    endif ()
-  endif ()
-
   # Install the library and headers.
+  if (FMT_MODULE AND FMT_USE_CMAKE_MODULES)
+    set(INSTALL_FILE_SET FILE_SET fmt DESTINATION ${FMT_INC_DIR}/fmt)
+  endif ()
   install(
-    TARGETS ${INSTALL_TARGETS}
+    TARGETS ${FMT_TARGETS}
     COMPONENT fmt_core
     EXPORT ${targets_export_name}
     LIBRARY DESTINATION ${FMT_LIB_DIR}
     ARCHIVE DESTINATION ${FMT_LIB_DIR}
     PUBLIC_HEADER DESTINATION ${FMT_INC_DIR}/fmt
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} ${INSTALL_FILE_SET})
-
-  # Use a namespace because CMake provides better diagnostics for namespaced
-  # imported targets.
-  export(
-    TARGETS ${INSTALL_TARGETS}
-    NAMESPACE fmt::
-    FILE ${PROJECT_BINARY_DIR}/${targets_export_name}.cmake)
 
   # Install version, config and target files.
   install(
@@ -527,6 +520,15 @@ if (FMT_INSTALL)
     DESTINATION "${FMT_PKGCONFIG_DIR}"
     COMPONENT fmt_core)
 endif ()
+
+# Generate a build-tree export so that targets depending on fmt can also be
+# exported without installing fmt, including when fmt is provided through
+# add_subdirectory() or FetchContent. Use a namespace because CMake provides
+# better diagnostics for namespaced imported targets.
+export(
+  TARGETS ${FMT_TARGETS}
+  NAMESPACE fmt::
+  FILE ${PROJECT_BINARY_DIR}/${targets_export_name}.cmake)
 
 function (add_doc_target)
   find_program(DOXYGEN doxygen PATHS "$ENV{ProgramFiles}/doxygen/bin"
