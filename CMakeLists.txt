@@ -65,7 +65,8 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.28 AND CMAKE_CXX_STANDARD
       if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION
                                                     GREATER_EQUAL 15)
           OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-              AND CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 16)
+              AND CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 16
+              AND CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS)
           OR (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND MSVC_VERSION
                                                         GREATER_EQUAL 1934))
         set(FMT_USE_CMAKE_MODULES TRUE)
@@ -231,7 +232,7 @@ if (FMT_MASTER_PROJECT AND CMAKE_GENERATOR MATCHES "Visual Studio")
   join(netfxpath
        "C:\\Program Files\\Reference Assemblies\\Microsoft\\Framework\\"
        ".NETFramework\\v4.0")
-  file(WRITE run-msbuild.bat "${MSBUILD_SETUP}
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/run-msbuild.bat "${MSBUILD_SETUP}
     ${CMAKE_MAKE_PROGRAM} -p:FrameworkPathOverride=\"${netfxpath}\" %*")
 endif ()
 
