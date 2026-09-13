@@ -200,3 +200,11 @@ TEST(args_test, size) {
   store.clear();
   EXPECT_EQ(store.size(), 0);
 }
+
+TEST(args_test, named_arg_count) {
+  fmt::dynamic_format_arg_store<fmt::format_context> store;
+  store.push_back(fmt::arg("a", 42));
+  EXPECT_EQ(store.size(), 1);
+  EXPECT_EQ(fmt::vformat("{0}", store), "42");
+  EXPECT_THROW(fmt::vformat("{1}", store), fmt::format_error);
+}

@@ -49,7 +49,7 @@ TEST(module_test, namespace) {
 
 // Macros must not be imported from a named module [cpp.import]/5.1.
 TEST(module_test, macros) {
-#if defined(FMT_BASE_H_) || defined(FMT_FORMAT_H_)
+#if defined(FMT_CORE_H_) || defined(FMT_FORMAT_H_)
   FAIL() << "Macros are leaking from a named module";
 #endif
 }

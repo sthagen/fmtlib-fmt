@@ -310,6 +310,19 @@ struct formatter<Tuple, Char,
       detail::string_literal<Char, '('>{};
   basic_string_view<Char> closing_bracket_ =
       detail::string_literal<Char, ')'>{};
+  detail::nested_format_specs<Char> specs_;
+
+  template <typename FormatContext>
+  auto write_body(FormatContext& ctx, const Tuple& value) const
+      -> decltype(ctx.out()) {
+    ctx.advance_to(detail::copy<Char>(opening_bracket_, ctx.out()));
+    detail::for_each2(
+        formatters_, value,
+        detail::format_tuple_element<FormatContext>{0, ctx, separator_});
+    return detail::copy<Char>(closing_bracket_, ctx.out());
+  }
+
+  friend class detail::nested_format_specs<Char>;
 
  public:
   FMT_CONSTEXPR formatter() {}
@@ -327,6 +340,7 @@ struct formatter<Tuple, Char,
   FMT_CONSTEXPR auto parse(parse_context<Char>& ctx) -> const Char* {
     auto it = ctx.begin();
     auto end = ctx.end();
+    it = specs_.parse(it, end, ctx, ':');
     if (it != end && detail::to_ascii(*it) == 'n') {
       ++it;
       set_brackets({}, {});
@@ -341,11 +355,7 @@ struct formatter<Tuple, Char,
   template <typename FormatContext>
   auto format(const Tuple& value, FormatContext& ctx) const
       -> decltype(ctx.out()) {
-    ctx.advance_to(detail::copy<Char>(opening_bracket_, ctx.out()));
-    detail::for_each2(
-        formatters_, value,
-        detail::format_tuple_element<FormatContext>{0, ctx, separator_});
-    return detail::copy<Char>(closing_bracket_, ctx.out());
+    return specs_.write(ctx, *this, value);
   }
 };
 
@@ -393,6 +403,7 @@ struct range_formatter<
   basic_string_view<Char> closing_bracket_ =
       detail::string_literal<Char, ']'>{};
   bool is_debug = false;
+  detail::nested_format_specs<Char> specs_;
 
   template <typename Output, typename It, typename Sentinel, typename U = T,
             FMT_ENABLE_IF(std::is_same<U, Char>::value)>
@@ -410,6 +421,8 @@ struct range_formatter<
   auto write_debug_string(Output& out, It, Sentinel) const -> Output {
     return out;
   }
+
+  friend class detail::nested_format_specs<Char>;
 
  public:
   FMT_CONSTEXPR range_formatter() {}
@@ -433,6 +446,12 @@ struct range_formatter<
     auto end = ctx.end();
     detail::maybe_set_debug_format(underlying_, true);
     if (it == end) return underlying_.parse(ctx);
+
+    it = specs_.parse(it, end, ctx, ':');
+    if (it == end) {
+      ctx.advance_to(it);
+      return underlying_.parse(ctx);
+    }
 
     switch (detail::to_ascii(*it)) {
     case 'n':
@@ -470,6 +489,12 @@ struct range_formatter<
 
   template <typename R, typename FormatContext>
   FMT_CONSTEXPR auto format(R&& range, FormatContext& ctx) const
+      -> decltype(ctx.out()) {
+    return specs_.write(ctx, *this, range);
+  }
+
+  template <typename R, typename FormatContext>
+  FMT_CONSTEXPR auto write_body(FormatContext& ctx, R&& range) const
       -> decltype(ctx.out()) {
     auto out = ctx.out();
     auto it = detail::range_begin(range);
@@ -546,6 +571,9 @@ struct formatter<
   decltype(detail::tuple::get_formatters<element_type, Char>(
       detail::tuple_index_sequence<element_type>())) formatters_;
   bool no_delimiters_ = false;
+  detail::nested_format_specs<Char> specs_;
+
+  friend class detail::nested_format_specs<Char>;
 
  public:
   FMT_CONSTEXPR formatter() {}
@@ -554,7 +582,8 @@ struct formatter<
     auto it = ctx.begin();
     auto end = ctx.end();
     if (it != end) {
-      if (detail::to_ascii(*it) == 'n') {
+      it = specs_.parse(it, end, ctx, ':');
+      if (it != end && detail::to_ascii(*it) == 'n') {
         no_delimiters_ = true;
         ++it;
       }
@@ -570,6 +599,12 @@ struct formatter<
 
   template <typename FormatContext>
   auto format(map_type& map, FormatContext& ctx) const -> decltype(ctx.out()) {
+    return specs_.write(ctx, *this, map);
+  }
+
+  template <typename FormatContext>
+  auto write_body(FormatContext& ctx, map_type& map) const
+      -> decltype(ctx.out()) {
     auto out = ctx.out();
     basic_string_view<Char> open = detail::string_literal<Char, '{'>{};
     if (!no_delimiters_) out = detail::copy<Char>(open, out);
@@ -609,23 +644,19 @@ struct formatter<
 
  public:
   FMT_CONSTEXPR auto parse(parse_context<Char>& ctx) -> const Char* {
-    return underlying_.parse(ctx);
+    auto it = underlying_.parse(ctx);
+    if FMT_CONSTEXPR20 (range_format_kind<R, Char>::value ==
+                        range_format::debug_string) {
+      underlying_.set_debug_format();
+    }
+    return it;
   }
 
   template <typename FormatContext>
   auto format(range_type& range, FormatContext& ctx) const
       -> decltype(ctx.out()) {
-    auto out = ctx.out();
-    if FMT_CONSTEXPR20 (range_format_kind<R, Char>::value ==
-                        range_format::debug_string) {
-      *out++ = '"';
-    }
-    out = underlying_.format(
+    return underlying_.format(
         string_type{detail::range_begin(range), detail::range_end(range)}, ctx);
-    if FMT_CONSTEXPR20 (range_format_kind<R, Char>::value ==
-                        range_format::debug_string)
-      *out++ = '"';
-    return out;
   }
 };
 

@@ -6,7 +6,7 @@
 // For the license information refer to format.h.
 
 #include "fmt/args.h"
-#include "fmt/base.h"
+#include "fmt/core.h"
 #include "fmt/chrono.h"
 #include "fmt/color.h"
 #include "fmt/compile.h"

@@ -2,7 +2,7 @@
 
 The {fmt} library API consists of the following components:
 
-- [`fmt/base.h`](#base-api): the base API providing main formatting functions
+- [`fmt/core.h`](#core-api): the core API providing main formatting functions
   for `char`/UTF-8 with C++20 compile-time checks and minimal dependencies
 - [`fmt/format.h`](#format-api): `fmt::format` and other formatting functions
   as well as locale support
@@ -27,9 +27,9 @@ With the C++ module API, the headers listed above don't need to be included.
 You can use the `import fmt;` statement instead. All other functionality,
 listed below, remains the same.
 
-## Base API
+## Core API
 
-`fmt/base.h` defines the base API which provides main formatting functions
+`fmt/core.h` defines the core API which provides main formatting functions
 for `char`/UTF-8 with C++20 compile-time checks. It has minimal include
 dependencies for better compile times. This header is only beneficial when
 using {fmt} as a library (the default) and not in the header-only mode.
@@ -127,7 +127,7 @@ format specifiers without implementing them yourself. For example:
 
 ```c++
 // color.h:
-#include <fmt/base.h>
+#include <fmt/core.h>
 
 enum class color {red, green, blue};
 
@@ -181,10 +181,7 @@ For example:
     template <>
     struct fmt::formatter<point> : nested_formatter<double> {
       auto format(point p, format_context& ctx) const {
-        return write_padded(ctx, [=](auto out) {
-          return format_to(out, "({}, {})", this->nested(p.x),
-                           this->nested(p.y));
-        });
+        return write(ctx, "(", nested(p.x), ", ", nested(p.y), ")");
       }
     };
 
@@ -477,7 +474,7 @@ Using `fmt::join`, you can separate tuple elements with a custom separator:
 - [`std::tm`](https://en.cppreference.com/w/cpp/chrono/c/tm)
 
 The format syntax is described in [Chrono Format Specifications](syntax.md#
-chrono-format-specifications).
+chrono-format-spec).
 
 **Example**:
 
@@ -803,9 +800,9 @@ configuring CMake.
 
 - **`FMT_OPTIMIZE_SIZE`**: Controls binary size optimizations:
     - `0` - off (default)
-    - `1` - disables locale support and applies some optimizations
-    - `2` - disables some Unicode features, named arguments and applies more
-      aggressive optimizations
+    - `1` - applies some optimizations
+    - `2` - disables locale support by default, some Unicode features, and
+      named arguments, and applies more aggressive optimizations
 
 ### Binary Size Optimization
 

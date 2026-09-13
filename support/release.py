@@ -144,8 +144,8 @@ if __name__ == '__main__':
         first_section.pop(0)
 
     ns_version = None
-    base_h_path = os.path.join(fmt_repo.dir, 'include', 'fmt', 'base.h')
-    for line in fileinput.input(base_h_path):
+    core_h_path = os.path.join(fmt_repo.dir, 'include', 'fmt', 'core.h')
+    for line in fileinput.input(core_h_path):
         m = re.match(r'\s*inline namespace v(.*) .*', line)
         if m:
             ns_version = m.group(1)

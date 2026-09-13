@@ -13,7 +13,7 @@
 // Suppress warnings for pathological types convertible to detail::value.
 #pragma GCC diagnostic ignored "-Wconversion"
 
-#include "fmt/base.h"
+#include "fmt/core.h"
 
 #include <limits.h>  // INT_MAX
 #include <string.h>  // strlen
@@ -29,7 +29,7 @@
 #include "gmock/gmock.h"
 
 #ifdef FMT_FORMAT_H_
-#  error base-test includes format.h
+#  error core-test includes format.h
 #endif
 
 using testing::_;
