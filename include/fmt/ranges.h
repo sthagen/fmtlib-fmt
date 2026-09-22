@@ -298,9 +298,16 @@ template <typename T, typename C> struct is_tuple_formattable {
 };
 
 template <typename Tuple, typename Char>
-struct formatter<Tuple, Char,
-                 enable_if_t<fmt::is_tuple_like<Tuple>::value &&
-                             fmt::is_tuple_formattable<Tuple, Char>::value>> {
+struct formatter<
+    Tuple, Char,
+    // format_as takes precedence. conditional_t rather than && because
+    // is_tuple_formattable must not be instantiated for types with format_as:
+    // for self-referential tuple-like types it recurses back into this
+    // specialization.
+    enable_if_t<
+        fmt::is_tuple_like<Tuple>::value &&
+        conditional_t<detail::has_format_as<Tuple>::value, std::false_type,
+                      fmt::is_tuple_formattable<Tuple, Char>>::value>> {
  private:
   decltype(detail::tuple::get_formatters<Tuple, Char>(
       detail::tuple_index_sequence<Tuple>())) formatters_;
@@ -540,10 +547,11 @@ struct formatter<
   using nonlocking = void;
 
   FMT_CONSTEXPR formatter() {
-    if FMT_CONSTEXPR20 (range_format_kind<R, Char>::value != range_format::set)
-      return;
-    range_formatter_.set_brackets(detail::string_literal<Char, '{'>{},
-                                  detail::string_literal<Char, '}'>{});
+    if FMT_CONSTEXPR20 (range_format_kind<R, Char>::value ==
+                        range_format::set) {
+      range_formatter_.set_brackets(detail::string_literal<Char, '{'>{},
+                                    detail::string_literal<Char, '}'>{});
+    }
   }
 
   FMT_CONSTEXPR auto parse(parse_context<Char>& ctx) -> const Char* {

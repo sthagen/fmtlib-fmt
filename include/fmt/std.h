@@ -89,9 +89,11 @@ namespace detail {
 #endif
 
 #if FMT_USE_BITINT
+FMT_PRAGMA_CLANG(diagnostic push)
 FMT_PRAGMA_CLANG(diagnostic ignored "-Wbit-int-extension")
 template <int N> using bitint = _BitInt(N);
 template <int N> using ubitint = unsigned _BitInt(N);
+FMT_PRAGMA_CLANG(diagnostic pop)
 #else
 template <int N> struct bitint {};
 template <int N> struct ubitint {};
@@ -276,12 +278,6 @@ struct is_bit_reference_like<std::__bit_const_reference<C>> {
   static constexpr bool value = true;
 };
 #endif
-
-template <typename T, typename Enable = void>
-struct has_format_as : std::false_type {};
-template <typename T>
-struct has_format_as<T, void_t<decltype(format_as(std::declval<const T&>()))>>
-    : std::true_type {};
 
 template <typename T, typename Enable = void>
 struct has_format_as_member : std::false_type {};
