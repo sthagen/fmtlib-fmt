@@ -544,6 +544,22 @@ FMT_CONSTEXPR20 auto fill_n(T* out, Size count, char value) -> T* {
   memset(out, value, to_unsigned(count));
   return out + count;
 }
+template <typename T>
+FMT_CONSTEXPR auto fill_n(basic_appender<T> out, size_t n, T value)
+    -> basic_appender<T> {
+  if (is_constant_evaluated(true))
+    return fill_n<basic_appender<T>, size_t, T>(out, n, value);
+  auto& buf = get_container(out);
+  while (n != 0) {
+    buf.try_reserve(buf.size() + n);
+    auto size = buf.size();
+    auto count = min_of(n, buf.capacity() - size);
+    buf.try_resize(size + count);
+    detail::fill_n(buf.data() + size, count, value);
+    n -= count;
+  }
+  return out;
+}
 
 template <typename T, typename V, typename OutputIt>
 FMT_CONSTEXPR auto copy(basic_string_view<V> s, OutputIt out) -> OutputIt {
@@ -888,12 +904,24 @@ FMT_API auto allocate(size_t size) -> void*;
 template <typename T> struct allocator : private std::decay<void> {
   using value_type = T;
 
-  auto allocate(size_t n) -> T* {
+  FMT_CONSTEXPR20 auto allocate(size_t n) -> T* {
     FMT_ASSERT(n <= max_value<size_t>() / sizeof(T), "");
+#if FMT_USE_CONSTEVAL
+    // Use the builtin directly to avoid C++ runtime dependencies at -O0.
+    if (__builtin_is_constant_evaluated()) return new T[n];
+#endif
     return static_cast<T*>(detail::allocate(n * sizeof(T)));
   }
 
-  void deallocate(T* p, size_t) { free(p); }
+  FMT_CONSTEXPR20 void deallocate(T* p, size_t) {
+#if FMT_USE_CONSTEVAL
+    if (__builtin_is_constant_evaluated()) {
+      delete[] p;
+      return;
+    }
+#endif
+    free(p);
+  }
 
   constexpr friend auto operator==(allocator, allocator) noexcept -> bool {
     return true;  // All instances of this allocator are equivalent.
@@ -950,8 +978,7 @@ class basic_memory_buffer : public detail::buffer<T> {
   static FMT_CONSTEXPR20 void grow(detail::buffer<T>& buf, size_t size) {
     detail::abort_fuzzing_if(size > 5000);
     auto& self = static_cast<basic_memory_buffer&>(buf);
-    const size_t max_size =
-        std::allocator_traits<Allocator>::max_size(self.alloc_);
+    size_t max_size = std::allocator_traits<Allocator>::max_size(self.alloc_);
     size_t old_capacity = buf.capacity();
     size_t new_capacity = old_capacity + old_capacity / 2;
     if (size > new_capacity)
@@ -960,10 +987,17 @@ class basic_memory_buffer : public detail::buffer<T> {
       new_capacity = max_of(size, max_size);
     T* old_data = buf.data();
     T* new_data = self.alloc_.allocate(new_capacity);
-    // Suppress a bogus -Wstringop-overflow in gcc 13.1 (#3481).
-    detail::assume(buf.size() <= new_capacity);
     // The following code doesn't throw, so the raw pointer above doesn't leak.
-    memcpy(new_data, old_data, buf.size() * sizeof(T));
+    if (detail::is_constant_evaluated()) {
+      for (size_t i = 0; i < new_capacity; ++i) {
+        std::allocator_traits<Allocator>::construct(
+            self.alloc_, new_data + i, i < buf.size() ? old_data[i] : T());
+      }
+    } else {
+      // Suppress a bogus -Wstringop-overflow in gcc 13.1 (#3481).
+      detail::assume(buf.size() <= new_capacity);
+      memcpy(new_data, old_data, buf.size() * sizeof(T));
+    }
     self.set(new_data, new_capacity);
     // deallocate must not throw according to the standard, but even if it does,
     // the buffer already uses the new storage and will deallocate it in
@@ -1077,7 +1111,7 @@ class writer {
 
  public:
   inline writer(FILE* f) : buf_(nullptr), file_(f) {}
-  inline writer(detail::buffer<char>& buf) : buf_(&buf) {}
+  inline writer(detail::buffer<char>& buf) : buf_(&buf), file_(nullptr) {}
 
   /// Formats `args` according to specifications in `fmt` and writes the
   /// output to the file.
@@ -2730,19 +2764,15 @@ FMT_CONSTEXPR20 auto write_fixed(OutputIt out, const DecimalFP& f,
                                  locale_ref loc = {}) -> OutputIt {
   using iterator = reserve_iterator<OutputIt>;
 
+  const bool fixed = specs.type() == presentation_type::fixed;
   int exp = f.exponent + significand_size;
   long long size = significand_size + (s != sign::none ? 1 : 0);
   if (f.exponent >= 0) {
     // 1234e5 -> 123400000[.0+]
     size += f.exponent;
-    int num_zeros = specs.precision - exp;
+    int num_zeros = fixed ? specs.precision : specs.precision - exp;
     abort_fuzzing_if(num_zeros > 5000);
-    if (specs.alt()) {
-      ++size;
-      if (num_zeros <= 0 && specs.type() != presentation_type::fixed)
-        num_zeros = 0;
-      if (num_zeros > 0) size += num_zeros;
-    }
+    if (specs.alt()) size += 1 + max_of(num_zeros, 0);
     auto grouping = Grouping(loc, specs.localized());
     size += grouping.count_separators(exp);
     return write_padded<Char, align::right>(
@@ -2755,10 +2785,12 @@ FMT_CONSTEXPR20 auto write_fixed(OutputIt out, const DecimalFP& f,
           return num_zeros > 0 ? detail::fill_n(it, num_zeros, Char('0')) : it;
         });
   }
+  int num_digits = fixed ? -f.exponent : significand_size;
+  int trailing_zeros =
+      fixed || specs.alt() ? max_of(specs.precision - num_digits, 0) : 0;
   if (exp > 0) {
     // 1234e-2 -> 12.34[0+]
-    int num_zeros = specs.alt() ? specs.precision - significand_size : 0;
-    size += 1 + max_of(num_zeros, 0);
+    size += 1 + trailing_zeros;
     auto grouping = Grouping(loc, specs.localized());
     size += grouping.count_separators(exp);
     return write_padded<Char, align::right>(
@@ -2766,7 +2798,7 @@ FMT_CONSTEXPR20 auto write_fixed(OutputIt out, const DecimalFP& f,
           if (s != sign::none) *it++ = detail::getsign<Char>(s);
           it = write_significand(it, f.significand, significand_size, exp,
                                  decimal_point, grouping);
-          return num_zeros > 0 ? detail::fill_n(it, num_zeros, Char('0')) : it;
+          return detail::fill_n(it, trailing_zeros, Char('0'));
         });
   }
   // 1234e-6 -> 0.001234
@@ -2776,7 +2808,7 @@ FMT_CONSTEXPR20 auto write_fixed(OutputIt out, const DecimalFP& f,
     num_zeros = specs.precision;
   }
   bool pointy = num_zeros != 0 || significand_size != 0 || specs.alt();
-  size += 1 + (pointy ? 1 : 0) + num_zeros;
+  size += 1 + (pointy ? 1 : 0) + num_zeros + trailing_zeros;
   return write_padded<Char, align::right>(
       out, specs, static_cast<size_t>(size), [&](iterator it) {
         if (s != sign::none) *it++ = detail::getsign<Char>(s);
@@ -2784,7 +2816,8 @@ FMT_CONSTEXPR20 auto write_fixed(OutputIt out, const DecimalFP& f,
         if (!pointy) return it;
         *it++ = decimal_point;
         it = detail::fill_n(it, num_zeros, Char('0'));
-        return write_significand<Char>(it, f.significand, significand_size);
+        it = write_significand<Char>(it, f.significand, significand_size);
+        return detail::fill_n(it, trailing_zeros, Char('0'));
       });
 }
 
@@ -2793,7 +2826,8 @@ template <typename Char, typename Grouping, typename OutputIt,
 FMT_CONSTEXPR20 auto do_write_float(OutputIt out, const DecimalFP& f,
                                     const format_specs& specs, sign s,
                                     int exp_upper, locale_ref loc) -> OutputIt {
-  Char point = specs.localized() ? detail::decimal_point<Char>(loc) : Char('.');
+  bool localized = FMT_USE_LOCALE && specs.localized();
+  Char point = localized ? detail::decimal_point<Char>(loc) : Char('.');
   int significand_size = get_significand_size(f);
   int exp = f.exponent + significand_size - 1;
   if (specs.type() == presentation_type::fixed ||
@@ -2832,7 +2866,7 @@ template <typename Char, typename OutputIt, typename DecimalFP>
 FMT_CONSTEXPR20 auto write_float(OutputIt out, const DecimalFP& f,
                                  const format_specs& specs, sign s,
                                  int exp_upper, locale_ref loc) -> OutputIt {
-  if (is_constant_evaluated()) {
+  if (is_constant_evaluated() || !FMT_USE_LOCALE) {
     return do_write_float<Char, fallback_digit_grouping<Char>>(out, f, specs, s,
                                                                exp_upper, loc);
   } else {
@@ -3334,8 +3368,6 @@ FMT_CONSTEXPR20 void format_hexfloat(Float value, format_specs specs,
   // Remove zero tail.
   while (print_xdigits > 0 && xdigits[print_xdigits] == '0') --print_xdigits;
 
-  buf.push_back('0');
-  buf.push_back(specs.upper() ? 'X' : 'x');
   buf.push_back(xdigits[0]);
   if (specs.alt() || print_xdigits > 0 || print_xdigits < specs.precision)
     buf.push_back('.');
@@ -3654,10 +3686,16 @@ FMT_CONSTEXPR20 auto format_float(Float value, int precision,
                                           : f.assign(converted_value);
     if (is_predecessor_closer) dragon_flags |= dragon::predecessor_closer;
     if (fixed) dragon_flags |= dragon::fixed;
-    // Limit precision to the maximum possible number of significant digits in
-    // an IEEE754 double because we don't need to generate zeros.
-    const int max_double_digits = 767;
-    if (precision > max_double_digits) precision = max_double_digits;
+    // Keep the fast double path's significant-digit limit.
+    int max_precision = 767;
+    if ((dragon_flags & dragon::fixup) != 0) {
+      // Before fixup, fixed precision counts fractional places rather than
+      // significant digits. f * 2^e has at most max(-e, 0) fractional places,
+      // and its significant digits are bounded by |e| + the bit length of f.
+      max_precision = fixed ? (f.e < 0 ? -f.e : 0)
+                            : count_digits<1>(f.f) + (f.e < 0 ? -f.e : f.e);
+    }
+    precision = min_of(precision, max_precision);
     format_dragon(f, dragon_flags, precision, buf, exp);
   }
   if (!fixed && !specs.alt()) {
@@ -3705,9 +3743,24 @@ FMT_CONSTEXPR20 auto write(OutputIt out, T value, format_specs specs,
   memory_buffer buffer;
   if (specs.type() == presentation_type::hexfloat) {
     if (s != sign::none) buffer.push_back(detail::getsign<char>(s));
+
+    size_t prefix_length = 0;
+    buffer.push_back('0');
+    buffer.push_back(specs.upper() ? 'X' : 'x');
+    if (specs.align() == align::numeric) {
+      prefix_length = buffer.size();
+      const char* data = buffer.data();
+      out = copy<Char>(data, data + prefix_length, out);
+      buffer.clear();
+    }
+
     format_hexfloat(convert_float(value), specs, buffer);
-    return write_bytes<Char, align::right>(out, {buffer.data(), buffer.size()},
-                                           specs);
+    return write_padded<Char, align::right>(
+        out, specs, buffer.size(), buffer.size() + prefix_length,
+        [&buffer](reserve_iterator<OutputIt> it) {
+          const char* data = buffer.data();
+          return copy<Char>(data, data + buffer.size(), it);
+        });
   }
 
   if (specs.type() == presentation_type::exp) {

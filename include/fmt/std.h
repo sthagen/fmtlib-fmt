@@ -143,6 +143,7 @@ FMT_CONSTEXPR auto write_escaped_alternative(OutputIt out, const T& v,
 
   formatter<std::remove_cv_t<T>, Char> underlying;
   maybe_set_debug_format(underlying, true);
+  ctx.advance_to(out);
   return underlying.format(v, ctx);
 }
 #endif
@@ -345,21 +346,6 @@ template <typename Char> struct formatter<std::filesystem::path, Char> {
                          basic_string_view<Char>(quoted.data(), quoted.size()),
                          specs);
   }
-};
-
-class path : public std::filesystem::path {
- public:
-  auto display_string() const -> std::string {
-    const std::filesystem::path& base = *this;
-    return fmt::format(FMT_STRING("{}"), base);
-  }
-  auto system_string() const -> std::string { return string(); }
-
-  auto generic_display_string() const -> std::string {
-    const std::filesystem::path& base = *this;
-    return fmt::format(FMT_STRING("{:g}"), base);
-  }
-  auto generic_system_string() const -> std::string { return generic_string(); }
 };
 
 #endif  // FMT_CPP_LIB_FILESYSTEM

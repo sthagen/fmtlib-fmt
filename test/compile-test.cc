@@ -185,6 +185,42 @@ TEST(compile_test, format_to) {
   EXPECT_STREQ("2a", buf);
 }
 
+TEST(compile_test, format_variant) {
+#  ifdef __cpp_lib_variant
+  char buffer[100];
+  auto end =
+      fmt::format_to(buffer, FMT_COMPILE("<{}> {}"), std::variant<int>{42}, 7);
+  EXPECT_EQ("<variant(42)> 7", std::string(buffer, end));
+
+  end =
+      fmt::format_to(buffer, FMT_COMPILE("{}"), std::variant<std::monostate>{});
+  EXPECT_EQ("variant(monostate)", std::string(buffer, end));
+
+  end = fmt::format_to(buffer, FMT_COMPILE("{}"),
+                       std::variant<std::variant<int>>{std::variant<int>{42}});
+  EXPECT_EQ("variant(variant(42))", std::string(buffer, end));
+#  endif  // __cpp_lib_variant
+}
+
+TEST(compile_test, format_expected) {
+#  ifdef __cpp_lib_expected
+  char buffer[100];
+  auto end = fmt::format_to(buffer, FMT_COMPILE("<{}> {}"),
+                            std::expected<int, int>{42}, 7);
+  EXPECT_EQ("<expected(42)> 7", std::string(buffer, end));
+
+  end = fmt::format_to(buffer, FMT_COMPILE("{}"),
+                       std::expected<int, int>{std::unexpected(42)});
+  EXPECT_EQ("unexpected(42)", std::string(buffer, end));
+
+  // std::unexpected has its own formatter, separate from the error branch of
+  // the std::expected one checked above.
+  end = fmt::format_to(buffer, FMT_COMPILE("<{}> {}"), std::unexpected<int>{42},
+                       7);
+  EXPECT_EQ("<unexpected(42)> 7", std::string(buffer, end));
+#  endif  // __cpp_lib_expected
+}
+
 TEST(compile_test, format_to_n) {
   constexpr auto buffer_size = 8;
   char buffer[buffer_size];
@@ -211,7 +247,7 @@ TEST(compile_test, output_iterators) {
   EXPECT_EQ("42.000043", s2.str());
 }
 
-#  if FMT_USE_CONSTEVAL && (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1940)
+#  if FMT_USE_CONSTEVAL
 TEST(compile_test, constexpr_formatted_size) {
   FMT_CONSTEXPR20 size_t size = fmt::formatted_size(FMT_COMPILE("{}"), 42);
   EXPECT_EQ(size, 2);
@@ -250,7 +286,16 @@ TEST(compile_test, static_format) {
   EXPECT_STREQ(result.c_str(), "42");
   EXPECT_EQ(result.str(), "42");
 }
-#  endif
+
+TEST(compile_test, static_format_high_precision) {
+  // 0x1p-900 has 900 nonzero fractional digits, more than the 767 produced by
+  // the fast path.
+  constexpr auto result = FMT_STATIC_FORMAT("{:.1000f}", 0x1p-900);
+  EXPECT_EQ(1002u, result.str().size());
+  EXPECT_EQ("43174959877427608893241125591038",
+            fmt::string_view(result.c_str() + 768, 32));
+}
+#  endif  // FMT_USE_CONSTEVAL
 
 TEST(compile_test, text_and_arg) {
   EXPECT_EQ(">>>42<<<", fmt::format(FMT_COMPILE(">>>{}<<<"), 42));

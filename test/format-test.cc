@@ -307,6 +307,19 @@ TEST(memory_buffer_test, ctor) {
   EXPECT_EQ(123u, buffer.capacity());
 }
 
+#if FMT_USE_CONSTEVAL
+TEST(memory_buffer_test, constexpr_grow) {
+  // std::allocator is used because, unlike detail::allocator, it hands out raw
+  // storage in constant expressions, so grow() must construct elements there.
+  constexpr auto result = [] {
+    basic_memory_buffer<char, 2, std::allocator<char>> buf;
+    for (char c : string_view("abcdef")) buf.push_back(c);
+    return string_view(buf.data(), buf.size()) == "abcdef";
+  }();
+  EXPECT_TRUE(result);
+}
+#endif
+
 using std_allocator = allocator_ref<std::allocator<char>>;
 
 TEST(memory_buffer_test, move_ctor_inline_buffer) {
@@ -380,23 +393,46 @@ TEST(memory_buffer_test, move_ctor_inline_buffer_non_propagating) {
   check_move_buffer("testa", buffer);
 }
 
+struct stateful_allocator {
+  using value_type = char;
+  int id;
+
+  auto allocate(size_t n) -> char* {
+    return std::allocator<char>().allocate(n);
+  }
+  void deallocate(char* p, size_t n) {
+    std::allocator<char>().deallocate(p, n);
+  }
+  friend auto operator==(stateful_allocator a, stateful_allocator b) -> bool {
+    return a.id == b.id;
+  }
+};
+
 TEST(memory_buffer_test, move_ctor_dynamic_buffer_non_propagating) {
-  auto alloc = std::allocator<char>();
-  basic_memory_buffer<char, 4, std_allocator_noprop> buffer(
-      (std_allocator_noprop(&alloc)));
+  using test_allocator = allocator_ref<stateful_allocator, false>;
+  stateful_allocator alloc{1};
+  stateful_allocator alloc2{2};
+  basic_memory_buffer<char, 4, test_allocator> buffer((test_allocator(&alloc)));
   const char test[] = "test";
   buffer.append(test, test + 4);
   const char* inline_buffer_ptr = &buffer[0];
   buffer.push_back('a');
   EXPECT_NE(buffer.data(), inline_buffer_ptr);
-  std::allocator<char>* original_alloc_ptr = buffer.get_allocator().get();
-  basic_memory_buffer<char, 4, std_allocator_noprop> buffer2;
+  auto* original_alloc_ptr = buffer.get_allocator().get();
+  const char* original_data_ptr = buffer.data();
+  basic_memory_buffer<char, 4, test_allocator> buffer2(
+      (test_allocator(&alloc2)));
+  EXPECT_NE(buffer.get_allocator(), buffer2.get_allocator());
   buffer2 = std::move(buffer);
   EXPECT_EQ(std::string(buffer2.data(), buffer2.size()), "testa");
   EXPECT_GT(buffer2.capacity(), 4u);
   EXPECT_NE(buffer2.data(), inline_buffer_ptr);
   EXPECT_EQ(buffer.get_allocator().get(), original_alloc_ptr);
   EXPECT_NE(buffer2.get_allocator().get(), original_alloc_ptr);
+  EXPECT_EQ(buffer2.get_allocator().get(), &alloc2);
+  EXPECT_NE(buffer2.data(), original_data_ptr);
+  EXPECT_EQ(buffer.data(), original_data_ptr);
+  EXPECT_EQ(std::string(buffer.data(), buffer.size()), "testa");
 }
 
 void check_move_assign_buffer(const char* str,
@@ -1242,6 +1278,55 @@ TEST(format_test, precision) {
   EXPECT_EQ(fmt::format("{0:.6}", "123456\xad"), "123456");
 }
 
+TEST(format_test, high_precision_trailing_zeros) {
+  auto zeros = [](size_t n) { return std::string(n, '0'); };
+
+  EXPECT_EQ("1." + zeros(767), fmt::format("{:.767f}", 1.0));
+  EXPECT_EQ("1." + zeros(767), fmt::format("{:#.768g}", 1.0));
+
+  EXPECT_EQ("0.5" + zeros(767), fmt::format("{:#.768g}", 0.5));
+  EXPECT_EQ("0.5", fmt::format("{:.768g}", 0.5));
+
+  auto fixed = "0.0625" + zeros(764);
+  auto general = "0.0625" + zeros(765);
+  EXPECT_EQ(fixed, fmt::format("{:.768f}", 0.0625));
+  EXPECT_EQ(general, fmt::format("{:#.768g}", 0.0625));
+  EXPECT_EQ("  " + fixed, fmt::format("{:>772.768f}", 0.0625));
+  EXPECT_EQ(" " + general, fmt::format("{:>#772.768g}", 0.0625));
+}
+
+TEST(format_test, high_precision_bounded_output) {
+  char buffer[9] = {};
+  buffer[8] = 'x';
+  auto result = fmt::format_to_n(buffer, 8, "{:.768f}", 0.0625);
+  EXPECT_EQ(770u, result.size);
+  EXPECT_EQ(buffer + 8, result.out);
+  EXPECT_EQ("0.062500x", fmt::string_view(buffer, 9));
+
+  result = fmt::format_to_n(buffer, 8, "{:#.768g}", 0.0625);
+  EXPECT_EQ(771u, result.size);
+  EXPECT_EQ(buffer + 8, result.out);
+  EXPECT_EQ("0.062500x", fmt::string_view(buffer, 9));
+}
+
+TEST(format_test, high_precision_long_double) {
+  if (std::numeric_limits<long double>::max_exponent <= 3000 ||
+      fmt::detail::is_double_double<long double>::value) {
+    GTEST_SKIP() << "long double is not an extended-precision type";
+  }
+  auto tiny = std::ldexp(1.0L, -3000);
+  auto large = std::ldexp(1.0L, 3000);
+  char buffer[3004];
+  safe_sprintf(buffer, "%.1000Lf", tiny);
+  EXPECT_EQ(buffer, fmt::format("{:.1000f}", tiny));
+  safe_sprintf(buffer, "%.3000Lf", tiny);
+  EXPECT_EQ(buffer, fmt::format("{:.3000f}", tiny));
+  safe_sprintf(buffer, "%#.1000Lg", large);
+  EXPECT_EQ(buffer, fmt::format("{:#.1000g}", large));
+  safe_sprintf(buffer, "%.0Lf", large);
+  EXPECT_EQ(buffer, fmt::format("{:.0f}", large));
+}
+
 TEST(format_test, large_precision) {
   // Iterator used to abort the actual output.
   struct throwing_iterator {
@@ -1256,6 +1341,14 @@ TEST(format_test, large_precision) {
   auto it = throwing_iterator();
 
   EXPECT_THROW_MSG(fmt::format_to(it, fmt::runtime("{:#.{}}"), 1.0,
+                                  fmt::detail::max_value<int>()),
+                   std::runtime_error, "aborted");
+
+  EXPECT_THROW_MSG(fmt::format_to(it, fmt::runtime("{:#.{}g}"), 0.0625,
+                                  fmt::detail::max_value<int>()),
+                   std::runtime_error, "aborted");
+
+  EXPECT_THROW_MSG(fmt::format_to(it, fmt::runtime("{:.{}f}"), 0.0625,
                                   fmt::detail::max_value<int>()),
                    std::runtime_error, "aborted");
 
@@ -1560,6 +1653,7 @@ TEST(format_test, format_int_locale) {
 TEST(format_test, format_float) {
   EXPECT_EQ(fmt::format("{}", 0.0f), "0");
   EXPECT_EQ(fmt::format("{0:f}", 392.5f), "392.500000");
+  EXPECT_EQ(fmt::format("{:L}", 1234.5), "1234.5");
 }
 
 TEST(format_test, format_double) {
@@ -1577,6 +1671,8 @@ TEST(format_test, format_double) {
   EXPECT_EQ(fmt::format("{:L}", 42.0), "42");
   EXPECT_EQ(fmt::format("{:24a}", 4.2f), "           0x1.0cccccp+2");
   EXPECT_EQ(fmt::format("{:24a}", 4.2), "    0x1.0cccccccccccdp+2");
+  EXPECT_EQ(fmt::format("{:012a}", 1.0), "0x0000001p+0");
+  EXPECT_EQ(fmt::format("{:*>12a}", 1.0), "******0x1p+0");
   EXPECT_EQ(fmt::format("{:<24a}", 4.2), "0x1.0cccccccccccdp+2    ");
   EXPECT_EQ(fmt::format("{0:e}", 392.65), "3.926500e+02");
   EXPECT_EQ(fmt::format("{0:E}", 392.65), "3.926500E+02");
@@ -2250,7 +2346,10 @@ TEST(format_test, fill_via_appender) {
 
 TEST(format_test, formatted_size) {
   EXPECT_EQ(2u, fmt::formatted_size("{}", 42));
+#if FMT_USE_LOCALE
   EXPECT_EQ(2u, fmt::formatted_size(std::locale(), "{}", 42));
+#endif
+  EXPECT_EQ(602u, fmt::formatted_size("[{:*>600}]", 42));
 }
 
 TEST(format_test, format_to_no_args) {
@@ -2324,6 +2423,11 @@ TEST(format_test, format_to_n) {
   result = fmt::format_to_n(buffer, 3, "{}", std::string(1000, '*'));
   EXPECT_EQ(1000u, result.size);
   EXPECT_EQ("***x", fmt::string_view(buffer, 4));
+
+  result = fmt::format_to_n(buffer, 0, "{:!>600}", 42);
+  EXPECT_EQ(600u, result.size);
+  EXPECT_EQ(buffer, result.out);
+  EXPECT_EQ("***x", fmt::string_view(buffer, 4));
 }
 
 struct test_output_iterator {
@@ -2351,6 +2455,10 @@ TEST(format_test, format_to_n_output_iterator) {
   char buf[10] = {};
   fmt::format_to_n(test_output_iterator{buf}, 10, "{}", 42);
   EXPECT_STREQ(buf, "42");
+  auto result = fmt::format_to_n(test_output_iterator{buf}, 3, "{:*>600}", 42);
+  EXPECT_EQ(600u, result.size);
+  EXPECT_EQ(buf + 3, result.out.data);
+  EXPECT_STREQ(buf, "***");
 }
 
 TEST(format_test, vformat_to) {
@@ -2483,7 +2591,9 @@ TEST(format_int_test, format_int) {
             std::to_string(max_value<int64_t>()));
 }
 
-#ifndef FMT_STATIC_THOUSANDS_SEPARATOR
+// This file is also compiled with FMT_USE_LOCALE=0 by nolocale-test, so tests
+// that use std::locale must go in this block.
+#if FMT_USE_LOCALE
 
 #  include <locale>
 
@@ -2548,7 +2658,7 @@ TEST(format_test, format_locale) {
   EXPECT_EQ(fmt::format(loc, "{:10Lo}", 12345), "    30,071");
 }
 
-#endif  // FMT_STATIC_THOUSANDS_SEPARATOR
+#endif  // FMT_USE_LOCALE
 
 struct convertible_to_nonconst_cstring {
   operator char*() const {
